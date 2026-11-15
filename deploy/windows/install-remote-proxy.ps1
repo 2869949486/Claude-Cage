@@ -2,7 +2,7 @@
 param(
     [Parameter(Mandatory)][string]$Sources,
     [string]$Root = 'C:\ProgramData\Cage Remote',
-    [string]$Install = 'C:\Program Files\Cage Remote'
+    [string]$Install
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
@@ -10,6 +10,8 @@ $ProgressPreference = 'SilentlyContinue'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
 if (-not ([Security.Principal.WindowsPrincipal]::new($identity)).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) { throw 'Run as the deployment administrator.' }
 $binding = Get-Content -LiteralPath (Join-Path $Root 'windows-guest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$installRoot=Split-Path -Parent (Split-Path -Parent $binding.relay_executable)
+if (-not $Install) { $Install=$installRoot }
 if ($binding.mode -ne 'remote') { throw 'This installer requires the Windows remote profile.' }
 $directory = Join-Path $Root 'proxy'
 if (Test-Path -LiteralPath (Join-Path $directory 'sources.json')) { throw 'An existing proxy must be preserved; this is an initial import only.' }

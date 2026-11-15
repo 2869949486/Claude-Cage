@@ -19,6 +19,7 @@ import (
 
 type windowsRemoteEvidence struct {
 	SandboxSID     string         `json:"sandbox_sid"`
+	ProxyPort      int            `json:"proxy_port"`
 	Session        string         `json:"session"`
 	TokenVerified  bool           `json:"token_verified"`
 	PolicyVerified bool           `json:"-"` // Set only by the host's WFP readback.
@@ -117,8 +118,12 @@ func (s *Server) remoteWindowsBoundary(ctx context.Context, cfg cage.Config, cli
 		return observation, state, err
 	}
 	port, _ := strconv.Atoi(control.Port())
+	_, proxyPort := guestProxyEndpoint(cfg, "127.0.0.1")
+	if proxyPort < 1 || proxyPort > 65535 {
+		return observation, state, errors.New("无法确定当前代理端口，外网保持关闭")
+	}
 	s.setMessage("正在读取云端 AppContainer、WFP 与实际目录权限…")
-	observation, err = s.remoteWindowsObservation(ctx, map[string]any{"stage": "boundary", "nonce": nonce, "private_file": private.Name(), "control_port": port})
+	observation, err = s.remoteWindowsObservation(ctx, map[string]any{"stage": "boundary", "nonce": nonce, "private_file": private.Name(), "control_port": port, "proxy_port": proxyPort})
 	if err != nil {
 		return observation, state, err
 	}
@@ -144,8 +149,14 @@ func (s *Server) remoteWindowsBoundary(ctx context.Context, cfg cage.Config, cli
 		"云端系统/终端配置尚未与已保存设置一致；浏览器配置不能替代系统观测")
 	result("egress_policy", state.PolicyVerified && state.Configuration == cfg.Fingerprint() && remoteWindowsDenied(e, "public"),
 		fmt.Sprintf("实际无网络 capability 的 AppContainer；WFP 账户与 package 规则和唯一受控代理 permit 已读回；公网 TCP 返回 Winsock %d", e.TCP["public"]), "恢复当前安装的 WFP 策略后重检")
-	result("management_boundary", remoteWindowsDenied(e, "management", "upstream", "metadata", "loopback6", "metadata6") && s.managementRequiresSession(ctx),
-		fmt.Sprintf("实际连接错误码：控制器=%d、上游代理=%d、元数据=%d、IPv6 回环=%d、IPv6 元数据=%d；管理接口要求原会话鉴权", e.TCP["management"], e.TCP["upstream"], e.TCP["metadata"], e.TCP["loopback6"], e.TCP["metadata6"]), "检查云端管理接口与 package 的 WFP 隔离")
+	// Older probes always tested 17896 and did not return the port.
+	testedPort := e.ProxyPort
+	if testedPort == 0 {
+		testedPort = 17896
+	}
+	requiresSession := s.managementRequiresSession(ctx)
+	result("management_boundary", testedPort == proxyPort && requiresSession && remoteWindowsDenied(e, "management", "upstream", "metadata", "loopback6", "metadata6"),
+		fmt.Sprintf("直连错误码：控制器=%d、上游代理=%d（检测端口 %d，当前端口 %d）、元数据=%d、IPv6 回环=%d、IPv6 元数据=%d；管理接口拒绝匿名访问=%t", e.TCP["management"], e.TCP["upstream"], testedPort, proxyPort, e.TCP["metadata"], e.TCP["loopback6"], e.TCP["metadata6"], requiresSession), "检查云端管理接口与 package 的 WFP 隔离")
 	result("udp_policy", e.PolicyVerified && e.UDP4 != nil && *e.UDP4 == 10013 && e.UDP6 != nil && *e.UDP6 == 10013,
 		fmt.Sprintf("沙箱 UDP/IPv4 错误码=%v、UDP/IPv6 错误码=%v；只将 Winsock 10013 作为拒绝证据，不使用无响应推断", codeValue(e.UDP4), codeValue(e.UDP6)), "恢复 package IPv4/IPv6 的 WFP 拒绝规则")
 	result("ipv6_policy", remoteWindowsDenied(e, "ipv6", "loopback6", "metadata6") && e.UDP6 != nil && *e.UDP6 == 10013,

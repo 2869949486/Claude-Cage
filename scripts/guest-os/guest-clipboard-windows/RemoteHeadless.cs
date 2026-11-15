@@ -7,13 +7,13 @@ namespace Cage.GuestClipboard;
 // weakens SessionGuard, or routes commands through an unrestricted user shell.
 internal static class RemoteHeadless
 {
-    internal static async Task Run(Guid instance, string sid, string key, Guid machine, CancellationToken token)
+    internal static async Task Run(Guid instance, string sid, string key, Guid machine, bool instancePackage, CancellationToken token)
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         token = lifetime.Token;
         LocalGuestTransport.VerifyMachine(machine);
-        using var sandbox = new RemoteSandbox(instance, sid);
-        sandbox.AllowReadTools(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Cage", "CLI", "tools"));
+        using var sandbox = new RemoteSandbox(instance, sid, instancePackage);
+        sandbox.AllowReadTools();
         var environment = sandbox.WorkloadEnvironment();
         using var browser = new RemoteBrowserRpc(sandbox, environment);
         var secret = Pairing.Load(key, instance, sid, false);
@@ -69,7 +69,7 @@ internal static class RemoteHeadless
                 ["gui_user_sid"] = sid, ["session"] = session, ["available"] = true, ["execution"] = "appcontainer-headless",
                 ["process_session"] = 0, ["sandbox_sid"] = sandbox.SID, ["capabilities"] = new JsonArray("headless-terminal", "headless-browser", "headless-cli"),
                 ["components"] = new JsonObject { ["cli"] = WindowsCliRpc.ComponentStatus() },
-                ["browser"] = new JsonObject { ["installed"] = RemoteBrowserRpc.Installed, ["network_configured"] = false },
+                ["browser"] = new JsonObject { ["installed"] = browser.Installed, ["network_configured"] = false },
                 ["workload_ready"] = false, ["desktop_available"] = false, ["home"] = sandbox.Home }, token);
             if (operation == "headless-status") return;
             if (operation == "headless-safety") { await RemoteSafetyRpc.Run(stream, sandbox, environment, session, token); return; }

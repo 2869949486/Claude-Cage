@@ -16,11 +16,12 @@ keywords: 客机 客户机 克隆 本机 系统选择 macOS Windows Debian Ubunt
 | 你的电脑 | 可选客机 | 适合的工作 |
 | --- | --- | --- |
 | Apple Silicon Mac，macOS 14+ | macOS、Debian 13 或 Ubuntu 22.04，均为 ARM64 | macOS 原生开发、Mac 版 Claude Desktop，或 Linux 工具与服务。macOS 客机版本需与硬件和主机兼容。 |
+| Intel Mac，macOS 14+，独立实验构建 | Debian 13、Ubuntu 22.04 或 macOS，均为 x86_64 | Linux 沿用现有工作台；macOS 客机要求主机与客机均为 15.4+，使用本机硬件虚拟化与加速图形。条件与验证范围见 [Intel 开发说明](../intel-macos-development.md)。 |
 | Windows 11 x64 专业版、企业版或教育版，具备完整 Hyper-V | Windows 11、Debian 13 或 Ubuntu 22.04，均为 x86_64 | PowerShell、Windows 原生编译与调试、Windows 版 Claude Desktop，或 Linux 开发。 |
 | 其他受支持的 Windows 10 22H2 / 11 x64 主机 | Debian 13 或 Ubuntu 22.04 x86_64 | 在独立 Linux 环境中使用 Claude Code、浏览器与开发工具。需要 Windows 虚拟机监控程序平台。 |
 | Debian 12/13、Ubuntu 22.04/24.04 x86_64 主机 | Debian 13、Ubuntu 22.04，或与本机同发行版的 Linux | Linux 开发与服务。需要 KVM 和当前用户的访问权限。 |
 
-选择与主机同类的系统，可以继续使用对应平台的应用、路径习惯和工具链。Debian 适合希望减少系统安装负担、主要使用命令行与 Linux 服务的用户；三个受支持的桌面平台都可以选择它。Intel Mac、Windows ARM64 和 Linux ARM64 暂不支持。
+选择与主机同类的系统，可以继续使用对应平台的应用、路径习惯和工具链。Debian 适合希望减少系统安装负担、主要使用命令行与 Linux 服务的用户；三个受支持的桌面平台都可以选择它。Intel Mac 的 macOS 路线目前仅在实验构建中提供；Windows ARM64 和 Linux ARM64 暂不支持。
 
 有一点需要注意，Windows 11 客机需要 Hyper-V 平台和管理工具，而 Windows 家庭版（大部分同学可能都是家庭版）并没有这个功能，此时你有两个选择：1、继续使用 Windows 家庭版（如果你平时的主要工作是 Python、Git、bash、Node）。在「启用或关闭 Windows 功能」中勾选「Windows 虚拟机监控程序平台」，按提示重启之后，回到 Cage 选择 Debian 13 或 Ubuntu 22.04 即可。注意，「虚拟机平台」和「适用于 Linux 的 Windows 子系统」是 WSL 2 使用的功能，Cage 不需要。2、升级到 Windows 专业版。如果你的工作的确需要 Windows 环境，你需要 Windows 客机，那么你可以原地升级到 Windows 专业版（这并不难，不知道怎么升级的，多上网搜搜），或在有相应许可时升级到教育版。升级后，在「启用或关闭 Windows 功能」中启用 Hyper-V 平台和管理工具，按提示重启后，回到 Cage 创建 Windows 11 客机即可。
 
@@ -172,3 +173,10 @@ macOS 客机的手机 Desktop 共享电脑 Cage 中的同一个 Claude 窗口和
 macOS 项目连接遇到权限问题时，按提示打开对应的文件共享、屏幕录制或辅助功能授权入口。完成授权并关闭维护窗口后，Cage 会重新检查项目连接。需要客机登录时，先登录并解锁普通账户，再重试项目。
 
 旧版默认项目若位于 Cage 配置目录中，升级后保留该目录中的文件与环境身份。请按设置页显示的旧目录找到项目，将其移至配置目录之外的专用项目文件夹后，再从工作台打开。
+## 创建时的名称与设备配置
+
+首次设置的“系统与存储”中可以填写或随机生成主机名；Linux 还支持独立账户、主目录、显示尺寸和控制扩展名称。建议使用自然、易记、与你以往环境身份不同的名称。Linux 音频输出从真实产品型号库中自动选择名称，浏览器保持实际版本的身份信息。
+
+图形设置按客机系统提供 ANGLE 后端选择；Linux 主机的 QEMU 客机还可尝试 VirGL 加速。依赖客机实际设备与驱动，不能仅靠选择一个型号就获得对应的实体显卡。浏览器也可手动关闭 WebGL 或阻止 Canvas 图像读取，可能影响部分网站。
+
+启动后可在安全检查面板检测浏览器和 Claude Desktop；Desktop 工具栏也有“检测环境”。检测会列出实际证据、软件回退及未观测项，Claude Desktop 内部渲染器尚无受支持的自检接口。设置随环境保存，详见[客机创建配置](../guest-profile.md)。

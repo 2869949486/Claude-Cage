@@ -58,7 +58,7 @@ Claude Cage 让你在熟悉的系统里与 Claude 一起工作：Mac 上用 macO
 把这句话发给你的 agent（codex，dsh，workbuddy，反正不会是 claude code😁）
 
 ```markdown
-帮我安装 https://github.com/Lee-xeo/Claude-Cage ，并把 Cage 的代理配置为我本机 Clash 的 xxx 节点。
+帮我拉取 https://github.com/Lee-xeo/Claude-Cage 的最新源码，打包安装，并 Cage 的代理配置通过我本机 clash 的 xx 节点走我的 xx ip 出口，全过程你盯着，有问题直接修复，且有必要的话顺手给项目提交 issue 帮助他们优化兼容性。
 ```
 
 你唯一需要的，是一个靠谱的代理节点，本项目不做任何代理推广，可以自行搜索黑色错误网站解决。
@@ -66,6 +66,8 @@ Claude Cage 让你在熟悉的系统里与 Claude 一起工作：Mac 上用 macO
 ## 下载与安装
 
 Cage 支持 macOS、Windows 和 Linux：macOS 14+ 的 Apple Silicon Mac、Windows 10 22H2 / 11 x64，以及 Debian 12 / Ubuntu 22.04 / 24.04 x86_64。Windows 11 客机需要支持 Hyper-V 的 Windows 11 专业版、企业版或教育版主机；其他受支持的 Windows 主机可使用 Debian 或 Ubuntu 22.04。Intel Mac、Windows ARM64 和 Linux ARM64 暂不支持。 [macOS](docs/getting-started.md) · [Windows](docs/windows.md) · [Linux](docs/linux.md)。
+
+开发构建另提供 Intel Mac 本机 Linux 客机，以及 macOS 15.4+ 主机上的本机 macOS 客机实验路线，使用独立测试包；公开发行版尚未包含此能力。条件、构建方式和验收范围见 [Intel macOS 开发说明](docs/intel-macos-development.md)。
 
 1. 打开[项目主页](https://claude-cage.com/#download)，点击“下载应用”并选择平台。
 2. macOS：打开安装包，将 **Cage** 拖入 **Applications（应用程序）**，再从“应用程序”启动。Windows：[安装说明](docs/windows.md#安装并开始工作) · Linux：[安装说明](docs/linux.md#安装并开始工作)。
@@ -151,6 +153,7 @@ Cage 是独立社区项目，与 Anthropic 无隶属关系。
 - [code-server](https://github.com/coder/code-server)：浏览器中的代码编辑器。
 - [AIO Sandbox](https://github.com/agent-infra/sandbox)：工作环境和交互体验参考。
 - [claude-switcher](https://github.com/YOURSJEYO/claude-switcher) 和 [Claude-Guardian](https://github.com/DUNHKpcc/Claude-Guardian)：网络检查和安全诊断方法参考。
+- [claude-post-ban-cleanup](https://github.com/l2461090/claude-post-ban-cleanup): 精确盘点、保护用户资料与可恢复缓存清理的流程参考；Cage 独立实现。
 
 <a href="https://www.star-history.com/?repos=Lee-xeo%2FClaude-Cage&amp;type=date">
   <picture>

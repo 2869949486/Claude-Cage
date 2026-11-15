@@ -35,8 +35,9 @@ foreach ($path in @($receipt,$failure)) {
 }
 $taskName = 'Cage Remote CLI Setup ' + $binding.vm_id
 if (Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue) { throw 'A CLI setup task already exists; preserve the active installation.' }
-function Quote-PS([string]$value) { return "'" + $value.Replace("'","''") + "'" }
-$command = '$ErrorActionPreference=''Stop''; try { & ' + (Quote-PS (Join-Path $bridge 'install-cli.ps1')) + ' -BundleDirectory ' + (Quote-PS $stage) + ' -BridgeDirectory ' + (Quote-PS $bridge) + ' -WorkbenchSetup; exit 0 } catch { [IO.File]::WriteAllText(' + (Quote-PS $failure) + ',$_.Exception.Message); exit 1 }'
+function Quote-PS([string]$value) { return "'" + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($value) + "'" }
+$toolPath = if ($binding.sandbox_package) { 'AppData\Local\Programs\Tools' } else { 'Cage\CLI\tools' }
+$command = '$ErrorActionPreference=''Stop''; try { & ' + (Quote-PS (Join-Path $bridge 'install-cli.ps1')) + ' -BundleDirectory ' + (Quote-PS $stage) + ' -BridgeDirectory ' + (Quote-PS $bridge) + ' -ToolDirectory (Join-Path $env:USERPROFILE ' + (Quote-PS $toolPath) + ') -WorkbenchSetup; exit 0 } catch { [IO.File]::WriteAllText(' + (Quote-PS $failure) + ',$_.Exception.Message); exit 1 }'
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
 $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand ' + $encoded)
 $settings = New-ScheduledTaskSettingsSet -ExecutionTimeLimit (New-TimeSpan -Minutes 10) -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries
@@ -61,7 +62,7 @@ try {
     } finally { $handle.Dispose() }
     $userProfile = (Get-CimInstance Win32_UserProfile -Filter ("SID='" + $binding.gui_user_sid + "'")).LocalPath
     if (-not $userProfile) { throw 'The ordinary account profile is not available.' }
-    $allowed = [IO.Path]::GetFullPath((Join-Path $userProfile 'Cage\CLI')) + '\'
+    $allowed = [IO.Path]::GetFullPath((Join-Path $userProfile $toolPath)) + '\'
     $result = [ordered]@{version=1;claude_version=$value.claude_version}
     foreach ($name in @('python','claude','git_bash','gh')) {
         $path = [IO.Path]::GetFullPath($value.$name)

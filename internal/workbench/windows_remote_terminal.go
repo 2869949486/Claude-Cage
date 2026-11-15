@@ -16,13 +16,16 @@ func (s *Server) createRemoteWindowsTerminal(input terminalRequest) (*terminalSe
 		return s.createWindowsCLITerminal(input)
 	}
 	if input.Kind != "" && input.Kind != "shell" || input.ClaudeAccountID != "" || input.sharedID != "" {
-		return nil, errors.New("Windows 云端目前支持隔离 PowerShell；Claude 账户接线尚未完成")
+		return nil, errors.New("普通 PowerShell 终端不能指定 Claude 账号、会话或其他终端类型")
 	}
 	s.mu.Lock()
-	closing := s.closing
+	ready, closing := s.ready, s.closing
 	s.mu.Unlock()
 	if closing {
 		return nil, errTerminalsClosed
+	}
+	if !ready {
+		return nil, errTerminalNotReady
 	}
 	if s.busy() {
 		return nil, errTerminalBusy

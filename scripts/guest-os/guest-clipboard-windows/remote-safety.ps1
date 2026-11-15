@@ -79,6 +79,9 @@ public static class CageActiveLocale {
     }
     if($request.stage -eq 'boundary') {
         $port=[int]$request.control_port
+        $proxyPort=if ($null -eq $request.proxy_port) { 17896 } else { [int]$request.proxy_port }
+        if ($proxyPort -lt 1 -or $proxyPort -gt 65535) { throw 'invalid_proxy_port' }
+        $evidence.proxy_port=$proxyPort
         $file=[string]$request.private_file
         $nonce=[string]$request.nonce
         if($port -lt 1 -or $port -gt 65535 -or $nonce -notmatch '^[a-f0-9]{64}$' -or
@@ -86,7 +89,7 @@ public static class CageActiveLocale {
         $evidence.tcp=@{
             public=(Socket-Probe '1.1.1.1' 443)
             management=(Socket-Probe '127.0.0.1' $port)
-            upstream=(Socket-Probe '127.0.0.1' 17896)
+            upstream=(Socket-Probe '127.0.0.1' $proxyPort)
             metadata=(Socket-Probe '169.254.169.254' 80)
             dns=(Socket-Probe '1.1.1.1' 53)
             dot=(Socket-Probe '1.1.1.1' 853)

@@ -11,8 +11,9 @@ import {
 } from "lucide-react";
 import { BrowserUploads } from "./browser-uploads";
 import { ProjectDialog } from "./project-dialog";
-import { api } from "./api";
+import { api, nativeAvailable } from "./api";
 import { SafetyMessage } from "./safety-message";
+import { DeviceCheckButton } from "./device-checks";
 import { RemoteView } from "./views";
 import { useWindowVisibility } from "./window-visibility";
 import { guestCapability } from "./guest-capabilities.mjs";
@@ -68,6 +69,7 @@ export function DesktopToolbar({ desktop, platform, title = "Claude Desktop", zo
         </span>
         <span className="desktop-toolbar-spacer" />
         {children}
+        <DeviceCheckButton target="desktop" disabled={busy || !desktop?.running} />
         {desktop?.running && (
           <label className="desktop-display-size">
             显示大小
@@ -207,7 +209,7 @@ export function ClaudeDesktop({
   }, [status.job]);
   return (
     <section className="claude-desktop-view" aria-label="Claude Desktop">
-      <BrowserUploads requests={uploads} onStatus={onStatus} />
+      {!nativeAvailable() && <BrowserUploads requests={uploads} onStatus={onStatus} />}
       {directoryRequest && <ProjectDialog
         key={directoryRequest.id}
         status={status}
@@ -250,11 +252,8 @@ export function ClaudeDesktop({
         {!available ? (
           <div className="desktop-empty">
             <Monitor size={36} />
-            <h2>{status.guest_system === "windows-remote" ? "Windows 云端图形会话尚未接通" : "Claude Desktop 暂不可用"}</h2>
-            {status.guest_system === "windows-remote" ? <>
-              <p>当前可使用隔离 PowerShell 和浏览器，无需登录 Claude 账户。</p>
-              <p>此入口用于 Claude Desktop 应用窗口，不是完整 Windows 桌面。云端图形会话仍在适配，重新连接或安装应用不会启用它。</p>
-            </> : <p>当前环境未报告可用的 Claude Desktop 图形通道，请在设置中查看组件状态。</p>}
+            <h2>Windows 云端暂不支持 Claude Desktop</h2>
+            <p>当前可使用隔离 PowerShell{guestCapability(status, "browser") && " 和浏览器"}，无需登录 Claude 账户。</p>
           </div>
         ) : desktop?.running && status.vm_running ? (
           <RemoteView

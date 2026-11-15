@@ -9,7 +9,7 @@ import path from "node:path";
 // namespace, then let Node inherit numeric descriptors instead of creating its
 // own pipes. This never grants access outside the package or opens a TCP port.
 async function localPipe() {
-  const name = "\\\\.\\pipe\\LOCAL\\CageBrowser-" + randomUUID();
+  const name = "\\\\.\\pipe\\LOCAL\\" + randomUUID();
   const server = createServer();
   let descriptor, socket;
   try {

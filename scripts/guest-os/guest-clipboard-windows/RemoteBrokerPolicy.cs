@@ -18,7 +18,7 @@ internal static unsafe partial class RemoteNetworkPolicy
     // so a user-only descriptor does not match a restricted AppContainer token.
     private static void Broker(string action, WindowsProfile profile)
     {
-        Marshal.ThrowExceptionForHR(DeriveAppContainerSidFromAppContainerName("Cage.Remote." + profile.VM.ToString("N"), out var package));
+        Marshal.ThrowExceptionForHR(DeriveAppContainerSidFromAppContainerName(profile.PackageName, out var package));
         try
         {
             if (action == "remove") ConfigureLoopback("remove", package);

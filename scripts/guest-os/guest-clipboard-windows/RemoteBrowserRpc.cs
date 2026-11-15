@@ -11,8 +11,15 @@ internal sealed class RemoteBrowserRpc(RemoteSandbox sandbox, Dictionary<string,
     private ReadAheadStream? replies;
     private Task? errors;
     private string? inputOwner;
-    private static string Root => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Cage", "CLI", "tools", "chromium-headless-1254");
-    internal static bool Installed => new[] { "node.exe", "windows-remote-browser.mjs", "windows-browser.mjs", "playwright/index.mjs", "chrome-headless-shell-win64/chrome-headless-shell.exe" }.All(file => File.Exists(Path.Combine(Root, file)));
+    private string Root
+    {
+        get
+        {
+            var installed = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFiles), "Browser Runtime", GuestContext.VM.ToString("D"));
+            return sandbox.InstancePackage || Directory.Exists(installed) ? installed : Path.Combine(sandbox.ToolsDirectory, "chromium-headless-1254");
+        }
+    }
+    internal bool Installed => new[] { "node.exe", "windows-remote-browser.mjs", "windows-browser.mjs", "playwright/index.mjs", "chrome-headless-shell-win64/chrome-headless-shell.exe" }.All(file => File.Exists(Path.Combine(Root, file)));
 
     internal async Task Run(Stream stream, CancellationToken token)
     {

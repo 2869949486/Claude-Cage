@@ -1,10 +1,6 @@
-// Older backends do not report capabilities; retain their existing behavior.
+// Local workbenches can install or repair components that are not ready yet.
+// The headless Windows server only implements the features it advertises.
 export function guestCapability(status, name) {
-  const capabilities = status?.guest_capabilities;
-  if (typeof capabilities?.available?.[name] === "boolean")
-    return capabilities.available[name];
-  // The remote Windows adapter implements a subset of the VM workbench.
-  // Only explicitly reported features may start their requests or polling.
-  if (status?.guest_system === "windows-remote") return false;
-  return !capabilities?.unavailable?.includes(name);
+  return status?.guest_system !== "windows-remote" ||
+    status.guest_capabilities?.available?.[name] === true;
 }

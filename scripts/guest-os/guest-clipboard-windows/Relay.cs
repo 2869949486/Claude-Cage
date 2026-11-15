@@ -11,6 +11,8 @@ internal sealed class WindowsProfile
     [JsonPropertyName("version")] public int Version { get; set; }
     [JsonPropertyName("mode")] public string? Mode { get; set; }
     [JsonPropertyName("machine_id")] public Guid MachineID { get; set; }
+    [JsonPropertyName("sandbox_package")] public string? SandboxPackage { get; set; }
+    internal string PackageName => SandboxPackage ?? "Cage.Remote." + VM.ToString("N");
     internal bool Remote => Mode == "remote";
     [JsonPropertyName("vm_id")] public Guid VM { get; set; }
     [JsonPropertyName("gui_user_sid")] public string SID { get; set; } = "";
@@ -27,6 +29,7 @@ internal sealed class WindowsProfile
             new[] { p.Directory, p.Executable, p.Pairing }.Any(path => !Path.IsPathFullyQualified(path) || path.IndexOfAny(['\0', '\r', '\n']) >= 0)) throw new InvalidDataException("profile_invalid");
         if (p.NetworkPairing != null && (!Path.IsPathFullyQualified(p.NetworkPairing) || p.NetworkPairing.IndexOfAny(['\0', '\r', '\n']) >= 0)) throw new InvalidDataException("profile_invalid");
         if (p.Mode is not (null or "" or "hyperv" or "remote") || p.Remote && (p.MachineID == Guid.Empty || !string.IsNullOrEmpty(p.NetworkPairing))) throw new InvalidDataException("profile_invalid");
+        if (p.SandboxPackage != null && (!p.Remote || p.SandboxPackage != p.VM.ToString("D"))) throw new InvalidDataException("profile_invalid");
         if (p.Remote) LocalGuestTransport.VerifyMachine(p.MachineID);
         return p;
     }
@@ -44,7 +47,7 @@ internal static class Relay
         if (headless && !profile.Remote) throw new InvalidDataException("headless_requires_remote_profile");
         Phase = "pairing";
         var privilegedNetwork = operation is "network-stream" or "network-settings";
-        if (profile.Remote && privilegedNetwork) throw new InvalidOperationException("remote_network_not_configured");
+        if (profile.Remote && !headless && operation is not ("status" or "diagnostics" or "versions")) throw new InvalidOperationException("remote_boundary_unavailable");
         var pairing = privilegedNetwork ? profile.NetworkPairing ?? throw new InvalidDataException("network_pairing_unavailable") : profile.Pairing;
         var service = privilegedNetwork ? NetworkRuntime.Service : Protocol.Service;
         var secret = Pairing.Load(pairing, profile.VM, profile.SID, true);

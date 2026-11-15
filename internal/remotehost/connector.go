@@ -33,7 +33,9 @@ func ServerEntryCommand(p HostProfile) (string, error) {
 		return "", err
 	}
 	if p.Platform == "windows" {
-		quote := func(value string) string { return "'" + strings.ReplaceAll(value, "'", "''") + "'" }
+		// PowerShell also treats the four typographic single quotes as delimiters.
+		quotes := strings.NewReplacer("'", "''", "‘", "'‘", "’", "'’", "‚", "'‚", "‛", "'‛")
+		quote := func(value string) string { return "'" + quotes.Replace(value) + "'" }
 		command := "$ErrorActionPreference='Stop'; [Console]::OutputEncoding=[Text.UTF8Encoding]::new($false); "
 		if p.ConfigPath != "" {
 			command += "$env:CLAUDE_CAGE_CONFIG=" + quote(p.ConfigPath) + "; "

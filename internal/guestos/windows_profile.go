@@ -20,6 +20,7 @@ import (
 type WindowsProfile struct {
 	Version            int       `json:"version"`
 	Mode               string    `json:"mode,omitempty"`
+	SandboxPackage     string    `json:"sandbox_package,omitempty"`
 	MachineID          string    `json:"machine_id,omitempty"`
 	VMID               uuid.UUID `json:"vm_id"`
 	GUIUserSID         string    `json:"gui_user_sid"`
@@ -33,13 +34,16 @@ type WindowsProfile struct {
 var windowsGUISID = regexp.MustCompile(`^S-1-5-21-[0-9]+-[0-9]+-[0-9]+-[0-9]+$`)
 
 // Remote binds a dedicated cloud Windows installation, not a nested Hyper-V VM.
-func (p WindowsProfile) Remote() bool { return p.Mode == "remote" }
+func (p *WindowsProfile) Remote() bool { return p != nil && p.Mode == "remote" }
 
 func WindowsProfilePath(root string) string { return filepath.Join(root, "windows-guest.json") }
 
 func (p WindowsProfile) validate() error {
 	if p.Mode != "" && p.Mode != "hyperv" && p.Mode != "remote" {
 		return errors.New("Windows 工作环境运行模式无效")
+	}
+	if p.SandboxPackage != "" && (!p.Remote() || p.SandboxPackage != p.VMID.String()) {
+		return errors.New("Windows 云端沙箱标识与绑定的实例不符")
 	}
 	if p.Remote() {
 		machine, err := uuid.Parse(p.MachineID)
@@ -122,8 +126,11 @@ func WindowsRelayCommand(ctx context.Context, root, operation string, args ...st
 		if !p.Remote() {
 			return nil, errors.New("后台终端仅用于 Windows 云端环境")
 		}
-	case "versions":
-	case "stream", "status", "import", "export", "terminal", "browser", "desktop", "attachments", "audio", "resources", "diagnostics", "safety", "project-mount", "network-stream", "network-settings", "cli":
+	case "status", "diagnostics", "versions":
+	case "stream", "import", "export", "terminal", "browser", "desktop", "attachments", "audio", "resources", "safety", "project-mount", "network-stream", "network-settings", "cli", "cache-maintenance":
+		if p.Remote() {
+			return nil, errors.New("Windows 云端仅支持已配对的后台沙箱操作")
+		}
 	default:
 		return nil, errors.New("Windows 客机剪贴板操作无效")
 	}

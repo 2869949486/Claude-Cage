@@ -5,14 +5,15 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"github.com/sylvinus/agent-vm/internal/cage"
 	"io"
 	"net/http"
+	"os"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
 
+	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/guestos"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
 )
@@ -196,6 +197,9 @@ func (s *Server) attachWindowsGuestContext(parent context.Context) error {
 	if err == nil {
 		err = s.ensureProjectShare(s.environmentDir())
 	}
+	if err == nil {
+		err = s.syncNativeBrowserProfile(ctx)
+	}
 	s.mu.Lock()
 	if s.storageRecoveryError != "" {
 		err = errors.New(s.storageRecoveryError)
@@ -252,9 +256,6 @@ func (s *Server) startWindowsGuest() error {
 		return s.attachWindowsGuest()
 	}
 	if err := s.requireStorageReady(); err != nil {
-		return err
-	}
-	if err := requireHostGit(s.operationContext()); err != nil {
 		return err
 	}
 	cfg, err := loadConfig(s.configPath)
@@ -318,11 +319,15 @@ func (s *Server) stopWindowsGuest() error {
 	s.closeWindowsNetwork()
 	s.closeProjectShares()
 	if s.windowsGuest.Remote() {
-		// Detaching Cage must never shut down the cloud server or its SSH service.
+		// The remote broker outlives this controller. Revoke its grant on detach.
+		err := s.revokeNetworkNow("正在停止 Windows 云端环境", false)
 		s.mu.Lock()
 		s.windowsState = windowsGuestState{}
 		s.mu.Unlock()
-		return nil
+		if errors.Is(err, os.ErrNotExist) {
+			return nil // Offline installations have no broker.
+		}
+		return err
 	}
 	ctx, cancel := context.WithTimeout(s.operationContext(), 5*time.Minute)
 	defer cancel()

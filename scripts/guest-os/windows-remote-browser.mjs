@@ -18,7 +18,7 @@ if (typeof region.timezone !== "string" || !region.timezone || region.timezone.l
 const executable = path.join(root, "chrome-headless-shell-win64", "chrome-headless-shell.exe");
 const proxy = new URL(process.env.HTTPS_PROXY);
 if (proxy.protocol !== "http:" || proxy.hostname !== "127.0.0.1" || proxy.port !== "17897" ||
-    proxy.username !== "cage" || !/^[a-f0-9]{64}$/.test(proxy.password)) throw new Error("remote_proxy_invalid");
+    !["proxy", "cage"].includes(proxy.username) || !/^[a-f0-9]{64}$/.test(proxy.password)) throw new Error("remote_proxy_invalid");
 const service = createWindowsBrowserService({
   remoteHeadless: true,
   executablePath: executable,

@@ -1,14 +1,17 @@
 [CmdletBinding()]
 param(
     [string]$Root='C:\ProgramData\Cage Remote',
-    [string]$Install='C:\Program Files\Cage Remote',
-    [string]$Bundle='C:\Program Files\Cage Remote\boundary-r11',
+    [string]$Install,
+    [string]$Bundle,
     [Parameter(Mandatory)][string]$ControllerCandidate
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $profile=Join-Path $Root 'windows-guest.json'
 $binding=Get-Content -LiteralPath $profile -Raw -Encoding UTF8 | ConvertFrom-Json
+$installRoot=Split-Path -Parent (Split-Path -Parent $binding.relay_executable)
+if (-not $Install) { $Install=$installRoot }
+if (-not $Bundle) { $Bundle=Join-Path $installRoot 'boundary-r11' }
 if ($binding.mode -ne 'remote') { throw 'Remote installation required.' }
 $taskName='Cage Remote Controller '+$binding.vm_id
 $controller=Join-Path $Install 'cage.exe'
@@ -30,7 +33,7 @@ foreach ($process in $processes) {
 try {
     # NUL is a device object: its package-only ACL is reset by Windows reboot.
     # Reapply the existing policy before serving, not from an untrusted shell.
-    $command='$env:CLAUDE_CAGE_CONFIG='''+(Join-Path $Root 'config.json').Replace("'","''")+'''; & '''+(Join-Path $Bundle 'Cage.GuestClipboard.exe').Replace("'","''")+''' remote-sandbox-policy install --profile '''+$profile.Replace("'","''")+'''; if($LASTEXITCODE){exit $LASTEXITCODE}; & '''+$ControllerCandidate.Replace("'","''")+''' serve'
+    $command='$env:CLAUDE_CAGE_CONFIG='''+[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent((Join-Path $Root 'config.json'))+'''; & '''+[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent((Join-Path $Bundle 'Cage.GuestClipboard.exe'))+''' remote-sandbox-policy install --profile '''+[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($profile)+'''; if($LASTEXITCODE){exit $LASTEXITCODE}; & '''+[System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($ControllerCandidate)+''' serve'
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $action=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '+$encoded)
     Set-ScheduledTask -TaskName $taskName -Action $action | Out-Null

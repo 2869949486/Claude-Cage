@@ -93,6 +93,7 @@ export function HostForm({ initial, platform, onSaved, onClose }) {
           <label>
             远程系统
             <InlineSelect
+              inline
               aria-label="远程系统"
               value={form.platform || "linux"}
               onValueChange={(value) => update("platform", value)}

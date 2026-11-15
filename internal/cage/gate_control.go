@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -115,10 +116,7 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 				}
 				// A detailed failure message must not prevent fail-closed cleanup.
 				// Keep the wire/storage limit without splitting a UTF-8 character.
-				command.Reason = command.Reason[:200]
-				for !utf8.ValidString(command.Reason) {
-					command.Reason = command.Reason[:len(command.Reason)-1]
-				}
+				command.Reason = gateCloseReason(command.Reason)
 			}
 			if command.Action == "check" || command.Action == "grant" || command.Action == "renew" || command.Action == "proxy-revision" {
 				cfg, e := Load(configPath)
@@ -204,6 +202,9 @@ type GateClient struct{ record gateRecord }
 func OpenGateClient(instanceDir string) (*GateClient, error) {
 	path := filepath.Join(instanceDir, gateRecordName)
 	if err := host.CheckPrivateFile(path); err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, fmt.Errorf("网络门槛控制记录不存在：%w", os.ErrNotExist)
+		}
 		return nil, errors.New("网络门槛控制记录不可用，请停止并重启环境")
 	}
 	data, err := os.ReadFile(path)
@@ -273,8 +274,18 @@ func (c *GateClient) Grant(ctx context.Context, report SafetyReport) (GateStatus
 func (c *GateClient) Renew(ctx context.Context, reportID string) (GateStatus, error) {
 	return c.request(ctx, &gateCommand{Action: "renew", ReportID: reportID})
 }
+func gateCloseReason(reason string) string {
+	if len(reason) > 200 {
+		reason = reason[:200]
+		for len(reason) > 0 && !utf8.ValidString(reason) {
+			reason = reason[:len(reason)-1]
+		}
+	}
+	return reason
+}
+
 func (c *GateClient) Close(ctx context.Context, reason string) (GateStatus, error) {
-	return c.request(ctx, &gateCommand{Action: "close", Reason: reason})
+	return c.request(ctx, &gateCommand{Action: "close", Reason: gateCloseReason(reason)})
 }
 func (c *GateClient) SyncProxyRevision(ctx context.Context) (GateStatus, error) {
 	return c.request(ctx, &gateCommand{Action: "proxy-revision"})

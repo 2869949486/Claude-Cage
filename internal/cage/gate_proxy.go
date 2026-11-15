@@ -23,7 +23,9 @@ func GateProxy(gate *EgressGate, token string) (http.Handler, error) {
 	if len(token) != 64 || strings.Trim(token, "0123456789abcdef") != "" {
 		return nil, errors.New("invalid workload proxy credential")
 	}
-	authorization := "Basic " + base64.StdEncoding.EncodeToString([]byte("cage:"+token))
+	authorization := []byte("Basic " + base64.StdEncoding.EncodeToString([]byte("proxy:"+token)))
+	// Existing remote sessions may still have the previous username in their environment.
+	legacyAuthorization := []byte("Basic " + base64.StdEncoding.EncodeToString([]byte("cage:"+token)))
 	dial := func(ctx context.Context, network, address string) (net.Conn, error) {
 		host, port, err := net.SplitHostPort(address)
 		if err != nil {
@@ -58,8 +60,9 @@ func GateProxy(gate *EgressGate, token string) (http.Handler, error) {
 		ResponseHeaderTimeout: 30 * time.Second, TLSHandshakeTimeout: 10 * time.Second}
 	slots := make(chan struct{}, 64)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Proxy-Authorization")), []byte(authorization)) != 1 {
-			w.Header().Set("Proxy-Authenticate", `Basic realm="Cage"`)
+		provided := []byte(r.Header.Get("Proxy-Authorization"))
+		if subtle.ConstantTimeCompare(provided, authorization)|subtle.ConstantTimeCompare(provided, legacyAuthorization) != 1 {
+			w.Header().Set("Proxy-Authenticate", `Basic realm="proxy"`)
 			http.Error(w, "proxy authentication required", http.StatusProxyAuthRequired)
 			return
 		}
@@ -92,8 +95,15 @@ func GateProxy(gate *EgressGate, token string) (http.Handler, error) {
 				return
 			}
 			done := make(chan struct{})
-			go func() { _, _ = io.Copy(upstream, buffer); _ = upstream.Close(); close(done) }()
+			go func() {
+				defer close(done)
+				// A client may signal end-of-request with FIN and still await a reply.
+				if _, err := io.Copy(upstream, buffer); err != nil || closeWrite(upstream) != nil {
+					_ = upstream.Close()
+				}
+			}()
 			_, _ = io.Copy(client, upstream)
+			_ = upstream.Close()
 			_ = client.Close()
 			<-done
 			return

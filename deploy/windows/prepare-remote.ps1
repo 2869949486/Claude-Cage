@@ -2,8 +2,8 @@
 param(
     [Parameter(Mandatory)][string]$Payload,
     [string]$Root = 'C:\ProgramData\Cage Remote',
-    [string]$Install = 'C:\Program Files\Cage Remote',
-    [string]$User = 'CageRemote'
+    [string]$Install = 'C:\Program Files\Workspace Runtime',
+    [string]$User = 'WorkspaceUser'
 )
 $ErrorActionPreference = 'Stop'
 $identity = [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -44,7 +44,7 @@ $rng = [Security.Cryptography.RandomNumberGenerator]::Create()
 try { $rng.GetBytes($random) } finally { $rng.Dispose() }
 $password = ConvertTo-SecureString ('Cage!' + [Convert]::ToBase64String($random) + 'a9') -AsPlainText -Force
 [Array]::Clear($random, 0, $random.Length)
-$account = New-LocalUser -Name $User -Password $password -Description 'Cage dedicated ordinary Windows workbench user'
+$account = New-LocalUser -Name $User -Password $password -Description 'Dedicated workbench user'
 foreach ($group in @('S-1-5-32-545', 'S-1-5-32-555')) {
     if (-not (Get-LocalGroupMember -SID $group | Where-Object { $_.SID.Value -eq $account.SID.Value })) {
         Add-LocalGroupMember -SID $group -Member $account
@@ -84,7 +84,7 @@ foreach ($path in @($guestData, $guestToken)) {
 $instanceDirectory = Join-Path $Root 'instance'
 New-Item -ItemType Directory -Path $instanceDirectory | Out-Null
 Set-PrivateAcl $instanceDirectory
-$profile = [ordered]@{version=1; mode='remote'; machine_id=$machine.ToString('D'); vm_id=$instance; gui_user_sid=$sid; gui_user=$User; instance_directory=$instanceDirectory; relay_executable=$relay; pairing_file=$pairing}
+$profile = [ordered]@{version=1; mode='remote'; sandbox_package=$instance; machine_id=$machine.ToString('D'); vm_id=$instance; gui_user_sid=$sid; gui_user=$User; instance_directory=$instanceDirectory; relay_executable=$relay; pairing_file=$pairing}
 $profilePath = Join-Path $Root 'windows-guest.json'
 [IO.File]::WriteAllText($profilePath, ($profile | ConvertTo-Json), $utf8)
 Set-PrivateAcl $profilePath
@@ -102,7 +102,7 @@ Register-ScheduledTask -TaskName "Cage Remote GUI $instance" -Action $guiAction 
 # The private controller runs as the deploying account, matching existing
 # controller-file ownership and user-scoped DPAPI. It never runs AI workloads.
 $config = Join-Path $Root 'config.json'
-$script = '$env:CLAUDE_CAGE_CONFIG=''' + $config.Replace("'","''") + '''; & ''' + (Join-Path $Install 'cage.exe').Replace("'","''") + ''' serve'
+$script = '$env:CLAUDE_CAGE_CONFIG=''' + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent($config) + '''; & ''' + [System.Management.Automation.Language.CodeGeneration]::EscapeSingleQuotedStringContent((Join-Path $Install 'cage.exe')) + ''' serve'
 $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script))
 $action = New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument "-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand $encoded"
 $principal = New-ScheduledTaskPrincipal -UserId $controllerSID -LogonType Interactive -RunLevel Highest

@@ -2,12 +2,14 @@
 param(
     [Parameter(Mandatory)][string]$Sources,
     [string]$Root = 'C:\ProgramData\Cage Remote',
-    [string]$Install = 'C:\Program Files\Cage Remote'
+    [string]$Install
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
 $binding = Get-Content -LiteralPath (Join-Path $Root 'windows-guest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$installRoot=Split-Path -Parent (Split-Path -Parent $binding.relay_executable)
+if (-not $Install) { $Install=$installRoot }
 if ($binding.mode -ne 'remote') { throw 'This operation requires the Windows remote profile.' }
 $sourcePath = Join-Path $Root 'proxy\sources.json'
 $configPath = Join-Path $Root 'config.json'

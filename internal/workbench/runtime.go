@@ -356,11 +356,6 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 			return errors.New("请从首次安装入口完成本机系统材料准备")
 		}
 	}
-	// Check before proxy activation or the first image download. The UI cannot
-	// bypass this gate by calling /start or applying settings directly.
-	if err := requireHostGit(s.operationContext()); err != nil {
-		return err
-	}
 	if _, err := validateWorkspace(s.environmentDir(), s.profile); err != nil {
 		return err
 	}
@@ -524,7 +519,7 @@ func (s *Server) stopEnvironment() (returned error) {
 	}
 	s.setMessage("正在停止 Cage 环境…")
 	if (explicitStop || s.jobs.snapshot().Kind == "storage") && cage.InstanceJobID(filepath.Join(s.profile, "state"), "base-building") != "" {
-		if err := s.runCage("stop", "base-building"); err != nil {
+		if err := s.runCage("stop", "--keep-proxy", "base-building"); err != nil {
 			return err
 		}
 	}
@@ -538,6 +533,7 @@ func (s *Server) stopEnvironment() (returned error) {
 	s.credentials = guestCredentials{}
 	s.guestManifest = nil
 	s.guestUpdateRequired = false
+	s.macComponentsChecked = false
 	s.guestUpdateError = ""
 	s.safety.Error = ""
 	s.mu.Unlock()
@@ -547,7 +543,9 @@ func (s *Server) stopEnvironment() (returned error) {
 	if _, err := os.Stat(filepath.Join(s.instanceDir(), "lima.yaml")); !containerenv.Configured(s.profile) && os.IsNotExist(err) {
 		return nil
 	}
-	if err := s.runCage("stop"); err != nil {
+	// Internal restarts keep the already validated core alive. Explicit stop
+	// releases it above only after the environment has stopped successfully.
+	if err := s.runCage("stop", "--keep-proxy"); err != nil {
 		return err
 	}
 	return nil
@@ -569,7 +567,7 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 	if s.windowsGuest != nil {
 		wasReady = s.windowsState.Running
 	} else if s.macosGuest != nil {
-		wasReady = macOSInstanceRunning(s.instanceDir())
+		wasReady = macOSInstanceRunning(s.instanceDir(), s.macosGuest.Backend)
 	}
 	s.mu.Unlock()
 	changed := old != v.Config || oldPrefs.AutoTimezone != v.Preferences.AutoTimezone || oldPrefs.AutoLanguage != v.Preferences.AutoLanguage
@@ -744,7 +742,7 @@ func (s *Server) vmRunning() bool {
 		return s.windowsState.Running
 	}
 	if s.macosGuest != nil {
-		return macOSInstanceRunning(s.instanceDir())
+		return macOSInstanceRunning(s.instanceDir(), s.macosGuest.Backend)
 	}
 	return vmAlive(s.profile, s.environmentDir())
 }

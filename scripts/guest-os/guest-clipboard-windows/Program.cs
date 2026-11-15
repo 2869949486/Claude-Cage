@@ -9,7 +9,7 @@ namespace Cage.GuestClipboard;
 
 internal static class GuestOperations
 {
-    internal static readonly HashSet<string> Names = ["stream", "status", "import", "export", "terminal", "cli", "browser", "desktop", "attachments", "audio", "resources", "diagnostics", "versions", "safety", "project-mount", "network-stream", "network-settings", "headless-status", "headless-terminal", "headless-browser", "headless-safety", "headless-cli"];
+    internal static readonly HashSet<string> Names = ["stream", "status", "import", "export", "terminal", "cli", "browser", "desktop", "attachments", "audio", "resources", "diagnostics", "versions", "safety", "project-mount", "network-stream", "network-settings", "cache-maintenance", "headless-status", "headless-terminal", "headless-browser", "headless-safety", "headless-cli"];
     static readonly Dictionary<string, Func<Stream, CancellationToken, Func<bool>, Task>> handlers = new(StringComparer.Ordinal);
     internal static void Register(string name, Func<Stream, CancellationToken, Func<bool>, Task> handler)
     {
@@ -37,18 +37,15 @@ internal static class Program
             }
             if (args is ["remote-sandbox-policy", var sandboxAction, "--profile", var sandboxProfile])
             { RemoteSandboxPolicy.Run(sandboxAction, sandboxProfile); return 0; }
-            if (args is ["remote-sandbox-probe", "--vm-id", var sandboxVM, "--sid", var sandboxSID])
-            {
-                try { RemoteSandbox.Probe(Guid.Parse(sandboxVM), sandboxSID).GetAwaiter().GetResult(); return 0; }
-                catch (Exception error) { Console.Error.WriteLine(error); return 1; }
-            }
+            var instancePackage = args.Length > 0 && args[^1] == "--instance-package" && args[0] == "serve-headless";
+            if (instancePackage) args = args[..^1];
             if (args.Length > 1 && args[0] == "--relay-profile") { Relay.Run(args).GetAwaiter().GetResult(); return 0; }
             if (args is ["serve-headless", "--vm-id", var headlessVM, "--sid", var headlessSID, "--token-file", var headlessKey, "--machine-id", var headlessMachine])
             {
                 GuestContext.VM = Guid.Parse(headlessVM); GuestContext.SID = headlessSID; GuestContext.Remote = true;
                 using var headlessLifetime = new CancellationTokenSource();
                 Console.CancelKeyPress += (_, e) => { e.Cancel = true; headlessLifetime.Cancel(); };
-                RemoteHeadless.Run(Guid.Parse(headlessVM), headlessSID, headlessKey, Guid.Parse(headlessMachine), headlessLifetime.Token).GetAwaiter().GetResult();
+                RemoteHeadless.Run(Guid.Parse(headlessVM), headlessSID, headlessKey, Guid.Parse(headlessMachine), instancePackage, headlessLifetime.Token).GetAwaiter().GetResult();
                 return 0;
             }
             if (args is ["pair", "--vm-id", var pairVM, "--sid", var pairSID, "--token-file", var source, "--output", var destination])

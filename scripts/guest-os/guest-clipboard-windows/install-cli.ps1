@@ -5,6 +5,7 @@ param(
     [Parameter(Mandatory)][string]$BundleDirectory,
     [Parameter(Mandatory)][string]$BridgeDirectory,
     [string]$ReceiptDirectory = (Join-Path $env:USERPROFILE 'Cage\CLI\install-receipts'),
+    [string]$ToolDirectory = (Join-Path $env:USERPROFILE 'Cage\CLI\tools'),
     [switch]$WorkbenchSetup
 )
 $ErrorActionPreference = 'Stop'
@@ -94,7 +95,7 @@ foreach ($name in @('claude','git')) {
     if ($signature.Status -ne 'Valid') { throw 'An official Windows executable has an invalid Authenticode signature.' }
     if ($name -eq 'claude' -and $signature.SignerCertificate.Subject -notmatch 'Anthropic,? PBC') { throw 'The native Claude binary has the wrong signer.' }
 }
-$tools = Join-Path $env:USERPROFILE 'Cage\CLI\tools'
+$tools = $ToolDirectory
 New-PrivateDirectory $tools
 $uvDir = Join-Path $tools ('uv\' + $manifest.uv.version)
 New-PrivateDirectory $uvDir

@@ -18,7 +18,7 @@ internal static class RemoteSandboxPolicy
         if (action is not ("status" or "install") || !profile.Remote ||
             !new WindowsPrincipal(caller).IsInRole(WindowsBuiltInRole.Administrator))
             throw new InvalidDataException("sandbox_policy_request_invalid");
-        Marshal.ThrowExceptionForHR(DeriveAppContainerSidFromAppContainerName("Cage.Remote." + profile.VM.ToString("N"), out var sid));
+        Marshal.ThrowExceptionForHR(DeriveAppContainerSidFromAppContainerName(profile.PackageName, out var sid));
         try
         {
             var package = new SecurityIdentifier(sid);

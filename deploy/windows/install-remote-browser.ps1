@@ -3,17 +3,18 @@ param(
     [Parameter(Mandatory)][string]$Archive,
     [Parameter(Mandatory)][string]$Source,
     [string]$Root = 'C:\ProgramData\Cage Remote',
-    [string]$Components = 'C:\Program Files\Cage Remote\bridge'
+    [string]$Components
 )
 $ErrorActionPreference='Stop'
 $ProgressPreference='SilentlyContinue'
 $binding=Get-Content -LiteralPath (Join-Path $Root 'windows-guest.json') -Raw | ConvertFrom-Json
+$installRoot=Split-Path -Parent (Split-Path -Parent $binding.relay_executable)
+if (-not $Components) { $Components=Join-Path $installRoot 'bridge' }
 if ($binding.mode -ne 'remote') { throw 'Remote binding required.' }
 $account=Get-LocalUser -Name $binding.gui_user
 if ($account.SID.Value -ne $binding.gui_user_sid) { throw 'Remote account identity mismatch.' }
-$profile=(Get-CimInstance Win32_UserProfile | Where-Object SID -eq $account.SID.Value).LocalPath
-if (-not $profile) { throw 'The bound account profile is not installed.' }
-$destination=Join-Path $profile 'Cage\CLI\tools\chromium-headless-1254'
+# Keep elevated extraction and updates out of the ordinary user's writable profile.
+$destination=Join-Path (Join-Path $env:ProgramFiles 'Browser Runtime') ([guid]$binding.vm_id).ToString('D')
 if (-not (Test-Path -LiteralPath $destination)) {
     Add-Type -AssemblyName System.IO.Compression.FileSystem
     [IO.Compression.ZipFile]::ExtractToDirectory($Archive,$destination)
@@ -42,8 +43,12 @@ public static class CageBrowserPackageIdentity {
     [DllImport("advapi32.dll")] public static extern IntPtr FreeSid(IntPtr sid);
 }
 '@
+$packageName = if ($binding.sandbox_package) {
+    if ($binding.sandbox_package -cne ([guid]$binding.vm_id).ToString('D')) { throw 'Invalid package binding.' }
+    $binding.sandbox_package
+} else { 'Cage.Remote.' + ([guid]$binding.vm_id).ToString('N') }
 $pointer=[IntPtr]::Zero
-[Runtime.InteropServices.Marshal]::ThrowExceptionForHR([CageBrowserPackageIdentity]::DeriveAppContainerSidFromAppContainerName('Cage.Remote.'+([guid]$binding.vm_id).ToString('N'),[ref]$pointer))
+[Runtime.InteropServices.Marshal]::ThrowExceptionForHR([CageBrowserPackageIdentity]::DeriveAppContainerSidFromAppContainerName($packageName,[ref]$pointer))
 try { $package=[Security.Principal.SecurityIdentifier]::new($pointer) }
 finally { [void][CageBrowserPackageIdentity]::FreeSid($pointer) }
 $acl=Get-Acl -LiteralPath $destination

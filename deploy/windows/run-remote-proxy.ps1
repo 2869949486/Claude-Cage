@@ -1,10 +1,13 @@
 [CmdletBinding()]
 param(
     [string]$Root = 'C:\ProgramData\Cage Remote',
-    [string]$Install = 'C:\Program Files\Cage Remote'
+    [string]$Install
 )
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
+$binding=Get-Content -LiteralPath (Join-Path $Root 'windows-guest.json') -Raw -Encoding UTF8 | ConvertFrom-Json
+$installRoot=Split-Path -Parent (Split-Path -Parent $binding.relay_executable)
+if (-not $Install) { $Install=$installRoot }
 $env:CLAUDE_CAGE_CONFIG = Join-Path $Root 'config.json'
 & (Join-Path $Install 'cage.exe') proxy-start
 if ($LASTEXITCODE) { exit $LASTEXITCODE }

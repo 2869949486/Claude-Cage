@@ -3,7 +3,6 @@ using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 using System.Text;
-using System.Text.Json;
 
 namespace Cage.GuestClipboard;
 
@@ -19,14 +18,20 @@ internal sealed class RemoteSandbox : IDisposable
     internal string Home { get; }
     internal string Desktop { get; private set; } = "";
 
-    internal RemoteSandbox(Guid instance, string userSID)
+    internal string ToolsDirectory { get; }
+    internal bool InstancePackage { get; }
+
+    internal RemoteSandbox(Guid instance, string userSID, bool instancePackage)
     {
         using var identity = WindowsIdentity.GetCurrent();
         if (instance == Guid.Empty || identity.User?.Value != userSID ||
             new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator))
             throw new InvalidDataException("sandbox_requires_bound_standard_user");
-        var name = "Cage.Remote." + instance.ToString("N");
-        var result = CreateAppContainerProfile(name, name, "Cage remote command environment", 0, 0, out sid);
+        InstancePackage = instancePackage;
+        var profile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile);
+        ToolsDirectory = Path.Combine(profile, instancePackage ? @"AppData\Local\Programs\Tools" : @"Cage\CLI\tools");
+        var name = instancePackage ? instance.ToString("D") : "Cage.Remote." + instance.ToString("N");
+        var result = CreateAppContainerProfile(name, name, "Command environment", 0, 0, out sid);
         if (result == unchecked((int)0x800700B7))
             result = DeriveAppContainerSidFromAppContainerName(name, out sid);
         Marshal.ThrowExceptionForHR(result);
@@ -52,7 +57,7 @@ internal sealed class RemoteSandbox : IDisposable
         // noninteractive station instead of exposing the logged-on desktop.
         if (System.Diagnostics.Process.GetCurrentProcess().SessionId != 0)
             throw new InvalidDataException("sandbox_requires_headless_session");
-        var name = "CageSandbox-" + Guid.NewGuid().ToString("N");
+        var name = Guid.NewGuid().ToString("N");
         if (!ConvertStringSecurityDescriptorToSecurityDescriptor(
             $"D:P(A;;GA;;;SY)(A;;GA;;;{userSID})(A;;GA;;;{SID})(A;;GA;;;RC)(A;;GA;;;AC)(A;;GA;;;S-1-15-2-2)S:(ML;;NW;;;LW)", 1, out var descriptor, out _))
             throw new Win32Exception();
@@ -132,13 +137,11 @@ internal sealed class RemoteSandbox : IDisposable
         finally { CloseHandle(token); }
     }
 
-    internal void AllowReadTools(string path)
+    internal void AllowReadTools()
     {
         // This helper is only for the dedicated user's installed tool tree. Do
         // not grant the package access to pairing data or the whole user profile.
-        var expected = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Cage", "CLI", "tools");
-        if (!Path.GetFullPath(path).Equals(expected, StringComparison.OrdinalIgnoreCase))
-            throw new InvalidDataException("sandbox_tools_directory_invalid");
+        var path = ToolsDirectory;
         AllowPathMetadata(path);
         for (var directory = new DirectoryInfo(path); directory is not null; directory = directory.Parent)
             if (directory.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("sandbox_tools_redirected");
@@ -198,7 +201,7 @@ internal sealed class RemoteSandbox : IDisposable
         var receipt = Path.Combine(AppContext.BaseDirectory, "cli-tools.json");
         Pairing.PrivateFile(receipt);
         var tools = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(receipt))!;
-        var toolRoot = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Cage", "CLI", "tools") + Path.DirectorySeparatorChar;
+        var toolRoot = ToolsDirectory + Path.DirectorySeparatorChar;
         var paths = new List<string> { Path.GetDirectoryName(ShellPath())! };
         foreach (var name in new[] { "python", "claude", "gh", "git_bash" })
         {
@@ -210,7 +213,6 @@ internal sealed class RemoteSandbox : IDisposable
             if (name == "git_bash")
             {
                 directory = Path.Combine(Path.GetDirectoryName(directory)!, "cmd");
-                environment["CAGE_REMOTE_GIT"] = Path.Combine(directory, "git.exe");
             }
             paths.Add(directory);
         }
@@ -220,7 +222,7 @@ internal sealed class RemoteSandbox : IDisposable
         var token = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(proxyCredential))?["token"]?.GetValue<string>();
         if (token is null || token.Length != 64 || token.Any(c => !char.IsAsciiHexDigitLower(c)))
             throw new InvalidDataException("sandbox_proxy_credential_invalid");
-        var proxy = $"http://cage:{token}@127.0.0.1:{RemoteNetworkPolicy.BrokerPort}";
+        var proxy = $"http://proxy:{token}@127.0.0.1:{RemoteNetworkPolicy.BrokerPort}";
         environment["HTTP_PROXY"] = proxy; environment["HTTPS_PROXY"] = proxy;
         environment["NODE_USE_ENV_PROXY"] = "1";
         return environment;
@@ -231,49 +233,6 @@ internal sealed class RemoteSandbox : IDisposable
         var shell = Path.Combine(AppContext.BaseDirectory, "powershell", "pwsh.exe");
         if (!File.Exists(shell)) throw new InvalidDataException("headless_powershell_missing");
         return shell;
-    }
-
-    // A local deployment diagnostic only; it does not enable any remote RPC or
-    // declare the complete file/network boundary ready.
-    internal static async Task Probe(Guid instance, string userSID)
-    {
-        using var sandbox = new RemoteSandbox(instance, userSID);
-        var tools = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Cage", "CLI", "tools");
-        sandbox.AllowReadTools(tools);
-        Console.WriteLine(JsonSerializer.Serialize(new { phase = "sandbox_profile", sandbox.SID, sandbox.Home,
-            session = System.Diagnostics.Process.GetCurrentProcess().SessionId, workload_ready = false }));
-        var receipt = Path.Combine(AppContext.BaseDirectory, "cli-tools.json");
-        Pairing.PrivateFile(receipt);
-        var python = System.Text.Json.Nodes.JsonNode.Parse(File.ReadAllBytes(receipt))?["python"]?.GetValue<string>()
-            ?? throw new InvalidDataException("sandbox_python_missing");
-        var probe = Path.Combine(sandbox.Home, "probe.py");
-        File.Copy(Path.Combine(AppContext.BaseDirectory, "remote-sandbox-probe.py"), probe, true);
-        var environment = File.Exists(Path.Combine(AppContext.BaseDirectory, "remote-egress.json")) ? sandbox.WorkloadEnvironment() : sandbox.EnvironmentBlock();
-        var launch = new TerminalRpc.Launch(python, ["-u", probe, tools], sandbox.Home, environment, sandbox);
-        await ProbeLaunch(launch);
-        await ProbeLaunch(new TerminalRpc.Launch(TerminalRpc.PowerShellPath(),
-            ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", "Write-Output cage-direct-powershell-ok"],
-            sandbox.Home, sandbox.EnvironmentBlock(), sandbox));
-    }
-
-    private static async Task ProbeLaunch(TerminalRpc.Launch launch)
-    {
-        Console.WriteLine(JsonSerializer.Serialize(new { phase = "sandbox_launch", tool = Path.GetFileName(launch.Executable), desktop = launch.Sandbox!.Desktop }));
-        using var terminal = new TerminalRpc.NativeTerminal(160, 40, launch.Directory, launch);
-        var drain = Task.Run(async () =>
-        {
-            var buffer = new byte[8192]; int count;
-            while ((count = await terminal.Output.ReadAsync(buffer)) != 0)
-                await Console.OpenStandardOutput().WriteAsync(buffer.AsMemory(0, count));
-        });
-        try
-        {
-            var exit = await Task.Run(terminal.Wait).WaitAsync(TimeSpan.FromSeconds(50));
-            terminal.KillOwnJob(); terminal.CloseConsole(); await drain;
-            Console.WriteLine(JsonSerializer.Serialize(new { phase = "sandbox_exit", exit, workload_ready = false }));
-            if (exit != 0) throw new InvalidDataException("sandbox_probe_failed");
-        }
-        finally { terminal.Stop(); await drain; }
     }
 
     public void Dispose()
