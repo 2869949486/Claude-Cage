@@ -116,8 +116,8 @@ macOS 和已簽章 Windows 版本支援透過所選代理更新；Windows 未簽
 本專案仍在快速迭代中，歡迎加入交流群提意見，歡迎社群大佬一起維護
 
 <p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ 群 · 782087179" width="240" /></a>
-  <br />QQ 群 · 782087179
+  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ 群 · 710792821" width="240" /></a>
+  <br />QQ 群 · 710792821
 </p>
 
 ## 來源與許可
