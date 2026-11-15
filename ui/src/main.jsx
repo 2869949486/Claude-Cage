@@ -61,6 +61,7 @@ import { useWindowVisibility } from "./window-visibility";
 import { AppUpdateButton, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
+import { guestCapability } from "./guest-capabilities.mjs";
 
 function App() {
   const { account } = useAccount();
@@ -130,7 +131,7 @@ function App() {
     : clientStatus;
   const system = status?.guest_system || account?.guest_system;
   const macGuest = system === "macos";
-  const nativeGuestLabel = {macos: "macOS", "windows-11": "Windows"}[system];
+  const nativeGuestLabel = {macos: "macOS", "windows-11": "Windows", "windows-remote": "Windows 云端"}[system];
   const { active } = layout;
   const setActive = id => setLayout(previous => focusTab(previous, id));
   const workspaceBox = useRef(null);
@@ -151,12 +152,14 @@ function App() {
   activeRef.current = active;
   readyRef.current = Boolean(status?.ready);
   const storageRecovery = status?.storage_recovery?.required;
+  const browserAvailable = guestCapability(status, "browser");
+  const desktopAvailable = guestCapability(status, "desktop");
   const current = tabs.find((t) => t.id === active),
     terminal = !desktopOpen && current?.kind === "terminal",
     busy = Boolean(status?.job?.running),
     showHome = storageRecovery || !desktopOpen && (home || !status?.vm_running || !current);
   const setupProgress = status?.job?.setup_progress && (busy || status.job.error);
-	const cliSessions = useCLISessions(Boolean(status && !busy && !storageRecovery), windowVisible);
+  const cliSessions = useCLISessions(Boolean(status && !busy && !storageRecovery && guestCapability(status, "claude-cli")), windowVisible);
   useEffect(() => {
     if (storageRecovery) {
       setDesktopOpen(false);
@@ -170,7 +173,7 @@ function App() {
   const panes = !split ? [current].filter(Boolean)
     : layout.side === "left" ? [current, other] : [other, current];
   const webPanes = panes.filter(tab => tab.kind !== "terminal");
-  const passwordVault = usePasswordVault(Boolean(status?.ready && !macGuest), browser.active);
+  const passwordVault = usePasswordVault(Boolean(status?.ready && !macGuest && browserAvailable), browser.active);
   const dualBrowser = split && webPanes.length === 2;
   const leftId = dualBrowser ? panes[0].id : "";
   const rightId = dualBrowser ? panes[1].id : "";
@@ -212,7 +215,7 @@ function App() {
   const nativeSplitRef = useRef(null);
   nativeSplitRef.current = nativeSplit;
   useEffect(() => {
-    if (!status?.ready) { requestedSplit.current = false; return; }
+    if (!status?.ready || !browserAvailable) { requestedSplit.current = false; return; }
     if (!leftId && !requestedSplit.current && !nativeSplitRef.current) return;
     requestedSplit.current = Boolean(leftId);
     let cancelled = false;
@@ -234,7 +237,7 @@ function App() {
     };
     splitQueue.current = splitQueue.current.then(apply);
     return () => { cancelled = true; };
-  }, [leftId, rightId, status?.ready, Boolean(!leftId && nativeSplit)]);
+  }, [leftId, rightId, status?.ready, browserAvailable, Boolean(!leftId && nativeSplit)]);
   const layoutRef = useRef(layout);
   layoutRef.current = layout;
   useEffect(() => {
@@ -259,7 +262,7 @@ function App() {
   useEffect(() => {
     if (finishedLogins) claudeProfiles.load();
   }, [finishedLogins, claudeProfiles.load]);
-  const audio = useAudioOutput(running && !storageRecovery && !status?.environment_update_required && !connectionError);
+  const audio = useAudioOutput(running && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
   useEffect(() => {
     if (audio.error) setToast(audio.error);
   }, [audio.error]);
@@ -291,7 +294,7 @@ function App() {
   const notify = (text) => setToast(text);
   const clipboardConnection = getClientContext().connection_id;
   useEffect(() => {
-    if (!status?.ready || !nativeAvailable()) return;
+    if (!status?.ready || (!browserAvailable && !desktopAvailable) || !nativeAvailable()) return;
     const clipboard = shareClipboard({
       connect: () => new WebSocket(runtimeSocketURL("/clipboard")), native,
       onStatus: setToast,
@@ -299,8 +302,8 @@ function App() {
     });
     window.cageSyncClipboard = () => clipboard.sync();
     return () => { clipboard.dispose(); delete window.cageSyncClipboard; };
-  }, [status?.ready, clipboardConnection]);
-  const desktopFiles = useDesktopFiles(Boolean(status?.ready), notify);
+  }, [status?.ready, browserAvailable, desktopAvailable, clipboardConnection]);
+  const desktopFiles = useDesktopFiles(Boolean(status?.ready && desktopAvailable), notify);
   const downloads = [...(browser.downloads || []), ...desktopFiles.downloads];
   useDownloadNotifications(downloads, notify, Boolean(browser.uploads?.length || desktopFiles.uploads.length));
   const refreshSettings = async () => {
@@ -371,9 +374,14 @@ function App() {
     }
   };
   const openBrowserPage = async (
-    url = settings?.browser_home_url || "https://www.bing.com/",
+    url = status?.guest_system === "windows-remote" && !guestCapability(status, "network")
+      ? "about:blank" : settings?.browser_home_url || "https://www.bing.com/",
     incognito = Boolean(current?.incognito),
   ) => {
+    if (!browserAvailable) {
+      notify("此 Windows 云端环境的浏览器尚未接通。当前可使用隔离 PowerShell 终端。");
+      return null;
+    }
     browserDismissed.current = false;
     const result = await action("/browser/new", { url, incognito });
     if (result) {
@@ -426,6 +434,10 @@ function App() {
     return tab ? select(tab.id) : newPage();
   };
   const newTerminal = (path = workspace, anchor = terminalTrigger.current) => {
+    if (system === "windows-remote" && !guestCapability(status, "claude-cli")) {
+      createTerminal(status.workspace || "", "shell").catch((e) => notify(e.message));
+      return;
+    }
     if (!path) { setProjectDialog({}); return; }
     setTerminalChoice((previous) =>
       previous?.anchor === anchor ? null : { path, anchor },
@@ -511,6 +523,10 @@ function App() {
       onSelect={(kind) => createTerminal(terminalChoice.path, kind).catch((e) => notify(e.message))} />
   );
   const openEditor = async (path = workspace) => {
+    if (!browserAvailable || !guestCapability(status, "editor")) {
+      notify("此 Windows 云端环境的文件编辑器尚未接通。当前可在隔离 PowerShell 中操作文件。");
+      return;
+    }
     if (!path) { setProjectDialog({}); return; }
     browserDismissed.current = false;
     const result = await action("/browser/editor", { workspace: path });
@@ -668,7 +684,9 @@ function App() {
           if (next.job.error) notify(next.job.error);
         }
         if (next.ready) {
-          const fetchBrowser = !browserStreamReady.current || !initialized.current;
+          const supportsBrowser = guestCapability(next, "browser");
+          const fetchBrowser = supportsBrowser && (!browserStreamReady.current || !initialized.current);
+          if (!supportsBrowser) setBrowserError("");
           const [browserResult, t] = await Promise.all([
             fetchBrowser ? api("/browser/tabs").then(result => {
               if (live) setBrowserError("");
@@ -680,7 +698,7 @@ function App() {
             api("/terminals"),
           ]);
           if (!live) return;
-          const b = browserResult || browserSnapshot.current;
+          const b = supportsBrowser ? browserResult || browserSnapshot.current : { tabs: [] };
           const legacyMetadata = readLocal(clientStorageKey("cage-tab-layout"), {})[next.environment_identity_directory || next.environment_directory || next.workspace] || {};
           for (const item of t) {
             const saved = legacyMetadata["terminal:" + item.id];
@@ -788,7 +806,7 @@ function App() {
     return () => { live = false; };
   }, [settings, status, fatal, connectionError]);
   useEffect(() => {
-    if (!status?.ready) return;
+    if (!status?.ready || !browserAvailable) return;
     const stream = new EventSource(runtimeURL("/browser/events"));
     stream.addEventListener("clipboard", (event) => {
       remote.current?.receiveCopy?.(JSON.parse(event.data));
@@ -840,7 +858,7 @@ function App() {
       browserStreamReady.current = false;
       stream.close();
     };
-  }, [status?.ready]);
+  }, [status?.ready, browserAvailable]);
   useEffect(() => {
     if (current && current.kind !== "terminal")
       lastBrowserTab.current = current.id;
@@ -1392,7 +1410,8 @@ function App() {
             runtimeLabel={runtimeLabel}
             network={network}
             onHome={() => { setDesktopOpen(false); setHome(true); }}
-            onOpenProject={(path = "") => setProjectDialog({ path })}
+            onOpenProject={(path = "") => guestCapability(status, "projects")
+              ? setProjectDialog({ path }) : notify("此 Windows 云端环境尚未接通外部项目授权；终端文件保存在隔离工作目录中。")}
             onSelect={select}
             onClose={closeTab}
             onRename={renameTab}
@@ -1421,7 +1440,14 @@ function App() {
         )}
         <div className="workbench-main">
           {showHome && terminalHeader(null)}
-          {browserError && running && !connectionError && <div className="connection-banner" role="status">
+          {status.guest_system === "windows-remote" && !status.workload_ready && !connectionError && <div className="remote-capability-banner" role="status">
+            <span>{browserAvailable
+              ? `Windows 云端：隔离 PowerShell 和浏览器已接通，外网${guestCapability(status, "network") ? "已开放" : "尚未开放"}；桌面和外部项目仍在适配。`
+              : "Windows 云端适配中：隔离 PowerShell 已接通，浏览器、桌面和外部项目尚未接通。"}</span>
+            {browserAvailable && <button disabled={!status.ready || busy} onClick={() => openBrowser()}>打开浏览器</button>}
+            <button disabled={!status.ready || busy} onClick={() => createTerminal(status.workspace || "", "shell").catch(e => notify(e.message))}>打开 PowerShell</button>
+          </div>}
+          {browserAvailable && browserError && running && !connectionError && <div className="connection-banner" role="status">
             <span>客机浏览器暂时无法连接。{browserError}</span>
             <button onClick={() => refreshStatus.current?.()}>重试</button>
           </div>}

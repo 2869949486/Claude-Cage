@@ -179,6 +179,12 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 	workspaces := make(map[string]string, len(paths))
 	for _, path := range paths {
 		if s.windowsGuest != nil {
+			if s.windowsGuest.Remote() {
+				if home, err := s.remoteWindowsCLIWorkspace(path); err == nil {
+					workspaces[home] = home
+				}
+				continue
+			}
 			binding, err := s.windowsProjectForHost(path)
 			if err == nil {
 				workspaces[binding.Path] = path
@@ -520,6 +526,17 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 		record.ConnectionNotice = macOSLegacyWorkspaceNotice
 	}
 	if s.windowsGuest != nil {
+		if s.windowsGuest.Remote() {
+			home, err := s.remoteWindowsCLIWorkspace(workspace)
+			if err != nil {
+				return "", nil, err
+			}
+			record.GuestWorkspace = home
+			if err := writePrivate(mobileRecordPath(s.profile, id), record); err != nil {
+				return "", nil, err
+			}
+			return string(data), record, nil
+		}
 		binding, err := s.windowsProjectForHost(workspace)
 		if err != nil {
 			return "", nil, err

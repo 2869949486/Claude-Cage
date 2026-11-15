@@ -151,6 +151,15 @@ export function createNativeBrowserService(options = {}) {
   const heldKeys = new Map();
   let inputOwner, keyTarget;
 
+  // Every context, including login/private/clipboard pages, uses the same
+  // authenticated broker. Remote guests never bypass it for localhost.
+  function contextProxy() {
+    return networkMode === "proxy" ? { proxy: {
+      server: proxy, bypass: options.remoteHeadless ? "<-loopback>" : proxyBypass,
+      ...options.proxyCredentials,
+    } } : {};
+  }
+
   function emit(type, value) {
     events.push({ sequence: ++eventSequence, type, value });
     while (events.length > 64 || JSON.stringify(events).length > 350000) events.shift();
@@ -174,7 +183,7 @@ export function createNativeBrowserService(options = {}) {
     if (closing) throw failure("copy_unavailable", "浏览器已关闭");
     if (!clipboardHelper) {
       clipboardHelper = (async () => {
-        const isolated = await owner.newContext({ permissions: ["clipboard-read", "clipboard-write"] });
+        const isolated = await owner.newContext({ permissions: ["clipboard-read", "clipboard-write"], ...contextProxy() });
         privateContexts.add(isolated);
         isolated.on("close", () => { privateContexts.delete(isolated); clipboardHelper = undefined; });
         try {
@@ -314,6 +323,9 @@ export function createNativeBrowserService(options = {}) {
     clearTimeout(capture.expiry);
     capture.connection.off("Page.screencastFrame", capture.receive);
     const stopping = (async () => {
+      // Retain the single screenshot slot across document/geometry changes.
+      // A replacement capture must not overlap an old screenshot on this page.
+      await capture.screenshot?.catch(() => {});
       await capture.connection.send("Page.stopScreencast").catch(() => {});
       try {
         if (capture.metrics && !page.isClosed()) {
@@ -336,7 +348,7 @@ export function createNativeBrowserService(options = {}) {
     capture.expiry = setTimeout(() => {
       if (captures.get(tab.page) !== capture) return;
       // Never change the input coordinate mapping halfway through a request.
-      if (activeRequests) { expireCapture(tab, capture); return; }
+      if (activeRequests || capture.screenshot) { expireCapture(tab, capture); return; }
       void stopCapture(tab.page).catch(() => { tab.captureFallback = true; });
     }, 1500);
     capture.expiry.unref?.();
@@ -345,10 +357,10 @@ export function createNativeBrowserService(options = {}) {
   async function captureFrame(tab) {
     await stoppingCaptures.get(tab.page);
     const size = tab.page.viewportSize();
-    // HiDPI surface scaling also affects native menus. Keep the established
-    // screenshot path by default until the native popup comparison is verified.
-    const streaming = continuousFrames && !tab.captureFallback &&
-      (displayScale === 1 || options.continuousFrames === true);
+    // Windows native menus do not follow the compositor's emulated scale.
+    // Keep HiDPI on full-density screenshots, even with continuousFrames opted
+    // in, so page pixels and native overlays share one physical-pixel mapping.
+    const streaming = continuousFrames && !tab.captureFallback && displayScale === 1;
     const key = `${tab.document}:${tab.geometry}:${size.width}:${size.height}:${displayScale}`;
     let capture = captures.get(tab.page);
     if (capture && capture.key !== key) { await stopCapture(tab.page); capture = undefined; }
@@ -436,7 +448,7 @@ export function createNativeBrowserService(options = {}) {
           format: "jpeg", quality: 85,
           maxWidth: Math.round(size.width * displayScale), maxHeight: Math.round(size.height * displayScale),
         });
-        if (!mac && !(options.testing && options.headless !== false)) {
+        if (!mac && !options.remoteHeadless && !(options.testing && options.headless !== false)) {
           await connection.send("Emulation.setFocusEmulationEnabled", { enabled: false });
         }
         let timeout;
@@ -461,15 +473,35 @@ export function createNativeBrowserService(options = {}) {
       return captureFrame(tab);
     }
     try {
-      const frame = capture.latest;
+      let frame = capture.latest;
       // Windows screencast preserves a damage stream at CSS resolution, but a
       // viewport scale changes its native input surface. Capture only new damage
       // at the context's actual device density and reuse it for static frames.
       if (!mac && !frame.jpeg) {
-        const started = performance.now();
-        frame.jpeg = (await tab.page.screenshot({ type: "jpeg", quality: 85, caret: "initial" })).toString("base64");
-        captureMetrics.screenshots++;
-        captureMetrics.total_ms += performance.now() - started;
+        if (capture.screenshotError) {
+          const error = capture.screenshotError;
+          capture.screenshotError = null;
+          throw error;
+        }
+        if (!capture.screenshot && capture.completed?.sequence !== frame.sequence) {
+          const damage = frame, started = performance.now();
+          const document = tab.document, geometry = tab.geometry;
+          capture.screenshot = tab.page.screenshot({ type: "jpeg", quality: 85, caret: "initial" }).then(bytes => {
+            captureMetrics.screenshots++;
+            captureMetrics.total_ms += performance.now() - started;
+            if (captures.get(tab.page) !== capture || tab.document !== document || tab.geometry !== geometry)
+              throw failure("target_changed", "Input target changed");
+            capture.completed = { jpeg: bytes.toString("base64"), sequence: damage.sequence };
+          });
+          // Observe failures even when the viewer disconnects before polling
+          // again. The next read reports them instead of serving stale pixels.
+          void capture.screenshot.catch(error => { capture.screenshotError = error; })
+            .finally(() => { capture.screenshot = null; });
+        }
+        // Only startup waits. Ordinary polls immediately reuse a completed
+        // full-density frame while one screenshot runs behind the serial RPC.
+        if (!capture.completed) await capture.screenshot;
+        frame = capture.completed;
       }
       // Return credit only when the viewer consumes a frame. Chromium's bounded
       // in-flight window supplies backpressure even during continuous animation.
@@ -583,7 +615,7 @@ export function createNativeBrowserService(options = {}) {
     tab.frameSessions.set(page.mainFrame(), sid);
     // Playwright enables focus emulation for every page. Native input proofs
     // must observe the real selected document and native Chrome UI focus.
-    if (!mac && !(options.testing === true && options.headless !== false)) await connection.send("Emulation.setFocusEmulationEnabled", { enabled: false });
+    if (!mac && !options.remoteHeadless && !(options.testing === true && options.headless !== false)) await connection.send("Emulation.setFocusEmulationEnabled", { enabled: false });
     tab.browserContextId = (await connection.send("Target.getTargetInfo")).targetInfo.browserContextId;
     tab.nativeTarget = (await connection.send("Target.getTargetInfo")).targetInfo.targetId;
     for (const method of ["Runtime.executionContextCreated", "Runtime.executionContextDestroyed", "Runtime.executionContextsCleared", "Runtime.bindingCalled", "Page.frameDetached", "Page.frameNavigated"]) {
@@ -641,13 +673,13 @@ export function createNativeBrowserService(options = {}) {
       // editor buffers are persistent and are never initialized away.
       await rm(uploadDirectory, { recursive: true, force: true });
       const splitDirectory = options.splitDirectory ?? path.join(path.dirname(fileURLToPath(import.meta.url)), "split-extension");
-      const extensionTools = typeof modules.BrowserExtensions === "function" && existsSync(path.join(splitDirectory, "manifest.json"));
+      const extensionTools = !options.remoteHeadless && typeof modules.BrowserExtensions === "function" && existsSync(path.join(splitDirectory, "manifest.json"));
       try {
         context = await chromium.launchPersistentContext(options.profileDirectory ?? path.join(directory, "Profile"), {
-          executablePath: options.executablePath ?? browserExecutable(), headless: mac || (options.testing === true && options.headless !== false),
+          executablePath: options.executablePath ?? browserExecutable(), headless: mac || options.remoteHeadless === true || (options.testing === true && options.headless !== false),
           chromiumSandbox: true, viewport, deviceScaleFactor: displayScale, acceptDownloads: true,
           ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}),
-          ...(networkMode === "proxy" ? { proxy: { server: proxy, bypass: proxyBypass } } : {}),
+          ...contextProxy(),
           // CDP transports the user's input. Preserve the native browser identity
           // in every context, including private pages that cannot load extensions.
           args: ["--disable-blink-features=AutomationControlled", "--disable-quic", "--no-first-run", "--no-default-browser-check", "--restore-last-session", "--disable-session-crashed-bubble", "--host-resolver-rules=MAP *.cage-editor.localhost 127.0.0.1", ...(networkMode === "packet" ? ["--no-proxy-server"] : []), ...(extensionTools ? ["--enable-unsafe-extension-debugging", `--load-extension=${splitDirectory}`] : [])],
@@ -791,7 +823,7 @@ export function createNativeBrowserService(options = {}) {
       for (const id of [split.left, split.right]) try { const h = await cdp("Page.getNavigationHistory", {}, tabs.get(id).session); history[id] = { back: h.currentIndex > 0, forward: h.currentIndex < h.entries.length - 1 }; } catch {}
       panes = { left: split.left, right: split.right, fraction: split.fraction, history };
     }
-    const result = { active, split: panes, back, forward, tabs: list, uploads: uploads.snapshot(), downloads: downloads.snapshot(), capabilities: { nativeClipboard: true, systemClipboard: !mac, copyObserver: clipboardAvailable && clipboard.available !== false, files: true, frames: true, cookies: typeof cookieActions === "function", vault: Boolean(vault), login: true, editor: typeof options.editor === "function" || editorConnections.size > 0, split: true, extensions: Boolean(extensions) } };
+    const result = { active, split: panes, back, forward, tabs: list, uploads: uploads.snapshot(), downloads: downloads.snapshot(), capabilities: { nativeClipboard: true, systemClipboard: !mac && !options.remoteHeadless, copyObserver: clipboardAvailable && clipboard.available !== false, files: true, frames: true, cookies: typeof cookieActions === "function", vault: Boolean(vault), login: true, editor: typeof options.editor === "function" || editorConnections.size > 0, split: true, extensions: Boolean(extensions) } };
     snapshotVersion = version; snapshotAt = Date.now(); snapshotCache = result;
     return result;
   }
@@ -1175,7 +1207,7 @@ export function createNativeBrowserService(options = {}) {
     }
   }
   const tailnet = createTailnetClient();
-  if (!options.testing) void tailnet.restore().catch(() => {});
+  if (!options.testing && !options.remoteHeadless) void tailnet.restore().catch(() => {});
   async function request({ method, path: route, input = {}, operation } = {}, { signal } = {}) {
     signal?.throwIfAborted();
     if (method === "POST" && route === "/tailnet") return tailnet.request(input);
@@ -1264,7 +1296,7 @@ export function createNativeBrowserService(options = {}) {
       const old = logins.get(input.login);
       if (old) { clearTimeout(old.expiry); logins.delete(input.login); privateContexts.delete(old.context); await old.context.close(); }
       if (action === "login-finish") return { ok: true };
-      const context = await owner.newContext({ viewport, deviceScaleFactor: displayScale, ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...(networkMode === "proxy" ? { proxy: { server: proxy, bypass: proxyBypass } } : {}) });
+      const context = await owner.newContext({ viewport, deviceScaleFactor: displayScale, ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...contextProxy() });
       privateContexts.add(context);
       const entry = { context, expiry: setTimeout(() => { logins.delete(input.login); privateContexts.delete(context); void context.close().catch(() => {}); }, 15 * 60000) }; entry.expiry.unref(); logins.set(input.login, entry);
       const page = await context.newPage();
@@ -1280,7 +1312,7 @@ export function createNativeBrowserService(options = {}) {
       if (typeof input.timezone !== "string" || input.timezone.length > 128) throw failure("invalid_input", "诊断时区无效");
       let expected;
       try { expected = new Intl.DateTimeFormat("en", { timeZone: input.timezone }).resolvedOptions().timeZone; } catch { throw failure("invalid_input", "诊断时区无效"); }
-      const isolated = await owner.newContext({ serviceWorkers: "block", ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...(networkMode === "proxy" ? { proxy: { server: proxy, bypass: proxyBypass } } : {}) });
+      const isolated = await owner.newContext({ serviceWorkers: "block", ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...contextProxy() });
       try {
         const auditPage = await isolated.newPage();
         const result = await auditPage.evaluate(() => ({ timezone: Intl.DateTimeFormat().resolvedOptions().timeZone, language: navigator.language, platform: navigator.platform }));
@@ -1300,7 +1332,7 @@ export function createNativeBrowserService(options = {}) {
     if (action === "new") {
       const url = checkedBrowserURL(input.url || home); let page;
       if (input.incognito) {
-        const privateContext = await owner.newContext({ viewport, deviceScaleFactor: displayScale, acceptDownloads: true, ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...(networkMode === "proxy" ? { proxy: { server: proxy, bypass: proxyBypass } } : {}) });
+        const privateContext = await owner.newContext({ viewport, deviceScaleFactor: displayScale, acceptDownloads: true, ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...contextProxy() });
         privateContexts.add(privateContext);
         privateContext.on("page", page => { void addPage(page, { incognito: true }).then(tab => activate(tab.id)).catch(() => {}); });
         page = await privateContext.newPage();

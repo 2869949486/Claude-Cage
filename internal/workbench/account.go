@@ -22,6 +22,9 @@ func (s *Server) accountStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.windowsGuest != nil {
 		v.GuestSystem = "windows-11"
+		if s.windowsGuest.Remote() {
+			v.GuestSystem = "windows-remote"
+		}
 	}
 	if v.MacOSAccountHost && v.Unlocked && !v.MacOSCredentialsReady && v.MacOSGuestUser == "" {
 		if install, err := guestos.LoadInstallation(s.profile); err == nil && install != nil {

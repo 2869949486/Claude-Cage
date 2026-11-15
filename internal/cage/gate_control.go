@@ -15,6 +15,7 @@ import (
 	"path/filepath"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"github.com/sylvinus/agent-vm/internal/host"
 )
@@ -103,9 +104,21 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 			var command gateCommand
 			decoder := json.NewDecoder(http.MaxBytesReader(w, r.Body, 64<<10))
 			decoder.DisallowUnknownFields()
-			if decoder.Decode(&command) != nil || len(command.Reason) > 200 {
+			if decoder.Decode(&command) != nil {
 				w.WriteHeader(400)
 				return
+			}
+			if len(command.Reason) > 200 {
+				if command.Action != "close" {
+					w.WriteHeader(400)
+					return
+				}
+				// A detailed failure message must not prevent fail-closed cleanup.
+				// Keep the wire/storage limit without splitting a UTF-8 character.
+				command.Reason = command.Reason[:200]
+				for !utf8.ValidString(command.Reason) {
+					command.Reason = command.Reason[:len(command.Reason)-1]
+				}
 			}
 			if command.Action == "check" || command.Action == "grant" || command.Action == "renew" || command.Action == "proxy-revision" {
 				cfg, e := Load(configPath)

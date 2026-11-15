@@ -440,6 +440,7 @@ button.large {
   background: var(--paper);
 }
 .remote-view,
+.remote-capability-banner { flex: 0 0 auto; padding: 10px 14px; display: flex; align-items: center; gap: 12px; justify-content: space-between; background: var(--surface, #fff); border-bottom: 1px solid var(--border, #dedede); font-size: 13px; }
 .terminal-view {
   position: absolute;
   inset: 0;

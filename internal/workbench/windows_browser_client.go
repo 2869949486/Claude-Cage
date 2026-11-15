@@ -45,7 +45,11 @@ func newWindowsBrowserClient(parent context.Context, profile string) *windowsBro
 		if binding == nil {
 			return nil, errors.New("此配置尚未绑定 客机")
 		}
-		return exec.CommandContext(ctx, binding.RelayExecutable, "--relay-profile", guestos.WindowsProfilePath(profile), "browser"), nil
+		operation := "browser"
+		if binding.Remote() {
+			operation = "headless-browser"
+		}
+		return guestos.WindowsRelayCommand(ctx, profile, operation)
 	}}
 }
 

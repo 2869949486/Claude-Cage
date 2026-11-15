@@ -572,7 +572,7 @@ func (s *Server) handler() http.Handler {
 		accountRoute := r.URL.Path == "/api/account" || strings.HasPrefix(r.URL.Path, "/api/account/")
 		bootstrapRoute := r.URL.Path == "/api/session" || r.URL.Path == "/api/launch" || r.URL.Path == "/api/handoff" || r.URL.Path == "/api/remote/manifest"
 		var phoneRoom context.Context
-		if (s.windowsGuest != nil || s.macosGuest != nil) && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !s.hasTrustedView(r) {
+		if (s.windowsGuest != nil || s.macosGuest != nil) && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !s.hasTrustedView(r) && !s.hasRemoteWindowsView(r) {
 			phoneRoom = s.nativePhoneRoom(r)
 			if phoneRoom == nil {
 				http.Error(w, "请通过本机 Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
@@ -682,6 +682,12 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	if s.windowsGuest != nil {
 		view["guest_system"] = guestos.Windows11
+		if s.windowsGuest.Remote() {
+			view["guest_system"] = "windows-remote"
+			view["workspace"] = s.windowsState.Home
+			view["projects"] = []string{}
+			view["workload_ready"] = false
+		}
 		view["guest_capabilities"] = s.windowsCapabilitiesLocked()
 		view["location"] = nil
 		if s.safety.Gate == nil && view["network_error"] == "" {
