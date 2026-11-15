@@ -120,6 +120,11 @@ Le projet évolue rapidement. Rejoignez le groupe communautaire pour partager vo
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## Origines et licences
 
 La cage est dérivée de [agent-vm](https://github.com/sylvinus/agent-vm).

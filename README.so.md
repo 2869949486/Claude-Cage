@@ -120,6 +120,11 @@ Mashruucu si xawli ah ayuu u socdaa. Ku biir kooxda bulshada si aad ula wadaagto
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## Asalka iyo shatiga
 
 Qafis waxaa laga soo qaatay [agent-vm](https://github.com/sylvinus/agent-vm).

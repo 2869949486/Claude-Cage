@@ -120,6 +120,11 @@ macOS او لاسلیک شوې Windows نسخې د ټاکلي پراکسي له 
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## اصل او جواز ورکول
 
 Cage څخه اخیستل شوی [agent-vm](https://github.com/sylvinus/agent-vm).

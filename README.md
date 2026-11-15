@@ -132,6 +132,11 @@ macOS 和已签名 Windows 版本支持通过所选代理更新；Windows 未签
   <br />QQ 群 · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="微信" width="240" /></a>
+  <br />微信
+</p>
+
 ## 来源与许可
 
 Cage 基于 [agent-vm](https://github.com/sylvinus/agent-vm) 二次开发。

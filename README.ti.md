@@ -120,6 +120,11 @@ macOS እና ዝተፈረሙ Windows ስሪቶች ብዝተመርጸ ፕሮክ�
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## መበቆልን ፍቓድን ምሃብ
 
 ጓጓ ካብ ዝመጸ እዩ። [agent-vm](https://github.com/sylvinus/agent-vm).

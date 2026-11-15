@@ -120,6 +120,11 @@ macOS와 서명된 Windows 버전은 선택한 프록시를 통해 업데이트�
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## 원산지 및 라이선스
 
 케이지는 다음에서 파생됩니다. [agent-vm](https://github.com/sylvinus/agent-vm).

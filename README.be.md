@@ -120,6 +120,11 @@ macOS і падпісаныя версіі Windows абнаўляюцца пра
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## Паходжанне і ліцэнзаванне
 
 Клетка паходзіць ад [agent-vm](https://github.com/sylvinus/agent-vm).

@@ -120,6 +120,11 @@ El proyecto está evolucionando rápidamente. Únase al grupo comunitario para c
   <br />QQ group · 710792821
 </p>
 
+<p align="center">
+  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <br />WeChat
+</p>
+
 ## Orígenes y licencias
 
 La jaula se deriva de [agent-vm](https://github.com/sylvinus/agent-vm).
