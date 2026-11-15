@@ -1636,7 +1636,7 @@ export const createWindowsBrowserService = createNativeBrowserService;
 export async function runWindowsBrowser(input = process.stdin, output = process.stdout, options) {
   const service = createWindowsBrowserService(options);
   try {
-    for await (const line of lines(input)) {
+    for await (const line of lines(input, 1 << 20)) {
       let result;
       try { result = await service.request(JSON.parse(line)); }
       catch (error) { result = { error: error.safe ? error.message : "Windows 客机浏览器操作未完成，请恢复连接后核对结果", code: error.safe ? error.code : "browser_operation_failed" }; }
