@@ -29,6 +29,15 @@ internal static class RemoteSandboxPolicy
                 var security = bootstrap.GetAccessControl();
                 security.AddAccessRule(new FileSystemAccessRule(package, FileSystemRights.ReadAndExecute, AccessControlType.Allow));
                 bootstrap.SetAccessControl(security);
+                var python = new DirectoryInfo(Path.Combine(AppContext.BaseDirectory, "remote-python"));
+                if (python.Exists)
+                {
+                    if (python.Attributes.HasFlag(FileAttributes.ReparsePoint)) throw new InvalidDataException("sandbox_python_redirected");
+                    var pythonACL = python.GetAccessControl();
+                    pythonACL.AddAccessRule(new FileSystemAccessRule(package, FileSystemRights.ReadAndExecute,
+                        InheritanceFlags.ContainerInherit | InheritanceFlags.ObjectInherit, PropagationFlags.None, AccessControlType.Allow));
+                    python.SetAccessControl(pythonACL);
+                }
                 var probe = new FileInfo(Path.Combine(AppContext.BaseDirectory, "remote-safety.ps1"));
                 if (probe.Exists)
                 {

@@ -7,3 +7,33 @@ function global:git {
     $global:LASTEXITCODE = $LASTEXITCODE
 }
 Set-Location -LiteralPath $env:USERPROFILE
+
+# User-installed tools and caches stay in the package home; the bundled runtime
+# remains read-only. Invoking npm through node avoids Windows shim/console issues.
+$env:PYTHONUSERBASE = Join-Path $env:USERPROFILE 'Tools\Python'
+$env:PYTHONPATH = Join-Path $PSScriptRoot 'remote-python'
+$env:npm_config_prefix = Join-Path $env:USERPROFILE 'Tools\npm'
+$env:npm_config_cache = Join-Path $env:USERPROFILE 'Cache\npm'
+$cageNode = Join-Path $env:USERPROFILE 'Tools\node-v24.22.2-win-x64'
+$cagePython = Split-Path -Parent (Get-Command python -CommandType Application).Source
+$cageVenv = Join-Path $env:USERPROFILE 'Tools\PythonEnv'
+if (-not (Test-Path -LiteralPath (Join-Path $cageVenv 'Scripts\python.exe'))) {
+    # Reuse the bundled pip read-only, but install dependencies into a separate
+    # writable environment instead of changing the managed Python installation.
+    & (Join-Path $cagePython 'python.exe') -m venv --without-pip --system-site-packages $cageVenv | ForEach-Object { $_ }
+    if ($LASTEXITCODE -ne 0) { Write-Warning 'Python 工作环境初始化失败，仍可使用基础 Python 和浏览器。' }
+}
+if (Test-Path -LiteralPath (Join-Path $cageVenv 'Scripts\python.exe')) { $env:VIRTUAL_ENV = $cageVenv }
+$env:PATH = ((Join-Path $cageVenv 'Scripts'), $cageNode, $env:npm_config_prefix, (Join-Path $env:PYTHONUSERBASE 'Python313\Scripts'), (Join-Path $cagePython 'Scripts'), $env:PATH) -join ';'
+function global:pip {
+    & python -m pip @args | ForEach-Object { $_ }
+    $global:LASTEXITCODE = $LASTEXITCODE
+}
+function global:npm {
+    & node (Join-Path (Split-Path -Parent (Get-Command node -CommandType Application).Source) 'node_modules\npm\bin\npm-cli.js') @args | ForEach-Object { $_ }
+    $global:LASTEXITCODE = $LASTEXITCODE
+}
+function global:npx {
+    & node (Join-Path (Split-Path -Parent (Get-Command node -CommandType Application).Source) 'node_modules\npm\bin\npx-cli.js') @args | ForEach-Object { $_ }
+    $global:LASTEXITCODE = $LASTEXITCODE
+}

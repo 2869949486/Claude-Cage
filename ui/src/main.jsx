@@ -438,7 +438,7 @@ function App() {
       createTerminal(status.workspace || "", "shell").catch((e) => notify(e.message));
       return;
     }
-    if (!path) { setProjectDialog({}); return; }
+    if (!path && system !== "windows-remote") { setProjectDialog({}); return; }
     setTerminalChoice((previous) =>
       previous?.anchor === anchor ? null : { path, anchor },
     );
@@ -1410,6 +1410,7 @@ function App() {
             runtimeLabel={runtimeLabel}
             network={network}
             onHome={() => { setDesktopOpen(false); setHome(true); }}
+            projectsAvailable={guestCapability(status, "projects")}
             onOpenProject={(path = "") => guestCapability(status, "projects")
               ? setProjectDialog({ path }) : notify("此 Windows 云端环境尚未接通外部项目授权；终端文件保存在隔离工作目录中。")}
             onSelect={select}
@@ -1594,8 +1595,8 @@ function App() {
                         ? !status.ready
                           ? status.environment_update_error || "浏览器连接尚未就绪，可以恢复连接或继续使用终端。"
                           : network.mode === "open"
-                            ? "环境已连接，网络检查通过。可以浏览网页或打开本地项目。"
-                            : `${network.label}。终端与本地文件仍可使用。`
+                            ? status.guest_system === "windows-remote" ? "环境已连接，网络检查通过。可以浏览网页或使用隔离 PowerShell。" : "环境已连接，网络检查通过。可以浏览网页或打开本地项目。"
+                            : `${network.label}。终端与${status.guest_system === "windows-remote" ? "隔离工作目录" : "本地文件"}仍可使用。`
                         : setupProxy
                           ? "先连接你的代理，再启动浏览器、终端和编辑器。无需安装额外的代理软件。"
                           : "准备独立的浏览器和终端，完成网络检查后开始工作。"} />
@@ -1707,7 +1708,8 @@ function App() {
                       </button>
                       <button
                         onClick={() => openEditor(contentWorkspace)}
-                        disabled={!status.ready || busy}
+                        disabled={!status.ready || busy || !guestCapability(status, "editor")}
+                        title={guestCapability(status, "editor") ? undefined : "当前环境尚未接通文件编辑器，可使用 PowerShell 管理隔离工作目录中的文件"}
                       >
                         <FileCode2 size={16} />
                         浏览文件
@@ -1724,10 +1726,9 @@ function App() {
                   )}
                   {running && status.ready && (
                     <p className="welcome-hint">
-                      打开项目后，在终端输入 <code>claude</code>
-                      ，按提示登录你的账户。
+                      {status.guest_system === "windows-remote" ? "PowerShell 和浏览器无需 Claude 登录。只有使用 Claude 时才需要登录账户。" : <>打开项目后，在终端输入 <code>claude</code>，按提示登录你的账户。</>}
                       <br />
-                      {isRemoteClient() ? "打开的项目位于云端，编辑和删除会直接影响云端文件。" : "打开的项目与本机共享，编辑和删除文件会同步。"}
+                      {status.guest_system === "windows-remote" ? "文件保存在云端隔离工作目录中，不会挂载你的本地文件夹。" : isRemoteClient() ? "打开的项目位于云端，编辑和删除会直接影响云端文件。" : "打开的项目与本机共享，编辑和删除文件会同步。"}
                     </p>
                   )}
                   </>}

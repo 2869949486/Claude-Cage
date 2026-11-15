@@ -50,6 +50,7 @@ export function WorkspaceSidebar({
   runtimeLabel,
   network,
   onHome,
+  projectsAvailable = true,
   onOpenProject,
   onProjectSelect,
   onSelect,
@@ -134,8 +135,8 @@ export function WorkspaceSidebar({
             className="icon-button"
             onClick={() => onOpenProject()}
             aria-label="添加项目"
-            title="添加项目"
-            disabled={busy}
+            title={projectsAvailable ? "添加项目" : "当前环境尚未支持外部项目，文件保存在隔离工作目录中"}
+            disabled={busy || !projectsAvailable}
           >
             <Plus size={15} />
           </button>
@@ -263,7 +264,7 @@ export function WorkspaceSidebar({
           );
         })}
         {!projects.length && (
-          <p className="sidebar-empty">打开本地文件夹开始工作</p>
+          <p className="sidebar-empty">{projectsAvailable ? "打开本地文件夹开始工作" : "使用 PowerShell 管理隔离工作目录中的文件"}</p>
         )}
       </div>
       <div className="sidebar-bottom">

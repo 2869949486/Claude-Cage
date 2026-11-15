@@ -28,7 +28,9 @@ foreach ($process in $processes) {
     Wait-Process -Id $process.ProcessId -Timeout 10 -ErrorAction SilentlyContinue
 }
 try {
-    $command='$env:CLAUDE_CAGE_CONFIG='''+(Join-Path $Root 'config.json').Replace("'","''")+'''; & '''+$ControllerCandidate.Replace("'","''")+''' serve'
+    # NUL is a device object: its package-only ACL is reset by Windows reboot.
+    # Reapply the existing policy before serving, not from an untrusted shell.
+    $command='$env:CLAUDE_CAGE_CONFIG='''+(Join-Path $Root 'config.json').Replace("'","''")+'''; & '''+(Join-Path $Bundle 'Cage.GuestClipboard.exe').Replace("'","''")+''' remote-sandbox-policy install --profile '''+$profile.Replace("'","''")+'''; if($LASTEXITCODE){exit $LASTEXITCODE}; & '''+$ControllerCandidate.Replace("'","''")+''' serve'
     $encoded=[Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
     $action=New-ScheduledTaskAction -Execute "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe" -Argument ('-NoProfile -NonInteractive -WindowStyle Hidden -EncodedCommand '+$encoded)
     Set-ScheduledTask -TaskName $taskName -Action $action | Out-Null

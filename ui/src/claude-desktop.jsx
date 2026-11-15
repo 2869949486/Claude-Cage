@@ -250,9 +250,11 @@ export function ClaudeDesktop({
         {!available ? (
           <div className="desktop-empty">
             <Monitor size={36} />
-            <h2>Windows 云端桌面尚未接通</h2>
-            <p>SSH 和隔离 PowerShell 已接入 Cage，Claude Desktop 所需的受限图形会话仍在适配。</p>
-            <p>这不是 Linux 环境，也不是重新安装 Claude Desktop 就能解决的问题。当前请使用上方的 PowerShell 入口。</p>
+            <h2>{status.guest_system === "windows-remote" ? "Windows 云端图形会话尚未接通" : "Claude Desktop 暂不可用"}</h2>
+            {status.guest_system === "windows-remote" ? <>
+              <p>当前可使用隔离 PowerShell 和浏览器，无需登录 Claude 账户。</p>
+              <p>此入口用于 Claude Desktop 应用窗口，不是完整 Windows 桌面。云端图形会话仍在适配，重新连接或安装应用不会启用它。</p>
+            </> : <p>当前环境未报告可用的 Claude Desktop 图形通道，请在设置中查看组件状态。</p>}
           </div>
         ) : desktop?.running && status.vm_running ? (
           <RemoteView

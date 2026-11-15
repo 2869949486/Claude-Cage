@@ -70,6 +70,22 @@ function failure(code, message) {
   error.safe = true;
   return error;
 }
+async function navigateOrDownload(page, navigate) {
+  // Chromium hands download navigations to the download manager instead of
+  // committing a document. That is not a failed browser operation.
+  let started = false;
+  const onDownload = () => { started = true; };
+  page.on("download", onDownload);
+  try {
+    return await navigate();
+  } catch (error) {
+    if (String(error.message).includes("Download is starting")) return;
+    if (started && String(error.message).includes("net::ERR_ABORTED")) return;
+    throw error;
+  } finally {
+    page.off("download", onDownload);
+  }
+}
 export function checkedBrowserURL(value) {
   if (typeof value !== "string" || value.length > 4096) throw failure("invalid_url", "浏览器地址无效");
   if (value === "about:blank") return value;
@@ -1337,11 +1353,11 @@ export function createNativeBrowserService(options = {}) {
         privateContext.on("page", page => { void addPage(page, { incognito: true }).then(tab => activate(tab.id)).catch(() => {}); });
         page = await privateContext.newPage();
         const tab = await addPage(page, { incognito: true }); await activate(tab.id);
-        if (url !== "about:blank") await page.goto(url, { waitUntil: "commit", timeout: 8000 });
+        if (url !== "about:blank") await navigateOrDownload(page, () => page.goto(url, { waitUntil: "commit", timeout: 8000 }));
         return { id: tab.id };
       }
       page = await context.newPage(); const tab = await addPage(page); await activate(tab.id);
-      if (url !== "about:blank") await page.goto(url, { waitUntil: "commit", timeout: 8000 });
+      if (url !== "about:blank") await navigateOrDownload(page, () => page.goto(url, { waitUntil: "commit", timeout: 8000 }));
       remember(); return { id: tab.id };
     }
     if (action === "homepage") { home = checkedBrowserURL(input.url); return { ok: true }; }
@@ -1454,10 +1470,10 @@ export function createNativeBrowserService(options = {}) {
     }
     if (action === "activate") return activate(tab.id);
     if (action === "close") { await page.close(); if (!tabs.size) await addPage(await context.newPage()); if (active) await activate(active); return { ok: true }; }
-    if (action === "navigate") { await page.goto(checkedBrowserURL(input.url), { waitUntil: "commit", timeout: 8000 }); remember(); return { ok: true }; }
-    if (action === "reload") { await page.reload({ waitUntil: "commit", timeout: 8000 }); return { ok: true }; }
-    if (action === "back") { await page.goBack({ waitUntil: "commit", timeout: 8000 }); return { ok: true }; }
-    if (action === "forward") { await page.goForward({ waitUntil: "commit", timeout: 8000 }); return { ok: true }; }
+    if (action === "navigate") { await navigateOrDownload(page, () => page.goto(checkedBrowserURL(input.url), { waitUntil: "commit", timeout: 8000 })); remember(); return { ok: true }; }
+    if (action === "reload") { await navigateOrDownload(page, () => page.reload({ waitUntil: "commit", timeout: 8000 })); return { ok: true }; }
+    if (action === "back") { await navigateOrDownload(page, () => page.goBack({ waitUntil: "commit", timeout: 8000 })); return { ok: true }; }
+    if (action === "forward") { await navigateOrDownload(page, () => page.goForward({ waitUntil: "commit", timeout: 8000 })); return { ok: true }; }
     if (action === "copy-context") {
       if (!tokenPattern.test(input.context || "")) throw failure("invalid_input", "Copy target changed");
       if (tab.copyContext !== input.context) { invalidateCopies(); tab.explicitCopyContext = undefined; }
