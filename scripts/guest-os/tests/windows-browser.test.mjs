@@ -9,7 +9,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
-const { applyWindowsEditorHTMLDefault, checkedBrowserURL, checkedLoopbackProxy, createWindowsBrowserService, validWindowsBrowserFileName } = await import(process.env.CAGE_BROWSER_TEST_CONTROLLER ? pathToFileURL(process.env.CAGE_BROWSER_TEST_CONTROLLER) : new URL("../windows-browser.mjs", import.meta.url));
+import { Readable, Writable } from "node:stream";
+const { applyWindowsEditorHTMLDefault, checkedBrowserURL, checkedLoopbackProxy, createWindowsBrowserService, runWindowsBrowser, validWindowsBrowserFileName } = await import(process.env.CAGE_BROWSER_TEST_CONTROLLER ? pathToFileURL(process.env.CAGE_BROWSER_TEST_CONTROLLER) : new URL("../windows-browser.mjs", import.meta.url));
 import { fixtureZip } from "./windows-browser-fixtures.mjs";
 import { serveMacOSBrowser } from "../macos-browser-service.mjs";
 const moduleURL = file => process.env.CAGE_BROWSER_TEST_MODULE_DIRECTORY ? pathToFileURL(path.join(process.env.CAGE_BROWSER_TEST_MODULE_DIRECTORY, file)) : new URL("../../../internal/cage/" + file, import.meta.url);
@@ -29,6 +30,19 @@ test("Windows controller accepts only loopback proxy and HTTP pages without cred
   for (const name of ["../secret", "a\\b", "C:secret", "CON.txt", "lpt1", "a.", "a ", "a\0b"])
     assert.equal(validWindowsBrowserFileName(name), false);
   assert.equal(validWindowsBrowserFileName("参考🙂.txt"), true);
+});
+
+test("Windows browser wire accepts selections larger than 128 KiB", async t => {
+  const directory = await mkdtemp(path.join(tmpdir(), "cage-cookie-wire-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  let output = '';
+  const request = JSON.stringify({ method: 'POST', path: '/cookies', input: {
+    id: 'tab', mode: 'delete-selected', scope: 'all', cookieKeys: Array(2200).fill('a'.repeat(64)),
+  } }) + '\n';
+  await runWindowsBrowser(Readable.from([Buffer.from(request)]), new Writable({ write(chunk, _, done) { output += chunk; done(); } }), { testing: true, directory });
+  // No browser is launched: reaching configuration validation proves that the
+  // complete selection crossed the line reader rather than failing its limit.
+  assert.equal(JSON.parse(output).code, 'network_unavailable');
 });
 test("Cage editor changes only its fixed low-priority trust default in the official metadata", () => {
   const data = { configurationDefaults: { "editor.fontSize": 19 }, remoteAuthority: "fixture.localhost", other: "keep & < > ' \" 中文" };
@@ -176,6 +190,25 @@ integration("removed browser frames release clipboard and controller sessions", 
     assert.deepEqual((await f.call("health", {}, "GET")).resources, original, "detached frames must release clipboard state");
     await f.call("copy-context", { id, context: "a".repeat(32) });
   }
+});
+
+integration("cookie batch deletion spans all search pages and preserves other sessions and sites", async t => {
+  const f = await fixture(t);
+  const normal = await f.open("/batch-normal"), privateTab = await f.open("/batch-private", true);
+  await f.context().addCookies([
+    ...Array.from({ length: 57 }, (_, index) => ({ name: `batch-${index}`, value: 'fixture', url: f.url })),
+    { name: 'keep', value: 'fixture', url: f.url },
+    { name: 'batch-other-site', value: 'fixture', domain: 'other.test', path: '/' },
+  ]);
+  await privateTab.page.evaluate(() => { document.cookie = 'batch-private=fixture;path=/'; });
+  const result = await f.call("cookies", { id: normal.id, mode: "list", scope: "site", query: "batch-", page: 1 });
+  assert.equal(result.cookies.length, 7);
+  assert.equal(result.selectableKeys.length, 57);
+  await f.call("cookies", { id: normal.id, mode: "delete-selected", scope: "site", query: "batch-", page: 1, cookieKeys: result.selectableKeys });
+  const remaining = await f.call("cookies", { id: normal.id, mode: "list", scope: "all" });
+  assert.deepEqual(remaining.cookies.map(cookie => cookie.name).sort(), ['batch-other-site', 'keep']);
+  const privateCookies = await f.call("cookies", { id: privateTab.id, mode: "list", scope: "all" });
+  assert.deepEqual(privateCookies.cookies.map(cookie => cookie.name), ['batch-private']);
 });
 
 integration("actual Chromium tabs restore and project switching retains unsaved editor buffers", async t => {

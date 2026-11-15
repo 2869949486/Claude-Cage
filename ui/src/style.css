@@ -2764,14 +2764,19 @@ svg {
 .browser-private-badge { display: inline-flex; align-items: center; gap: 4px; flex: none; color: var(--strong); font-size: 0.8rem; }
 .browser-private-note { margin: 0; padding: 3px 12px 6px; color: var(--muted); font-size: 0.8rem; }
 .browser-cookies { margin: 0 12px 8px; padding: 10px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); font-size: 0.86rem; }
-.cookie-heading, .cookie-toolbar, .cookie-pagination, .cookie-record-heading, .cookie-confirm { display: flex; align-items: center; gap: 8px; }
+.cookie-heading, .cookie-toolbar, .cookie-pagination, .cookie-record-heading, .cookie-confirm, .cookie-selection { display: flex; align-items: center; gap: 8px; }
 .cookie-heading { margin-bottom: 8px; }
 .cookie-heading > span, .cookie-pagination > span { color: var(--muted); margin-right: auto; }
 .cookie-toolbar { flex-wrap: wrap; align-items: flex-start; }
 .cookie-toolbar > .inline-select { min-width: 130px; }
 .cookie-toolbar > input { flex: 1; min-width: 140px; width: 0; }
 .browser-cookies button { font-size: inherit; }
-.cookie-toolbar > button, .cookie-confirm > button, .cookie-pagination > button, .cookie-record-heading > button { display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; flex: none; }
+.cookie-toolbar > button, .cookie-confirm > button, .cookie-pagination > button, .cookie-record-heading > button, .cookie-selection > button { display: inline-flex; align-items: center; gap: 4px; padding: 6px 8px; flex: none; }
+.cookie-selection { margin-top: 8px; flex-wrap: wrap; }
+.cookie-selection > label { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.cookie-selection > span { color: var(--muted); margin-right: auto; }
+.cookie-selection input, .cookie-record-heading > input { width: 16px; height: 16px; padding: 0; margin: 0; flex: none; accent-color: var(--accent); }
+.cookie-selection-note { color: var(--muted); margin: 8px 0; }
 .cookie-list { max-height: min(25vh, 220px); overflow: auto; margin-top: 8px; }
 .cookie-list > p { color: var(--muted); margin: 8px 0; }
 .cookie-record { padding: 8px 0; border-top: 1px solid var(--line); overflow-wrap: anywhere; }

@@ -844,7 +844,7 @@ const server = http.createServer(async (req, res) => {
     let text = "";
     for await (const chunk of req) {
       text += chunk;
-      if (text.length > (req.url === "/paste-image" ? 28 * 1024 * 1024 : req.url === "/paste-text" ? 12 * 1024 * 1024 + 4096 : 65536)) throw new Error("Request too large");
+      if (text.length > (req.url === "/paste-image" ? 28 * 1024 * 1024 : req.url === "/paste-text" ? 12 * 1024 * 1024 + 4096 : req.url === "/cookies" ? 1 << 20 : 65536)) throw new Error("Request too large");
     }
     const input = JSON.parse(text || "{}");
     // Ahead of the queue below: a scroll does not wait for a tab operation.
