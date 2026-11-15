@@ -84,7 +84,7 @@ cage agent call account.unlock --input -
 
 ### 导入代理并确认出口
 
-先读 `proxy.status`。已有可用来源时复用，避免重复导入。首次导入可用用户提供的订阅链接，也可用私有文件中的 Clash/Mihomo 配置或分享链接。
+先读 `proxy.status`。已有可用来源时复用，避免重复导入。首次导入可用用户提供的 HTTPS Clash/Mihomo 节点订阅，或私有文件中的 Clash/Mihomo YAML；内容必须包含 `proxies` 或 `payload` 节点。Base64 列表、单个 `vless://` 等分享链接、Xray/v2rayN 原生 JSON 和仅引用远程 provider 的配置不能直接导入，改文件后缀也不能完成转换。只有分享链接时，先从原客户端导出兼容 YAML；协议或握手不兼容时，可按[通过本机代理客户端转发](network.md#通过本机代理客户端转发)配置 SOCKS5 上游，再验证预期出口。
 
 ```json
 {"name":"我的代理","url":"https://用户自己的订阅地址","interval_hours":0,"host_download":true}
@@ -96,6 +96,22 @@ cage agent call proxy.status
 ```
 
 `host_download:true` 明确允许主机联网下载这份订阅，仅用于订阅获取；客机不会因此获得直连回退。已有 Cage 代理时，可省略它让订阅经过现有代理。不要自动从本机浏览器、代理软件或其他 Agent 的凭据文件提取订阅。
+
+从本地 YAML 文件导入时，CLI 仍接收 JSON，YAML 原文放入 `content` 字段。可用 Node.js 读取私有文件并直接通过管道传入，避免将节点内容拼到命令行参数中：
+
+```sh
+node --input-type=module -e '
+import { readFileSync } from "node:fs";
+process.stdout.write(JSON.stringify({
+  name: "我的代理",
+  content: readFileSync(process.argv[1], "utf8")
+}));
+' /private/path/nodes.yaml |
+  cage agent call proxy.import --input - --wait 2m
+cage agent call proxy.status
+```
+
+节点内容使用网络指南中的[完整 SOCKS5 YAML 示例](network.md#通过本机代理客户端转发)或用户自己的兼容配置；不要将 YAML 文件直接作为 `--input` 的 JSON 输入。两种导入方式择一使用，避免重复创建来源。
 
 从返回的来源和节点列表选择用户要求的出口；不要把订阅中的第一个节点当成用户已经同意的出口。
 

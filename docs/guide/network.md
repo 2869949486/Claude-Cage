@@ -27,7 +27,7 @@ keywords: Clash Mihomo YAML VLESS REALITY ML-KEM SOCKS5 SSH 私钥 住宅 IP DNS
 1. 应用节点后，在“设置 → 网络与代理”点击“验证出口”。该检查通过所选代理发起真实 HTTPS 请求，确认能取得出口 IP 和位置，并与预期出口核对；主机上其他代理客户端能够访问外网，不能代替这一步。
 2. 启动工作环境，查看底部网络状态及检查结果。宿主、客机终端和浏览器的出口采样及其他关键检查通过后，才会显示“已联网”。失败项的处理见[为什么应用了节点仍然离线](#为什么应用了节点仍然离线)。
 
-订阅必须包含 `proxies` 或 `payload` 节点。Base64 列表、单个节点分享链接、只引用远程 provider 的配置暂不支持。导入只采用支持的节点与代理链，不采用订阅中的主机系统代理、TUN、监听端口或直连规则。
+订阅或本地配置必须包含 `proxies` 或 `payload` 节点。Base64 列表、单个 `vless://` 等分享链接、Xray/v2rayN 原生 JSON、只引用远程 provider 的配置暂不支持。只有分享链接时，先从原客户端导出 Clash/Mihomo YAML；更改文件后缀不能完成转换。导入只采用支持的节点与代理链，不采用订阅中的主机系统代理、TUN、监听端口或直连规则。
 
 普通节点参数保留并交给 Cage 随附的 Mihomo 核心校验。例如，从 FlClash 复制的 VLESS 节点可以保留 `xudp: true`，无需手动改成其他字段。内核可能忽略未知字段；配置校验通过后，仍需应用节点并检查实际出口。客机公网 UDP 的阻断规则不受这些协议选项影响。
 
@@ -60,6 +60,26 @@ proxies:
   <a href="../../www/public/docs/screenshots/proxy-manual.jpg" target="_blank" rel="noopener" aria-label="查看原图：手动填写 HTTP / SOCKS5 节点"><img src="../../www/public/docs/screenshots/proxy-manual.jpg" alt="手动填写 HTTP / SOCKS5 节点" width="2560" height="1764" loading="lazy" decoding="async" /></a>
   <figcaption>手动填写 HTTP / SOCKS5 节点。截图版本：0.1.6-alpha-preview（开发构建） · macOS 原生应用 · 2026-11-07。<a href="../../www/public/docs/screenshots/proxy-manual.jpg" target="_blank" rel="noopener">查看原图（2560 × 1764） ↗</a></figcaption>
 </figure>
+
+## 通过本机代理客户端转发
+
+节点依赖 Xray 等客户端支持的传输或握手参数、转换为 Mihomo YAML 后仍无法连接时，可将该客户端的本机 SOCKS5 监听作为 Cage 的上游。此时连接顺序为 `Cage → 本机 SOCKS5 监听 → 原客户端所选节点 → 目标网站`；原客户端须保持运行，并让这些请求经过预期节点，避免其直连规则或自动回退改变出口。
+
+1. 在原客户端启用只监听本机的 SOCKS5 端口，记录实际地址、端口及认证信息。此处的本机指运行 Cage 控制服务的主机；连接远程 Cage 时，`127.0.0.1` 指远程主机，无法使用你电脑上的监听。
+2. 在 Cage 手动添加 SOCKS5 节点，或导入以下完整 YAML。示例端口 `10808` 须替换为客户端实际的 SOCKS5 端口；启用认证时，补上该监听要求的 `username` 和 `password`。
+
+```yaml
+proxies:
+  - name: local-client
+    type: socks5
+    server: 127.0.0.1
+    port: 10808
+    udp: false
+```
+
+3. 选择并应用该节点，在“设置 → 网络与代理”点击“验证出口”，与原客户端的预期出口核对；随后完成环境联网检查。客户端选中其他节点、规则变化或停止运行都会影响此路径，须重新验证。
+
+Cage 仍通过受管核心转发客机出站，原客户端负责连接上游 VLESS 等服务；这条路径不会开放客机到主机的任意直连，也不放宽出口规则或公网 UDP 限制。各主机上的监听能否被核心实际访问，以“验证出口”和环境检查结果为准。
 
 ## 通过中转连接住宅出口
 
