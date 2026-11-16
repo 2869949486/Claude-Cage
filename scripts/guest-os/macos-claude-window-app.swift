@@ -465,21 +465,17 @@ private func respond(_ fd: Int32) async {
 }
 
 private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession) async {
-    let file = FileHandle(fileDescriptor: fd, closeOnDealloc: true)
-    var timeout = timeval(tv_sec: 6, tv_usec: 0)
-    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
-    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout.size(ofValue: timeout)))
+    let connection = MacWindowSocket(fd)
+    defer { connection.close() }
     var peer = uid_t(), group = gid_t()
     guard getpeereid(fd, &peer, &group) == 0, peer == getuid() else { return }
     var body = Data()
     do {
       repeat {
         while !body.contains(10) {
-            var chunk = [UInt8](repeating: 0, count: (64 << 10) - body.count)
-            let count = Darwin.read(fd, &chunk, chunk.count)
-            if count < 0 && errno == EINTR { continue }
-            guard count > 0 else { return }
-            body.append(contentsOf: chunk.prefix(count))
+            let chunk = try await connection.read(maximum: (64 << 10) - body.count)
+            guard !chunk.isEmpty else { return }
+            body.append(chunk)
             guard body.count < (64 << 10) || body.contains(10) else { return }
         }
         let line = body.prefix(while: { $0 != 10 })
@@ -501,7 +497,8 @@ private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession)
                 var image = body
                 body.removeAll()
                 while image.count < length {
-                    guard let chunk = try file.read(upToCount: min(65536, length - image.count)), !chunk.isEmpty else { throw Failure(8, "attachment_incomplete") }
+                    let chunk = try await connection.read(maximum: min(65536, length - image.count))
+                    guard !chunk.isEmpty else { throw Failure(8, "attachment_incomplete") }
                     image.append(chunk)
                 }
                 reply = try await MacDesktopFiles.shared.pasteImage(image, window: window)
@@ -517,20 +514,20 @@ private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession)
             reply["imageLength"] = pixels.count
             let header = try JSONSerialization.data(withJSONObject: reply)
             var length = UInt32(header.count).bigEndian
-            try file.write(contentsOf: withUnsafeBytes(of: &length) { Data($0) })
-            try file.write(contentsOf: header)
-            try file.write(contentsOf: pixels)
+            try await connection.write(withUnsafeBytes(of: &length) { Data($0) })
+            try await connection.write(header)
+            try await connection.write(pixels)
         } else {
             var data = try JSONSerialization.data(withJSONObject: reply)
             data.append(10)
-            try file.write(contentsOf: data)
+            try await connection.write(data)
         }
         if request.keepAlive != true { return }
       } while true
     } catch {
         let reason = (error as? Failure)?.message.components(separatedBy: ":").first ?? "window_unavailable"
         GuestDiagnostic.record("window", reason)
-        if let data = try? JSONSerialization.data(withJSONObject: ["error": reason]) { try? file.write(contentsOf: data) }
+        if let data = try? JSONSerialization.data(withJSONObject: ["error": reason]) { try? await connection.write(data) }
     }
 }
 
