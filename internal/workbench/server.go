@@ -614,20 +614,12 @@ func (s *Server) handler() http.Handler {
 				return
 			}
 			ctx, cancel := context.WithCancel(r.Context())
-			if strings.HasPrefix(r.URL.Path, "/api/mobile/") || strings.HasPrefix(r.URL.Path, "/api/cli/") {
-				ctx = context.WithValue(ctx, mobileEpochKey{}, epoch)
-			}
+			ctx = context.WithValue(ctx, accountEpochKey{}, epoch)
 			stop := context.AfterFunc(epoch, cancel)
 			defer func() { stop(); cancel() }()
 			if phoneRoom != nil {
 				stopPhone := context.AfterFunc(phoneRoom, cancel)
 				defer stopPhone()
-			}
-			// A project request may wait for the monitor. Keep its original
-			// epoch available even before the asynchronous cancel callback runs.
-			switch r.URL.Path {
-			case "/api/projects/save", "/api/projects/open", "/api/input/files/directory":
-				ctx = context.WithValue(ctx, projectAccountEpochKey{}, epoch)
 			}
 			r = r.WithContext(ctx)
 		}

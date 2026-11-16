@@ -5,20 +5,25 @@ import (
 	"time"
 )
 
-const projectNetworkWait = 15 * time.Second
-
-type projectAccountEpochKey struct{}
+const (
+	projectNetworkWait    = 15 * time.Second
+	projectOperationRetry = 10 * time.Millisecond
+)
 
 // Permit a project request to wait out a periodic network check. Other
 // operation conflicts keep their immediate busy response.
 func (s *Server) lockProjectOperation(ctx context.Context) bool {
-	epoch, _ := ctx.Value(projectAccountEpochKey{}).(context.Context)
+	epoch, _ := ctx.Value(accountEpochKey{}).(context.Context)
 	if ctx.Err() != nil || (epoch != nil && epoch.Err() != nil) {
 		return false
 	}
 	s.mu.Lock()
 	if s.op.TryLock() {
 		s.mu.Unlock()
+		if ctx.Err() != nil || (epoch != nil && epoch.Err() != nil) {
+			s.op.Unlock()
+			return false
+		}
 		return true
 	}
 	done := s.networkMonitorDone
@@ -47,12 +52,34 @@ func (s *Server) lockProjectOperation(ctx context.Context) bool {
 		return false
 	case <-done:
 	}
-	if !s.op.TryLock() {
-		return false
+	// A peer project request or the environment monitor may acquire the lock
+	// first. Retry within the original deadline, without extending the wait.
+	retry := time.NewTicker(projectOperationRetry)
+	defer retry.Stop()
+	for {
+		if wait.Err() != nil || (epoch != nil && epoch.Err() != nil) {
+			return false
+		}
+		s.mu.Lock()
+		eligible := s.ready && !s.closing && !s.busy()
+		acquired := eligible && s.op.TryLock()
+		s.mu.Unlock()
+		if !eligible {
+			return false
+		}
+		if acquired {
+			if wait.Err() != nil || (epoch != nil && epoch.Err() != nil) {
+				s.op.Unlock()
+				return false
+			}
+			return true
+		}
+		select {
+		case <-wait.Done():
+			return false
+		case <-accountDone:
+			return false
+		case <-retry.C:
+		}
 	}
-	if wait.Err() != nil || (epoch != nil && epoch.Err() != nil) {
-		s.op.Unlock()
-		return false
-	}
-	return true
 }
