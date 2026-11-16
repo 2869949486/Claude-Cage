@@ -170,8 +170,10 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
     case "pointer":
         guard let inputSession else { throw Failure(8, "input_connection_required") }
         try inputSession.pointer(input, target: target, window: window, canvas: canvas)
-    case "click", "scroll", "project-click":
-        guard let x = input.x, let y = input.y, (0..<1).contains(x), (0..<1).contains(y) else { throw Failure(8, "invalid_input") }
+    case "click", "scroll", "project-click", "project-confirm":
+        let confirmProject = input.action == "project-confirm"
+        let x = input.x ?? 0, y = input.y ?? 0
+        guard confirmProject || (input.x != nil && input.y != nil && (0..<1).contains(x) && (0..<1).contains(y)) else { throw Failure(8, "invalid_input") }
         let crop = canvas?.cropTop ?? 0
         let point = CGPoint(x: origin.x + extent.width * x, y: origin.y + crop + (extent.height-crop) * y)
         if input.surface == "browser" {
@@ -186,10 +188,12 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
                 return
             }
         }
-        if input.action == "project-click" {
+        if input.action == "project-click" || confirmProject {
             // NSOpenPanel's remote view returns the hosting AXWindow from
             // point queries. Hit-test only its actual approval button, using
             // its live accessibility bounds and the user's frame coordinates.
+            // Explicit confirmation from the host presses that same button;
+            // checkedMacInputWindow and the panel nonce still bind the target.
             var visited = 0
             func attribute(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
                 var result: CFTypeRef?
@@ -205,7 +209,7 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
                    let dim = attribute(node, kAXSizeAttribute), CFGetTypeID(dim) == AXValueGetTypeID() {
                     var p = CGPoint.zero, s = CGSize.zero
                     if AXValueGetValue(pos as! AXValue, .cgPoint, &p), AXValueGetValue(dim as! AXValue, .cgSize, &s),
-                       CGRect(origin: p, size: s).contains(point) { return node }
+                       (confirmProject || CGRect(origin: p, size: s).contains(point)) { return node }
                 }
                 for child in attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
                     if let match = buttonAtPoint(child, depth: depth + 1) { return match }
@@ -433,11 +437,11 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
         let geometry = try input.geometry.map { try canvas.inputGeometry($0, window:window) }
         try sendInput(input, window: window, canvas:geometry, inputSession: inputSession)
         return ["ok": true]
-    case "project-frame", "project-click":
+    case "project-frame", "project-click", "project-confirm":
         guard let path = input.project else { throw Failure(7, "no_project_panel") }
         let panel = try pendingProjectPanel(path)
         let window = try await visibleProjectPanel(panel)
-        if input.action == "project-click" {
+        if input.action == "project-click" || input.action == "project-confirm" {
             guard input.nonce == panel.nonce, try pendingProjectPanel(path) == panel else { throw Failure(7, "window_changed") }
             try sendInput(input, window: window)
             for _ in 0..<16 {

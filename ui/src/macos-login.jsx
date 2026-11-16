@@ -352,7 +352,7 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
           {administrator && <button type="button" onClick={() => enqueue("fill-password", {})}>填写管理员密码</button>}
         </div>}
         {initialSetup && setupHint && <div className="mac-setup-hint">
-          <p>{setupHint}</p>
+          {typeof setupHint === "string" ? <p>{setupHint}</p> : setupHint}
           <p role={setupError ? "alert" : "status"}>{setupStatus} {installRecovery ? "点击「返回恢复指引」可回到继续安装的指引。" : "查看完整步骤或进入工作台时，点击「返回设置指引」。"}</p>
         </div>}
         <input ref={keyboard} className="mac-login-keyboard" type="text" autoComplete="off" autoCapitalize="none"

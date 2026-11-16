@@ -29,7 +29,7 @@ func checkedMacInputWindow(_ input: Request, window: SCWindow) throws -> MacInpu
           AXValueGetValue(position as! AXValue, .cgPoint, &origin), AXValueGetValue(size as! AXValue, .cgSize, &extent) else {
         throw Failure(7, "window_changed")
     }
-    let tolerance: CGFloat = input.action == "project-click" ? 24 : 1
+    let tolerance: CGFloat = ["project-click", "project-confirm"].contains(input.action) ? 24 : 1
     guard abs(origin.x - window.frame.minX) < tolerance, abs(origin.y - window.frame.minY) < tolerance,
           abs(extent.width - window.frame.width) < tolerance, abs(extent.height - window.frame.height) < tolerance else {
         throw Failure(7, "window_changed")

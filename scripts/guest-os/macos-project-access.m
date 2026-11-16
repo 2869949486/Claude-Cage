@@ -116,7 +116,7 @@ static NSString *mountID(NSString *project) {
     panel.canChooseFiles = NO;
     panel.allowsMultipleSelection = NO;
     panel.directoryURL = [NSURL fileURLWithPath:project isDirectory:YES];
-    panel.message = @"Allow Cage to open this mounted project in the guest terminal and editor.";
+    panel.message = @"Allow the terminal and editor to read and change files in this folder.";
     panel.prompt = @"Use Project";
     _nonce = NSUUID.UUID.UUIDString;
     _panel = panel;

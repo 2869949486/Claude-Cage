@@ -53,7 +53,7 @@ for (const failure of ["http", "native"]) {
   try {
     await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).waitFor();
     await waitCall("screen");
-    await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/打开 Cage Guest Window 的窗口录制开关/).waitFor();
+    await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/找到 Cage Guest Window，打开它右侧的开关/).waitFor();
     const image = page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByRole("img");
     await image.waitFor();
     if (process.env.CAGE_INITIALIZATION_EVIDENCE) await page.screenshot({ path: `${process.env.CAGE_INITIALIZATION_EVIDENCE}/setup-window-${failure}.png`, fullPage: true });
@@ -66,10 +66,10 @@ for (const failure of ["http", "native"]) {
     await waitCall("fill-password");
     permissions.screen=true;
     await waitCall("input");
-    await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/打开 Cage Guest Window 的辅助功能开关/).waitFor();
+    await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/让你可以直接在 Cage 中点击虚拟 Mac/).waitFor();
     permissions.input=true;
     await waitCall("projects");
-    await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/打开 macFUSE 和 macFUSE \(local\) 两个开关，用于/).waitFor();
+    await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/分别打开 macFUSE 和 macFUSE \(local\) 两个开关/).waitFor();
     assert.ok(!calls.includes("finish"),"finished before filesystem permission");
     permissions.projects=true;
     await waitCall("sharing");

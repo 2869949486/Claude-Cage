@@ -9,11 +9,19 @@ import { Modal } from "./modal";
 import "./initialization.css";
 
 const steps = [
-  { id: "screen", label: "窗口录制", hint: "打开 Cage Guest Window 的窗口录制开关。如果提示「退出并重新打开」，按提示操作。" },
-  { id: "input", label: "辅助功能", hint: "打开 Cage Guest Window 的辅助功能开关，允许 Cage 操作客机窗口。" },
-  { id: "projects", label: "文件系统扩展", hint: "打开 macFUSE 和 macFUSE (local) 两个开关，用于在客机中访问你选择的项目。" },
-  { id: "sharing", label: "屏幕共享", hint: "在「系统设置 → 通用 → 共享」中打开「屏幕共享」，并允许当前普通客机用户访问。确认开关已打开后，点击「已开启，重新检查」。Cage 会尝试连接客机的屏幕共享服务。" },
+  { id: "screen", label: "窗口录制", purpose: "让 Cage 在这里显示虚拟 Mac 的设置和授权画面。", instructions: ["在下方设置画面中，找到 Cage Guest Window，打开它右侧的开关。", "如果弹出「退出并重新打开」，点击它。画面短暂断开后会重新连接。"] },
+  { id: "input", label: "辅助功能", purpose: "让你可以直接在 Cage 中点击虚拟 Mac 的按钮、输入文字。", instructions: ["在下方设置画面中，找到 Cage Guest Window，打开它右侧的开关。", "如果要求管理员认证，按下方的密码指引完成，再打开开关。"] },
+  { id: "projects", label: "文件系统扩展", purpose: "让虚拟 Mac 可以读写你允许使用的本机文件夹。", instructions: ["在下方「文件系统扩展」面板中，分别打开 macFUSE 和 macFUSE (local) 两个开关。", "如果要求管理员认证，按下方的密码指引完成。两个开关都需要打开。"] },
+  { id: "sharing", label: "屏幕共享", purpose: "让 Cage 连接虚拟 Mac 的桌面，供你在工作台中操作。", instructions: ["在下方「通用 → 共享」页面打开「屏幕共享」，并允许当前登录的普通用户访问。", "确认开关已打开后，点击「已开启，重新检查」。连接通过后会自动继续。"] },
 ];
+
+function PermissionInstructions({ step, installing, compact = false }) {
+  return <div className="mac-setup-instructions">
+    <p>{step.purpose}</p>
+    <ol>{(installing ? ["在下方 macFUSE 安装器中依次点击「继续」「安装」，按密码指引完成管理员认证。", "安装完成后关闭安装器。Cage 会自动打开扩展设置，再按提示打开两个开关。"] : step.instructions).map(text => <li key={text}>{text}</li>)}</ol>
+    {!compact && step.id !== "sharing" && <p className="mac-setup-retention">完成后会自动检查并进入下一项，无需反复点击按钮。</p>}
+  </div>;
+}
 
 export function MacOSFirstSetup() {
   const { account, refresh } = useAccount();
@@ -140,9 +148,12 @@ export function MacOSFirstSetup() {
   }
 
   const pending = steps.find(({ id }) => !permissions[id]);
-  const selected = steps.find(({ id }) => id === permissionPage);
-  const projectInstallation = permissionPage === "projects" && permissions.project_install_required;
-  const selectedHint = projectInstallation ? "先在客机中完成 macFUSE 官方安装器的安装与管理员授权。安装完成后，Cage 会打开文件系统扩展设置，再开启两个开关。" : selected.hint;
+  const selected = pending || steps.find(({ id }) => id === permissionPage);
+  const projectInstallation = selected.id === "projects" && permissions.project_install_required;
+  const selectedHint = <>
+    {pending ? <><p className="mac-setup-eyebrow">第 {steps.indexOf(pending) + 1} / {steps.length} 项 · {pending.label} · 在虚拟 Mac 内操作</p><PermissionInstructions step={pending} installing={projectInstallation} compact /></> : <p>系统权限已检查完成，正在保存设置。</p>}
+    {pending && <details className="mac-setup-password-help"><summary>出现管理员密码窗口时怎么填？</summary><p>用户名填 <strong>cagesetup</strong>。{permissions.managed_credential ? "先点中密码框，再点击上方「填写授权密码」，最后在系统窗口中确认。" : account.macos_credentials_ready ? "密码填写 Cage 账户密码，再在系统窗口中确认。" : "输入安装时设置的客机管理员密码，再在系统窗口中确认。"}</p></details>}
+  </>;
   const running = Boolean(state?.job?.running);
   const canOperate = Boolean(state?.vm_running && !running && !busy);
   const canFinish = Boolean(state?.ready && !account.macos_password_pending && !pending && !readError);
@@ -163,8 +174,8 @@ export function MacOSFirstSetup() {
   const failure = error || readError || (!running && state?.job?.error) || (!state?.ready && state?.environment_update_error);
 
   return <main className="initialization"><section className="initialization-content mac-setup-content">
-    <div className="initialization-title"><p className="mac-setup-eyebrow">安装与检查 · macOS 系统权限</p><h1>完成虚拟 Mac 的系统授权</h1>
-      <p>安装文件和客机磁盘已保留。下面四项授权在虚拟 Mac 内完成，每项验证通过后会自动继续。屏幕共享会检查服务是否启用且真正可连接。</p></div>
+    <div className="initialization-title"><p className="mac-setup-eyebrow">系统已安装 · 接下来开启使用所需的权限</p><h1>完成虚拟 Mac 的系统授权</h1>
+      <p>下面四项设置都在虚拟 Mac 内完成。Cage 会自动打开对应页面，你只需按提示开启开关；每项通过后自动继续。</p></div>
     <ol className="mac-setup-checklist" aria-label="系统授权进度">
       {steps.map(({ id, label }, index) => <li key={id} data-complete={Boolean(permissions[id])} aria-current={pending?.id === id ? "step" : undefined}>
         <span className="mac-setup-marker">{permissions[id] ? <Check size={16} aria-hidden="true" /> : index + 1}</span>
@@ -174,7 +185,8 @@ export function MacOSFirstSetup() {
     <section className="initialization-operation mac-setup-task" aria-label="当前设置步骤">
       <h2>{!state?.ready ? "连接虚拟 Mac" : pending ? `确认${pending.label}` : "完成系统设置"}</h2>
       <p role="status">{busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />} {progress}</p>
-      {pending && state?.ready && <><p>{selectedHint}</p>
+      {pending && state?.ready && <><PermissionInstructions step={pending} installing={projectInstallation} />
+        <p className="mac-setup-retention">点击「打开客机画面」进入操作。所有设置都在那张画面中完成。</p>
         {pending.id === "projects" && permissions.projects_error && <p>{permissions.projects_error}</p>}
         {pending.id === "sharing" && <ScreenSharingChecks checks={permissions.sharing_checks} summary={permissions.sharing_summary} />}
       </>}
@@ -186,7 +198,7 @@ export function MacOSFirstSetup() {
       </div>
       {running && <button disabled={busy} onClick={() => act("stop")}>停止当前操作，保留进度</button>}
       {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} managedCredential={permissions.managed_credential} disabled={!canOperate}
-        label="打开客机画面" setupActions={controls} setupHint={`${selectedHint} 系统要求管理员时，用户名填 cagesetup；选中密码框后可点击「填写授权密码」。`}
+        label="打开客机画面" setupActions={controls} setupHint={selectedHint}
         setupStatus={failure || progress} setupError={Boolean(failure)} />}
     </section>
     {failure && <section className="initialization-notice" role="alert"><h2>这一步尚未完成</h2><p>{failure}</p><p>已有安装进度会保留。可以重新打开当前设置页，或重新检查状态后继续。</p></section>}

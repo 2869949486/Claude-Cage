@@ -150,5 +150,8 @@
 [data-mode="setup"] .mac-login-tools { position: relative; inset: auto; align-self: flex-start; flex-shrink: 0; margin: 0 12px 8px; box-shadow: none; }
 [data-mode="setup"] .mac-login-stage { position: relative; flex: 1; min-height: 100px; overflow: auto; }
 [data-mode="setup"] .mac-setup-hint { position: relative; inset: auto; flex-shrink: 0; max-height: 28dvh; overflow: auto; margin: 0 12px 8px; pointer-events: auto; }
+[data-mode="setup"] .mac-setup-password-help { border-color: #ffffff32; padding-top: 8px; margin-bottom: 8px; }
+[data-mode="setup"] .mac-setup-password-help summary { cursor: pointer; }
+[data-mode="setup"] .mac-setup-password-help p { margin-top: 8px; }
 [data-mode="setup"] .mac-login-status { position: relative; inset: auto; flex-shrink: 0; margin: 8px 12px; }
 @media (max-width: 600px) { .mac-login-fullscreen[data-mode="setup"] { padding: 6px; } [data-mode="setup"] .mac-login-panel { height: calc(100dvh - 12px); } [data-mode="setup"] .mac-login-heading { padding: 12px; } }
