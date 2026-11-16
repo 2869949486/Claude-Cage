@@ -21,6 +21,7 @@ import (
 // A profile ID selects a guest CLI configuration directory. Only public status
 // fields enter this registry; the official CLI owns authentication in the VM.
 type claudeAccount struct {
+	Number         uint32       `json:"number"`
 	ID             string       `json:"id"`
 	Label          string       `json:"label"`
 	Source         string       `json:"source"`
@@ -61,6 +62,7 @@ type claudeGuestSnapshot struct {
 }
 
 type claudeAccountList struct {
+	LastNumber   uint32           `json:"last_number,omitempty"`
 	Accounts     []claudeAccount  `json:"accounts"`
 	PendingLogin string           `json:"pending_login,omitempty"`
 	Scheduling   claudeScheduling `json:"scheduling"`
@@ -151,10 +153,39 @@ func (s *Server) loadClaudeAccounts() (claudeAccountList, error) {
 	if list.PendingLogin != "" && (!validClaudeID(list.PendingLogin) || ids[list.PendingLogin] || profiles[list.PendingLogin]) {
 		return list, errors.New("Claude 登录记录损坏，请恢复备份")
 	}
-	return list, nil
+	// Assign legacy records in their saved order before a caller can reorder them.
+	err = list.assignNumbers()
+	return list, err
+}
+
+func (list *claudeAccountList) assignNumbers() error {
+	seen := make(map[uint32]bool, len(list.Accounts))
+	for _, account := range list.Accounts {
+		if account.Number == 0 {
+			continue
+		}
+		if seen[account.Number] {
+			return errors.New("Claude 账号编号重复，请检查配置文件")
+		}
+		seen[account.Number] = true
+		list.LastNumber = max(list.LastNumber, account.Number)
+	}
+	for i := range list.Accounts {
+		if list.Accounts[i].Number == 0 {
+			if list.LastNumber == math.MaxUint32 {
+				return errors.New("Claude 账号编号已用尽")
+			}
+			list.LastNumber++
+			list.Accounts[i].Number = list.LastNumber
+		}
+	}
+	return nil
 }
 
 func (s *Server) saveClaudeAccounts(list claudeAccountList) error {
+	if err := list.assignNumbers(); err != nil {
+		return err
+	}
 	if err := writePrivate(filepath.Join(s.profile, "claude-accounts.json"), list); err != nil {
 		return errors.New("Claude 账号设置未保存，请检查配置目录权限和磁盘空间")
 	}

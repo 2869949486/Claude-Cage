@@ -213,6 +213,11 @@ function DetectedProfile({ profile, usageEnvironment, busy, join, perform, chang
   </article>;
 }
 
+function accountCaption(profile) {
+  const label = profile.label || profile.email;
+  return profile.number ? `#${String(profile.number).padStart(2, "0")} ${label}` : label;
+}
+
 function ProfileCard({ profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState("");
@@ -221,7 +226,7 @@ function ProfileCard({ profile, environment, usageEnvironment, busy, active, def
   const fromTerminal = profile.source === "default";
   const savedLabel = label.trim() || profile.email;
   const usage = useUsageCheck(profile, usageEnvironment, perform, change);
-  return <article className="claude-profile" aria-label={displayName} data-enabled={profile.enabled}>
+  return <article className="claude-profile" aria-label={accountCaption(profile)} data-enabled={profile.enabled}>
     <div className="claude-profile-heading">
       <span className="claude-profile-avatar" aria-hidden="true"><img src={crabIcon} alt="" /></span>
       <div className="claude-profile-identity">
@@ -233,7 +238,7 @@ function ProfileCard({ profile, environment, usageEnvironment, busy, active, def
           <button disabled={busy || !savedLabel} aria-label="保存备注"><Check size={15} /></button>
           <button type="button" disabled={busy} onClick={() => setRenaming(false)}>取消</button>
         </form> : <div className="claude-profile-name">
-          <h4 title={displayName}>{displayName}</h4>
+          <h4 title={accountCaption(profile)}>{accountCaption(profile)}</h4>
           {profile.plan && <span className="claude-profile-plan">{profile.plan}</span>}
           <button type="button" className="icon-button" disabled={busy} aria-label={`修改 ${displayName} 的备注`}
             onClick={() => { setLabel(profile.label === profile.email ? "" : profile.label || ""); setRenaming(true); }}><Pencil size={14} /></button>
@@ -362,7 +367,7 @@ export function ClaudeAccountsPanel({ store, running, environmentBusy, tabs, log
       </InlineSelect></label>
       <p className="field-help">已有会话保持原账号和授权。自动接续只在限额已确认、原任务可安全停止且目标账号属于同一接续分组时进行；跨账号可能重建缓存。</p>
       {store.scheduling.mode === "sequential" && accounts?.length > 1 && <div className="claude-account-order" aria-label="账号优先顺序">
-        {accounts.map((profile,index) => <div key={profile.id}><span>{index+1}. {profile.label || profile.email}</span>
+        {accounts.map((profile,index) => <div key={profile.id}><span>优先级 {index+1} · {accountCaption(profile)}</span>
           <button disabled={busy || index===0} aria-label={`提高 ${profile.label} 的优先级`} onClick={() => {
             const order=accounts.map(a=>a.id); [order[index-1],order[index]]=[order[index],order[index-1]];
             perform(() => load({action:"scheduling",scheduling:store.scheduling,order}));
