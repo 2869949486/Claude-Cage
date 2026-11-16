@@ -62,7 +62,8 @@ try {
   await page.getByRole("button", { name: "重新连接项目", exact: true }).click();
   const project = page.getByRole("dialog", { name: "打开项目", exact: true });
   await project.waitFor();
-  assert.equal(await project.getByRole("textbox", { name: "新项目文件夹", exact: true }).inputValue(), state.settings.workspace);
+  await project.getByRole("radio").first().waitFor();
+  assert.equal(await project.getByRole("radio").first().inputValue(), state.settings.workspace);
   await project.getByRole("button", { name: "打开项目", exact: true }).click();
   const permission = page.getByRole("dialog", { name: "允许客机访问所选项目", exact: true });
   await permission.waitFor();
@@ -113,8 +114,8 @@ try {
       state.account.guest_system = "macos";
       Object.assign(state.status, {
         guest_system: "macos", ready: true, vm_running: true,
-        job: { kind: "safety", running: true, message: "正在检查客机网络" },
-        safety: { gate: { mode: "open", until: new Date(Date.now() + 3600000).toISOString() } },
+        job: { kind: "safety", running: false, error: "需要授权工作区", recovery: "project-approval", workspace: state.settings.workspace },
+        safety: { gate: { mode: "closed" } },
         project_errors: [{ path: state.status.environment_directory, recovery: "project-approval" }],
       });
       const image = await page.evaluate(() => document.createElement("canvas").toDataURL().split(",")[1]);
@@ -139,27 +140,27 @@ try {
         if (q.action === "cancel") grant = "";
         return route.fulfill({ json: {} });
       });
+      await page.route("**/api/safety/check", route => {
+        assert.equal(approved, true, "network checks must wait for project verification");
+        state.status.job = { kind: "safety", running: false };
+        state.status.safety = { gate: { mode: "open", until: new Date(Date.now() + 3600000).toISOString() } };
+        return route.fulfill({ json: state.status.job });
+      });
     },
   });
   try {
-    const region = f.page.getByRole("region", { name: "默认工作区访问" });
-    const open = region.getByRole("button", { name: "查看并授权" });
+    const open = f.page.getByRole("button", { name: "打开工作区授权", exact: true });
     const dialog = f.page.getByRole("dialog", { name: "允许客机访问所选项目" });
     const enter = f.page.getByRole("button", { name: "进入工作台", exact: true });
     await open.waitFor();
-    await region.getByText(f.state.status.environment_directory, { exact: true }).waitFor();
     assert.equal(await dialog.count(), 0);
     assert.equal(generation, 0, "polling must not open the guest dialog");
     await open.click();
-    await dialog.getByText("当前客机操作结束后，会显示项目授权窗口。").waitFor();
-    assert.equal(generation, 0);
-    f.state.status.job.running = false;
     await dialog.getByRole("img").waitFor();
     await dialog.getByRole("button", { name: "取消", exact: true }).click();
     await dialog.waitFor({ state: "hidden" });
     assert.equal(grant, "");
-    await enter.waitFor();
-    assert.ok(await enter.isEnabled(), "optional project approval cannot gate workbench entry");
+    assert.equal(approved, false, "cancellation cannot authorize the project");
     await open.click();
     await dialog.getByRole("img").waitFor();
     grant = "";
