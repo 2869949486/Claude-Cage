@@ -107,7 +107,7 @@ try {
 } finally { await browser.close(); }
 
 {
-  let grant = "", generation = 0, approved = false, checks = 0, failConfirm = false;
+  let grant = "", generation = 0, approved = false, checks = 0, failConfirm = "";
   const confirmations = [];
   const f = await createWorkbench({
     initialization: { required: true, tracked: true, started: true, prepared: true },
@@ -134,7 +134,7 @@ try {
         if (q.action === "confirm") {
           confirmations.push(q);
           assert.deepEqual(q, { workspace: state.settings.workspace, grant, action: "confirm", window: 1, pid: 2, nonce: grant });
-          if (failConfirm) return route.fulfill({ json: { error: "project_panel_still_open" } });
+          if (failConfirm) return route.fulfill({ json: { error: failConfirm } });
           approved = true;
         }
         if (q.action === "cancel") grant = "";
@@ -174,25 +174,35 @@ try {
     await dialog.getByText("查看 macOS 授权窗口 / 已允许但未继续？", { exact: true }).click();
     await dialog.getByRole("button", { name: "我已允许，重新检查", exact: true }).click();
     assert.equal(approved, false, "verification must not approve a pending project");
-    failConfirm = true;
-    await allow.click();
-    await dialog.getByRole("alert").filter({ hasText: "macOS 尚未完成确认" }).waitFor();
-    assert.equal(checks, 0, "failed confirmation cannot continue setup");
-    await allow.waitFor({ state: "visible" });
-    await f.page.waitForFunction(() => [...document.querySelectorAll("button")].some(b => b.textContent === "允许使用此文件夹" && !b.disabled));
+    const failures = [
+      ["project_panel_still_open", "macOS 尚未完成确认"],
+      ["project_panel_changed", "这次文件夹授权请求已变化"],
+      ["project_window_identity_changed", "显示的授权窗口已被替换"],
+      ["project_window_not_frontmost", "文件夹授权窗口未处于客机前台"],
+      ["project_window_focus_unavailable", "无法读取文件夹授权窗口的焦点"],
+      ["project_window_geometry_unavailable", "无法读取文件夹授权窗口的位置和尺寸"],
+      ["project_window_geometry_changed", "文件夹授权窗口的位置或尺寸与当前画面不一致"],
+    ];
+    for (const [code, message] of failures) {
+      failConfirm = code;
+      await allow.click();
+      await dialog.getByRole("alert").filter({ hasText: message }).waitFor();
+      assert.equal(checks, 0, "failed confirmation cannot continue setup");
+      await f.page.waitForFunction(() => [...document.querySelectorAll("button")].some(b => b.textContent === "允许使用此文件夹" && !b.disabled));
+    }
     await dialog.getByText("查看 macOS 授权窗口 / 已允许但未继续？", { exact: true }).click();
     if (process.env.CAGE_INITIALIZATION_EVIDENCE) await f.page.screenshot({ path: process.env.CAGE_INITIALIZATION_EVIDENCE + "/folder-approval.png", animations: "disabled" });
     await f.page.setViewportSize({ width: 390, height: 700 });
     assert.equal(await f.page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     if (process.env.CAGE_INITIALIZATION_EVIDENCE) await f.page.screenshot({ path: process.env.CAGE_INITIALIZATION_EVIDENCE + "/folder-approval-compact.png", animations: "disabled" });
-    failConfirm = false;
+    failConfirm = "";
     await allow.focus();
     await f.page.keyboard.press("Enter");
     await dialog.waitFor({ state: "hidden" });
     await enter.click();
     await f.page.getByRole("complementary", { name: "项目与终端" }).waitFor();
     assert.equal(checks, 1);
-    assert.equal(confirmations.length, 2);
+    assert.equal(confirmations.length, failures.length + 1);
     assert.deepEqual(f.errors, []);
     console.log("PASS macOS initialization: explained scope, refresh, cancellation, expiry, renewal, verification, confirm failure, keyboard confirmation and automatic workbench continuation");
   } finally { await f.browser.close(); }

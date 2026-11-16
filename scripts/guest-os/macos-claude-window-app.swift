@@ -442,7 +442,7 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
         let panel = try pendingProjectPanel(path)
         let window = try await visibleProjectPanel(panel)
         if input.action == "project-click" || input.action == "project-confirm" {
-            guard input.nonce == panel.nonce, try pendingProjectPanel(path) == panel else { throw Failure(7, "window_changed") }
+            guard input.nonce == panel.nonce, try pendingProjectPanel(path) == panel else { throw Failure(7, "project_panel_changed") }
             try sendInput(input, window: window)
             for _ in 0..<16 {
                 try await Task.sleep(nanoseconds: 100_000_000)
@@ -451,7 +451,7 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
             throw Failure(8, "project_panel_still_open")
         }
         let data = try await screenshot(window)
-        guard data.count < 8 << 20, try pendingProjectPanel(path) == panel else { throw Failure(7, "window_changed") }
+        guard data.count < 8 << 20, try pendingProjectPanel(path) == panel else { throw Failure(7, "project_panel_changed") }
         try consoleUser()
         return ["image": data.base64EncodedString(), "window": panel.windowNumber, "pid": panel.pid, "nonce": panel.nonce]
     default: throw Failure(8, "unknown_action")
