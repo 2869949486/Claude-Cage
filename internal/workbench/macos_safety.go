@@ -238,6 +238,10 @@ func (s *Server) macOSVMLayout() (bool, bool) {
 func (s *Server) macOSBrowserObservation(ctx context.Context, cfg cage.Config, network bool) (browserObservation, error) {
 	var observation browserObservation
 	data, err := s.nativeBrowserClient().request(ctx, "POST", "/audit", map[string]any{"timezone": cfg.Timezone, "network": network})
+	var failure windowsBrowserFailure
+	if errors.As(err, &failure) && failure.code != "browser_operation_failed" {
+		return observation, failure
+	}
 	if err != nil || json.Unmarshal(data, &observation) != nil || observation.Platform == "" {
 		return observation, errors.New("无法在虚拟 Mac 的实际浏览器页面读取观测结果")
 	}

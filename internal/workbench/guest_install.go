@@ -376,6 +376,7 @@ func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, i
 						recovery != nil, recovery != nil && recovery.InstallationID == install.ID, recovery != nil && recovery.User == credential.Username && recovery.User == recoveryUser))
 					return errors.New("恢复入口与原安装身份不一致，请在初始化页重新准备恢复入口；原磁盘和安装记录已保留")
 				}
+				s.jobs.execution().guiAuthorization()
 			}
 		}
 		if err := s.prepareEnvironment(); err != nil {

@@ -123,7 +123,8 @@ function Initialization({ initial, onComplete }) {
             setStep("install");
             try {
               await api("/environment/guest-systems/activate", {});
-              await native("reconnect");
+              if (navigation?.reconnectLocal) await navigation.reconnectLocal();
+              else await native("reconnect");
             } catch (error) {
               activation.current = false;
               if (alive.current) setError(error.message);
@@ -271,7 +272,7 @@ function Initialization({ initial, onComplete }) {
             {exitCandidate && <section className="initialization-notice" aria-label="确认固定出口"><p>客机终端、浏览器和代理已测得一致出口。请确认是否将它绑定为固定出口。</p><button disabled={busy || Boolean(connectionError)} onClick={bindExit}>绑定检测到的固定出口 {exitCandidate}</button></section>}
             {needsExitRestart && <section className="initialization-notice" aria-label="固定出口已保存"><p>固定出口已保存。重启客机并重新检测后才能进入工作台。</p><button className="primary" disabled={busy || Boolean(connectionError)} onClick={restart}>{status.vm_running ? "重启客机并重新检测" : "启动客机并重新检测"}</button></section>}
             {progress ? <SetupProgress job={progress} onDetails={() => setDetails(true)} onStop={stop} onRetry={needsExitRestart ? restart : install} disconnected={Boolean(connectionError) || submitting} /> : (busy || status.guest_system !== "macos" || !networkPending) && <div className="initialization-operation" role="status">{busy && <LoaderCircle size={22} className="spin" />}<p>{stopped ? "安装已停止，已有下载和磁盘会保留。点击「继续安装」接着完成。" : job.message || (status.vm_running ? "请完成客机连接和网络检查。" : "准备继续原安装，已有文件和磁盘会保留。")}</p>{!busy && !job.error && !needsExitRestart && <button className="primary" disabled={Boolean(connectionError)} onClick={install}>{status.ready ? "重新启动并检查" : "继续安装"}</button>}{busy && <button onClick={stop} disabled={submitting}>停止安装</button>}</div>}
-            {pending?.system === "macos" && macRecovery?.available && <section className="initialization-notice" aria-label="恢复 macOS 组件安装">
+            {pending?.system === "macos" && macRecovery?.available && <section hidden={busy && !job.gui_authorization} className="initialization-notice" aria-label="恢复 macOS 组件安装">
               <h2>继续安装 macFUSE</h2>
               <p>文件共享组件的安装需要你在虚拟 Mac 中完成管理员授权。系统和已有安装进度会保留，请按以下顺序继续：</p>
               <ol>

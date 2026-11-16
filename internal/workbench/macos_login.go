@@ -263,7 +263,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "请先完成窗口录制、辅助功能、文件系统扩展和屏幕共享授权", 409)
 				return
 			}
-			if !s.op.TryLock() {
+			if !s.lockCompletion(r.Context()) {
 				http.Error(w, "正在处理其他客机操作，请重试", 409)
 				return
 			}

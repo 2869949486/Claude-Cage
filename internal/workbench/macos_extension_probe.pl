@@ -3,6 +3,7 @@ use warnings;
 use File::Temp qw(tempdir);
 use POSIX qw(_exit WNOHANG);
 use Socket qw(AF_UNIX SOCK_STREAM PF_UNSPEC);
+use Errno qw(EPERM);
 
 my $server_readonly = @ARGV == 1 && $ARGV[0] eq 'server-readonly';
 die "invalid probe mode" if @ARGV && !$server_readonly;
@@ -58,10 +59,17 @@ my $ok = eval {
     my ($flags) = $attached =~ m{^(?:macfuse://[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}|/dev/disk[0-9]+s[0-9]+) on \Q$mount\E \(macfuse, ([^\n]+)\)\s*$}i;
     my %options = map { $_ => 1 } split /, /, ($flags // '');
     die "unexpected mount" unless $options{'fskit'} && $options{'nodev'} && $options{'nosuid'} && ($server_readonly || $options{'read-only'}) && $options{"mounted by $user"};
-    open my $read, '<', "$mount/readonly" or die "read-only mount unreadable";
-    my $content = do { local $/; <$read> };
-    close $read or die "read-only mount unreadable";
-    die "wrong read-only source" unless $content eq 'cage-readonly-probe';
+    # SSH has no scoped approval for this synthetic volume on a fresh macOS.
+    # EPERM is expected at this boundary even when FSKit mounted successfully.
+    # The real project remains gated by the GUI agent's scoped folder approval
+    # and challenge read; do not require Full Disk Access just for this check.
+    if (open my $read, '<', "$mount/readonly") {
+        my $content = do { local $/; <$read> };
+        close $read or die "read-only mount unreadable";
+        die "wrong read-only source" unless $content eq 'cage-readonly-probe';
+    } else {
+        die "read-only mount unreadable" unless $! == EPERM;
+    }
     if (open my $write, '>', "$mount/forbidden") {
         close $write;
         die "read-only endpoint accepted a write";

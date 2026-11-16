@@ -82,3 +82,120 @@ for (const reselect of [true, false]) {
     console.log("PASS macOS local media: stop → reselect → existing IPSW reaches install without stale pending choice");
   } finally { await f.browser.close(); }
 }
+
+// The recovery record exists during ordinary provisioning too. Only the
+// accepted GUI mode may present it while a job is running.
+{
+  const f = await createWorkbench({
+    initialization: { required: true, tracked: true, started: true },
+    waitForReady: false,
+    beforeNavigate: async (page, state) => {
+      state.status.job = { id: "provisioning", kind: "guest-install", running: true, setup_progress: { system: "macos", phase: "tools", label: "正在安装客机应用和开发工具" } };
+      await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { system: "macos", available: true, pending: { system: "macos", id: "existing-disk" } } }));
+      await page.route("**/api/macos/install-recovery", route => route.fulfill({ json: { available: true, running: true, phase: "awaiting_gui_authorization" } }));
+    },
+  });
+  try {
+    const recovery = f.page.getByRole("region", { name: "恢复 macOS 组件安装", exact: true });
+    await f.page.getByRole("heading", { name: "正在安装客机应用和开发工具", exact: true }).waitFor();
+    await f.page.waitForResponse("**/api/macos/install-recovery");
+    assert.equal(await recovery.count(), 0, "ordinary provisioning must not request manual recovery");
+    f.state.status.job.gui_authorization = true;
+    await recovery.getByRole("button", { name: "打开恢复画面", exact: true }).waitFor();
+    await f.page.getByText(/请保持恢复画面开启，安装器出现后/).waitFor();
+    delete f.state.status.job.gui_authorization;
+    f.state.status.job.running = false;
+    f.state.status.job.error = "安装器需要手动授权";
+    await recovery.getByRole("button", { name: "打开恢复画面", exact: true }).waitFor();
+    assert.deepEqual(f.errors, []);
+    console.log("PASS macOS recovery guidance: automatic provisioning stays quiet; GUI mode and actual failures expose recovery");
+  } finally { await f.browser.close(); }
+}
+
+// Activation retires the installer controller. Reconnect through the existing
+// gateway candidate/commit flow so the wizard does not strand the user in SSH.
+{
+  let activated = false, committed = false, connections = 0, commitSeen;
+  const nativeCalls = [];
+  let current = { mode: "local", connection_id: "installer", desktop_gateway: true, client_platform: "darwin", server_platform: "darwin", connection: { state: "connected" } };
+  const f = await createWorkbench({
+    initialization: { required: true, tracked: true, started: true },
+    clientContext: current,
+    waitForReady: false,
+    nativeRequest: message => { nativeCalls.push(message.action); return null; },
+    beforeNavigate: async (page, state) => {
+      commitSeen = page.waitForRequest("**/api/client/commit", {timeout:15000});
+      await page.route("**/api/macos/first-setup", route => route.fulfill({ json: { screen:false, input:false, projects:false, sharing:false } }));
+      await page.route("**/api/client/context", route => route.fulfill({ json: current }));
+      await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: activated ? {} : { available: true, activate: true, pending: { system: "macos", id: "finished-install" } } }));
+      await page.route("**/api/environment/guest-systems/activate", route => { activated = true; return route.fulfill({ json: { stopping: true } }); });
+      await page.route("**/api/client/candidate", route => {
+        assert.equal(route.request().postDataJSON().mode, "local");
+        connections++;
+        return route.fulfill({ json: { id: "new-controller", mode: "local", connection: { state: "connected" } } });
+      });
+      await page.route("**/api/client/commit", route => {
+        assert.equal(route.request().postDataJSON().candidate_id, "new-controller");
+        committed = true;
+        Object.assign(state.account, { guest_system:"macos", initial_mac_setup:true });
+        Object.assign(state.status, { ready:true, vm_running:true });
+        current = { ...current, connection_id: "installed" };
+        return route.fulfill({ json: { connected: true } });
+      });
+    },
+  });
+  try {
+    await commitSeen;
+    await f.page.getByRole("heading", {name:"完成虚拟 Mac 的系统授权", exact:true}).waitFor();
+    assert.ok(activated && committed);
+    assert.equal(connections, 1);
+    assert.equal(nativeCalls.filter(action => action === "reconnect").length, 0, "native reload keeps a stale selected installer controller");
+    assert.deepEqual(f.errors, []);
+    console.log("PASS macOS activation: controller handoff automatically reconnects the local gateway without manual SSH navigation");
+  } finally { await f.browser.close(); }
+}
+
+// A changed gate configuration cannot be repaired by repeating the same check.
+// Keep the restart action reachable even after the in-memory job is replaced.
+for (const source of ["job", "safety"]) {
+  let stops = 0, starts = 0, checks = 0;
+  const f = await createWorkbench({
+    initialization: { required: true, tracked: true, started: true },
+    beforeNavigate: async (page, state) => {
+      state.account.guest_system = "macos";
+      Object.assign(state.status, { guest_system: "macos", vm_running: true, ready: true, workspace: "", job: {}, safety: { gate: { mode: "closed" } } });
+      state.status[source].error = "出口地址或环境设置变化需要重启环境";
+      await page.route("**/api/stop", route => {
+        stops++;
+        state.status.vm_running = false;
+        state.status.ready = false;
+        state.status.job = { id: "stop-config", kind: "stop", running: false };
+        return route.fulfill({ json: state.status.job });
+      });
+      await page.route("**/api/start", route => {
+        assert.equal(state.status.vm_running, false);
+        starts++;
+        state.status.job = { id: "start-config", kind: "start", running: true };
+        return route.fulfill({ json: state.status.job });
+      });
+      await page.route("**/api/safety/check", route => { checks++; return route.fulfill({ json: {} }); });
+    },
+  });
+  try {
+    const restart = f.page.getByRole("button", { name: "保存后重启并检查", exact: true });
+    await restart.waitFor();
+    assert.equal(await f.page.getByRole("button", { name: "重新检查并继续", exact: true }).count(), 0);
+    await restart.click();
+    const dialog = f.page.getByRole("dialog", { name: "重启虚拟 Mac 并检查？", exact: true });
+    await dialog.getByRole("button", { name: "取消", exact: true }).click();
+    assert.equal(stops + starts, 0);
+    await restart.click();
+    const started = f.page.waitForResponse("**/api/start");
+    await dialog.getByRole("button", { name: "重启并检查", exact: true }).click();
+    await started;
+    await f.page.getByRole("button", { name: "停止安装", exact: true }).waitFor();
+    assert.equal(stops, 1); assert.equal(starts, 1); assert.equal(checks, 0);
+    assert.deepEqual(f.errors, []);
+    console.log(`PASS macOS changed configuration: ${source} failure routes to confirmed stop-before-start instead of a check loop`);
+  } finally { await f.browser.close(); }
+}

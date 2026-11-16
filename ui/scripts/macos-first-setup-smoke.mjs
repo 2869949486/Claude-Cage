@@ -7,7 +7,7 @@ for (const failure of ["http", "native"]) {
   const {page, browser, errors} = await createWorkbench({
     async beforeNavigate(page, state) {
       Object.assign(state.account, {initial_mac_setup:true, guest_system:"macos", macos_guest_user:user});
-      Object.assign(state.status, {ready:true, vm_running:true});
+      Object.assign(state.status, {ready:true, vm_running:true, job:{kind:"start", running:false, error:"客机浏览器连接已关闭，请恢复连接后核对操作结果"}});
       const frame = await page.evaluate(() => {
         const canvas = document.createElement("canvas");
         canvas.width = 160; canvas.height = 100;
@@ -56,6 +56,8 @@ for (const failure of ["http", "native"]) {
     await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByText(/找到 Cage Guest Window，打开它右侧的开关/).waitFor();
     const image = page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByRole("img");
     await image.waitFor();
+    assert.equal(await page.getByRole("button",{name:"继续启动并连接",exact:true}).count(),0,"a ready setup must not offer to start again");
+    assert.equal(await page.getByRole("dialog",{name:"首次设置虚拟 Mac"}).getByRole("alert").count(),0,"a ready setup must not show an earlier browser startup failure");
     if (process.env.CAGE_INITIALIZATION_EVIDENCE) await page.screenshot({ path: `${process.env.CAGE_INITIALIZATION_EVIDENCE}/setup-window-${failure}.png`, fullPage: true });
     const box = await image.boundingBox();
     await page.mouse.move(box.x+box.width/2,box.y+box.height/2);
@@ -78,6 +80,8 @@ for (const failure of ["http", "native"]) {
     assert.ok(!calls.includes("finish"), "opening the settings pane cannot confirm screen sharing");
     await sharingConfirm.click();
     await waitCall("confirm-sharing");
+    await tools.getByRole("button",{name:"重试完成设置",exact:true}).waitFor();
+    assert.equal(await tools.getByRole("button",{name:"打开屏幕共享",exact:true}).count(),0,"completed permissions must expose the finish retry in the setup view");
     await page.getByRole("button",{name:"返回设置指引"}).click();
     const retry=page.getByRole("button",{name:"重试完成设置"});
     await retry.waitFor();

@@ -9,10 +9,10 @@ import { Modal } from "./modal";
 import "./initialization.css";
 
 const steps = [
-  { id: "screen", label: "窗口录制", purpose: "让 Cage 在这里显示虚拟 Mac 的设置和授权画面。", instructions: ["在下方设置画面中，找到 Cage Guest Window，打开它右侧的开关。", "如果弹出「退出并重新打开」，点击它。画面短暂断开后会重新连接。"] },
+  { id: "screen", label: "窗口录制", purpose: "让 Cage 在这里显示虚拟 Mac 的设置和授权画面。", instructions: ["如果先出现系统提示，点击 Open System Settings（打开系统设置）。", "在设置画面中，找到 Cage Guest Window，打开它右侧的开关。", "如果提示 Quit & Reopen（退出并重新打开），点击它。画面短暂断开后会重新连接。"] },
   { id: "input", label: "辅助功能", purpose: "让你可以直接在 Cage 中点击虚拟 Mac 的按钮、输入文字。", instructions: ["在下方设置画面中，找到 Cage Guest Window，打开它右侧的开关。", "如果要求管理员认证，按下方的密码指引完成，再打开开关。"] },
   { id: "projects", label: "文件系统扩展", purpose: "让虚拟 Mac 可以读写你允许使用的本机文件夹。", instructions: ["在下方「文件系统扩展」面板中，分别打开 macFUSE 和 macFUSE (local) 两个开关。", "如果要求管理员认证，按下方的密码指引完成。两个开关都需要打开。"] },
-  { id: "sharing", label: "屏幕共享", purpose: "让 Cage 连接虚拟 Mac 的桌面，供你在工作台中操作。", instructions: ["在下方「通用 → 共享」页面打开「屏幕共享」，并允许当前登录的普通用户访问。", "确认开关已打开后，点击「已开启，重新检查」。连接通过后会自动继续。"] },
+  { id: "sharing", label: "屏幕共享", purpose: "让 Cage 连接虚拟 Mac 的桌面，供你在工作台中操作。", instructions: ["在下方「通用 → 共享（Sharing）」页面确认「屏幕共享（Screen Sharing）」已打开，允许安装时创建的账户访问。", "如果仍停在上一项设置，在左上角搜索框输入 Sharing，再点击搜索结果中的 Sharing。确认后点击「已开启，重新检查」，通过后会自动继续。"] },
 ];
 
 function PermissionInstructions({ step, installing, compact = false }) {
@@ -168,10 +168,12 @@ export function MacOSFirstSetup() {
     <button type="button" disabled={!canOperate} onClick={() => act("sharing")}>{busy ? "正在处理…" : "打开屏幕共享设置"}</button>
     <button type="button" className="primary" disabled={!canOperate} onClick={() => act("confirm-sharing")}>{busy ? "正在检查…" : "已开启，重新检查"}</button>
   </>;
-  const controls = pending?.id === "sharing" ? sharingControls : <button type="button" className="primary" disabled={!canOperate} onClick={() => act(pending?.id || permissionPage)}>
+  const controls = !pending ? <button type="button" className="primary" disabled={busy || !completionFailed || !canFinish} onClick={() => act("finish")}>
+    {completionFailed ? "重试完成设置" : "正在保存设置…"}
+  </button> : pending.id === "sharing" ? sharingControls : <button type="button" className="primary" disabled={!canOperate} onClick={() => act(pending.id)}>
     {busy ? "正在处理…" : projectInstallation ? "打开 macFUSE 安装器" : `打开${pending?.label || selected.label}`}
   </button>;
-  const failure = error || readError || (!running && state?.job?.error) || (!state?.ready && state?.environment_update_error);
+  const failure = error || readError || (!state?.ready && !running && state?.job?.error) || (!state?.ready && state?.environment_update_error);
 
   return <main className="initialization"><section className="initialization-content mac-setup-content">
     <div className="initialization-title"><p className="mac-setup-eyebrow">系统已安装 · 接下来开启使用所需的权限</p><h1>完成虚拟 Mac 的系统授权</h1>
@@ -191,13 +193,13 @@ export function MacOSFirstSetup() {
         {pending.id === "sharing" && <ScreenSharingChecks checks={permissions.sharing_checks} summary={permissions.sharing_summary} />}
       </>}
       <div className="initialization-recovery">
-        {state && !running && (!state.ready || account.macos_password_pending || state.job?.error) && <button className="primary" disabled={busy} onClick={() => act("start")}>{account.macos_password_pending ? "重试同步客机密码" : "继续启动并连接"}</button>}
+        {state && !running && (!state.ready || account.macos_password_pending) && <button className="primary" disabled={busy} onClick={() => act("start")}>{account.macos_password_pending ? "重试同步客机密码" : "继续启动并连接"}</button>}
         {pending && state?.ready && controls}
         {completionFailed && <button className="primary" disabled={busy || !canFinish} onClick={() => act("finish")}>重试完成设置</button>}
         <button disabled={busy || running} onClick={() => void check()}>重新检查状态</button>
       </div>
       {running && <button disabled={busy} onClick={() => act("stop")}>停止当前操作，保留进度</button>}
-      {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} managedCredential={permissions.managed_credential} disabled={!canOperate}
+      {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} managedCredential={permissions.managed_credential} disabled={!state.vm_running || running}
         label="打开客机画面" setupActions={controls} setupHint={selectedHint}
         setupStatus={failure || progress} setupError={Boolean(failure)} />}
     </section>

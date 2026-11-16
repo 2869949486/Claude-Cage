@@ -9,6 +9,8 @@ export function initializationRecovery(status) {
   const failure = status.project_errors?.find(item => item.path === workspace);
   if (failure) return { ...failure, workspace };
   if (status.job?.error && status.job.recovery) return { recovery: status.job.recovery, message: status.job.error, workspace: status.job.workspace || workspace };
+  const restartMessage = "出口地址或环境设置变化需要重启环境";
+  if ([status.job?.error, status.safety?.error].includes(restartMessage)) return { recovery: "environment-restart", message: "网络设置已更新，需要重启虚拟 Mac 才能生效。点击下方按钮，Cage 会保留已有系统和文件，重启后重新检查。", workspace };
   return { workspace };
 }
 
