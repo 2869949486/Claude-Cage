@@ -50,7 +50,7 @@ export function SetupProgress({ job, onDetails, onStop, onRetry, disconnected })
         className={knownSize ? "setup-meter" : "setup-meter setup-meter-active"}>
         <span style={knownSize ? { width: `${received / total * 100}%` } : undefined} />
       </div>}
-      {native && job.setup_progress.system === "macos" && !failed && <p className="setup-transfer-hint">{phase === "image" ? "正在自动准备系统安装文件，暂时无需操作。下载完成后会继续安装。" : phase === "packages" ? "正在自动安装独立的 macOS 系统，暂时无需操作。完成后会继续配置工具。" : "正在自动配置使用所需的工具和服务。接下来会引导你逐项开启系统权限。"} 进度会保留，可以稍后回来继续。</p>}
+      {native && job.setup_progress.system === "macos" && !failed && <p className="setup-transfer-hint">{job.gui_authorization ? "请保持恢复画面开启，安装器出现后按提示完成管理员授权。安装完成后会自动继续。" : phase === "image" ? "正在自动准备系统安装文件，暂时无需操作。下载完成后会继续安装。" : phase === "packages" ? "正在自动安装独立的 macOS 系统，暂时无需操作。完成后会继续配置工具。" : "正在自动配置使用所需的工具和服务。接下来会引导你逐项开启系统权限。"} 进度会保留，可以稍后回来继续。</p>}
       {windows && operation === "account" && <p className="setup-transfer-hint">为虚拟 Windows 设置新的本地管理员名称和密码。安装后用此账户登录客机，并在继续安装时再次输入。</p>}
       {waitingForWindows && <p className="setup-transfer-hint">在虚拟机连接（VMConnect）窗口选择 Windows 版本、磁盘和区域，使用安装前设置的本地管理员登录桌面，再回到 Cage 继续。本轮 PowerShell 创建窗口会自动关闭。</p>}
       {windows && operation === "credentials" && <p className="setup-transfer-hint">确认客机已登录桌面，在 PowerShell 安装窗口输入客机管理员账户。请保持该窗口开启，等待组件安装结束。</p>}

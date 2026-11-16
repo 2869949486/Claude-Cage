@@ -100,7 +100,13 @@ func (s *Server) initialization(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &input) {
 		return
 	}
-	if !s.op.TryLock() {
+	locked := false
+	if input.Action == "complete" {
+		locked = s.lockCompletion(r.Context())
+	} else {
+		locked = s.op.TryLock()
+	}
+	if !locked {
 		http.Error(w, "环境操作仍在进行，请等待完成后继续", http.StatusConflict)
 		return
 	}

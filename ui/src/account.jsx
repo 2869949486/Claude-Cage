@@ -315,14 +315,14 @@ export function AccountGate({ children }) {
           {creating
             ? "注册 Cage 账户"
             : account
-              ? `欢迎回来，${account.username}`
+              ? account.initial_mac_setup ? "继续完成 macOS 设置" : `欢迎回来，${account.username}`
               : "正在连接 Cage"}
         </h1>
         <p className="account-entry-intro">
           {creating
             ? isRemoteClient() ? "在云端创建账户，保护这台主机上的工作与登录状态。" : "先注册用户名和密码，再选择客机系统并安装环境。macOS 客机会使用同一套账密。"
             : account
-              ? account.trusted_local ? "本机工作区" : "输入密码，继续你的工作。"
+              ? account.initial_mac_setup ? "系统已安装。请输入 Cage 账户密码，解锁后继续完成虚拟 Mac 的系统授权。" : account.trusted_local ? "本机工作区" : "输入密码，继续你的工作。"
               : isRemoteClient() ? "正在读取云端账户…" : "正在读取本机账户…"}
         </p>
         {account?.background_running && (

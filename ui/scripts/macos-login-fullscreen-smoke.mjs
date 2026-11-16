@@ -42,7 +42,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1920, height: 108
   }
   try {
     if (viewport.width < 600) await page.getByRole("button",{name:"收起侧栏",exact:true}).click();
-    const trigger=page.getByRole("button",{name:"登录客机账户"});
+    const trigger=page.getByRole("button",{name:"查看客机登录界面"});
     await trigger.click({timeout:7000});
     const screen=page.getByRole("dialog",{name:"登录虚拟 Mac"});
     const img=screen.getByRole("img");
@@ -107,7 +107,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1920, height: 108
     assert.deepEqual(await img.boundingBox(),fit);
     await page.evaluate(() => window.cageNativeAction("closeTab"));
     await screen.waitFor({state:"detached"});
-    await page.waitForFunction(() => document.activeElement?.textContent === "登录客机账户");
+    await page.waitForFunction(() => document.activeElement?.textContent === "查看客机登录界面");
     assert.ok(!await page.locator("#root").evaluate((el)=>el.inert));
     frameMime="image/png";
     await trigger.click();
@@ -164,6 +164,13 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1920, height: 108
     const screen = page.getByRole("dialog", {name:"首次设置虚拟 Mac"});
     const fill = screen.getByRole("button", {name:"填写授权密码", exact:true});
     await screen.getByRole("img").waitFor();
+    await screen.getByRole("button", {name:"放大", exact:true}).click();
+    await screen.getByText("放大后可拖动画面查看其他位置；点击「适配」查看完整画面。", {exact:true}).waitFor();
+    const stageBox = await screen.locator(".mac-login-stage").boundingBox();
+    const imageBox = await screen.getByRole("img").boundingBox();
+    const centerY = imageBox.y + imageBox.height / 2;
+    assert.ok(centerY > stageBox.y + 10 && centerY < stageBox.y + stageBox.height - 10, "setup zoom must keep a central system authorization dialog in view");
+    await screen.getByRole("button", {name:"适配", exact:true}).click();
     await fill.click();
     await screen.getByRole("alert").filter({hasText:operationError}).waitFor();
     const observed = frames;
@@ -188,7 +195,7 @@ for (const viewport of [{ width: 1280, height: 900 }, { width: 1920, height: 108
     await screen.getByRole("alert").filter({hasText:operationError}).waitFor();
     await screen.getByRole("button", {name:"返回设置指引"}).click();
     await screen.waitFor({state:"detached"});
-    await page.getByRole("button", {name:"打开客机系统设置", exact:true}).click();
+    await page.getByRole("button", {name:"打开客机画面", exact:true}).click();
     await screen.getByRole("img").waitFor();
     assert.equal(await screen.getByRole("alert").count(), 0, "reopening retained an old operation error");
     assert.deepEqual(errors, []);

@@ -210,7 +210,7 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
   useLayoutEffect(() => {
     if (!opened || !stage.current) return;
     stage.current.scrollLeft = zoomed ? Math.max(0, (imageWidth - size.width) / 2) : 0;
-    stage.current.scrollTop = zoomed ? Math.max(0, imageHeight * (maintenance ? 0.5 : 0.85) - size.height * 0.5) : 0;
+    stage.current.scrollTop = zoomed ? Math.max(0, imageHeight * (initialSetup || maintenance ? 0.5 : 0.85) - size.height * 0.5) : 0;
   }, [opened, hasFrame, zoomed, imageWidth, imageHeight, size.width, size.height]);
 
   useEffect(() => {
@@ -221,7 +221,7 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
       try {
         const r = await api(endpoint, { action: "frame", session, ...scope });
         if (!alive || lease.current?.session !== session) return;
-        if (r.closed) { setRecovery(r.recovery || ""); end(r.error || ""); onSessionClosed?.(); return; }
+        if (r.closed) { setRecovery(r.recovery || ""); end(r.error || (initialSetup ? "本次设置画面已结束，已完成的授权会保留。重新打开画面即可继续。" : "")); onSessionClosed?.(); return; }
         if (r.image) {
           if (maintenance && (!r.geometry || !Array.isArray(r.region) || r.region.length !== 4 || !r.region.every(Number.isInteger)))
             throw new Error("客机维护画面缺少窗口定位，请更新组件后重试");
@@ -409,6 +409,7 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
           {visibleMessage || (initialSetup ? installRecovery ? "正在读取恢复安装画面…" : "正在读取客机首次设置画面…" : maintenance ? "正在确认系统授权窗口…" : "正在确认客机登录画面…")}
         </p>}
         {!initialSetup && !maintenance && <p className="mac-login-help">拖动画面可查看其他账户或提示</p>}
+        {(initialSetup || maintenance) && zoomed && <p className="mac-login-help">放大后可拖动画面查看其他位置；点击「适配」查看完整画面。</p>}
         </div>
       </div>, document.body)}
   </>;
