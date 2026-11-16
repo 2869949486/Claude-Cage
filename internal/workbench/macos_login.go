@@ -91,7 +91,7 @@ func (s *Server) revokeMacLogin(session string) {
 func (s *Server) trackMacLogin(epoch context.Context, input guestos.MacLoginRequest, result guestos.MacLoginReply) {
 	if input.Action == "open" && result.Session != "" {
 		lifetime := s.lifetimeContext()
-		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: input.Setup, Maintenance: input.Maintenance}, socket: filepath.Join(s.instanceDir(), "cage-login.sock")}
+		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: input.Setup, Maintenance: input.Maintenance}, socket: macLoginSocket(s.instanceDir())}
 		s.mu.Lock()
 		previous := s.macLoginLease
 		s.macLoginLease = lease
@@ -310,7 +310,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	var dial net.Dialer
-	conn, err := dial.DialContext(ctx, "unix", filepath.Join(s.instanceDir(), "cage-login.sock"))
+	conn, err := dial.DialContext(ctx, "unix", macLoginSocket(s.instanceDir()))
 	if err != nil {
 		http.Error(w, "这台客机尚未启动带登录控件的运行器", 409)
 		return
@@ -340,6 +340,17 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(result); err != nil && input.Action == "open" {
 		s.revokeMacLogin(result.Session)
 	}
+}
+
+// UNIX socket limits apply to the spelling passed to connect. Prefer a shorter
+// spelling of the same endpoint; retain a short logical storage anchor when its
+// physical directory is longer. Account-lock revocation uses the same endpoint.
+func macLoginSocket(instance string) string {
+	path := filepath.Join(instance, "cage-login.sock")
+	if physical, err := filepath.EvalSymlinks(path); err == nil && len(physical) < len(path) {
+		return physical
+	}
+	return path
 }
 
 func (s *Server) macOSSetupAdminCommand(ctx context.Context) *exec.Cmd {
