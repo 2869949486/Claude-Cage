@@ -37,7 +37,7 @@ export function MacOSFirstSetup() {
   const [details, setDetails] = useState(false);
   const current = useRef({ account, refresh });
   current.current = { account, refresh };
-  const control = useRef({ active: false, inFlight: false, started: false, finished: false, measured: false, waitingSince: 0, requested: "", pending: "" });
+  const control = useRef({ active: false, inFlight: false, actionPending: false, probeDone: null, started: false, finished: false, measured: false, waitingSince: 0, requested: "", pending: "" });
 
   async function request(action) {
     const lifecycle = action === "start" || action === "stop";
@@ -57,11 +57,16 @@ export function MacOSFirstSetup() {
 
   // Automatic probes, page changes and explicit retries share one operation slot.
   // A failed probe retains the previous display but cannot advance the workflow.
-  async function check() {
+  async function check(interactive = false) {
     const c = control.current;
-    if (c.inFlight || !c.active) return;
+    if (c.actionPending || !c.active) return;
+    if (c.inFlight) { if (interactive) setBusy(true); return; }
     c.inFlight = true;
-    setBusy(true);
+    let complete;
+    c.probeDone = new Promise(resolve => { complete = resolve; });
+    // Background reads must not relabel or disable the user's controls. Actual
+    // startup, permission-page changes and completion still show progress.
+    if (interactive) setBusy(true);
     try {
       const next = await api("/status", undefined, undefined, {}, { signal: AbortSignal.timeout(15000) });
       if (!c.active) return;
@@ -110,7 +115,11 @@ export function MacOSFirstSetup() {
         catch (e) { if (c.active) { setCompletionFailed(true); setError(e.message); } }
       }
     } catch (e) { if (c.active) setReadError(e.name === "TimeoutError" ? "读取客机状态超时。请重新检查状态；已有安装进度会保留。" : e.message); }
-    finally { c.inFlight = false; if (c.active) setBusy(false); }
+    finally {
+      c.inFlight = false;
+      complete();
+      if (c.active && !c.actionPending) setBusy(false);
+    }
   }
 
   useEffect(() => {
@@ -133,18 +142,23 @@ export function MacOSFirstSetup() {
 
   async function act(action) {
     const c = control.current;
-    if (c.inFlight) return;
-    c.inFlight = true;
+    if (c.actionPending) return;
+    c.actionPending = true;
     if (action === "stop") c.started = true;
-    if (steps.some(({ id }) => id === action)) { setPermissionPage(action); c.requested = action === "projects" ? `projects:${Boolean(permissions.project_install_required)}` : action; }
     setBusy(true); setError("");
     try {
+      // Preserve one serialized operation slot without dropping a click made
+      // during a slow background probe. A queued action blocks the next probe.
+      await c.probeDone;
+      if (!c.active) return;
+      c.inFlight = true;
+      if (steps.some(({ id }) => id === action)) { setPermissionPage(action); c.requested = action === "projects" ? `projects:${Boolean(permissions.project_install_required)}` : action; }
       await request(action);
       if (action === "finish") { await current.current.refresh(); setCompletionFailed(false); }
     } catch (e) {
       if (action === "finish") setCompletionFailed(true);
       setError(e.message);
-    } finally { c.inFlight = false; if (c.active) { setBusy(false); void check(); } }
+    } finally { c.actionPending = false; c.inFlight = false; if (c.active) { setBusy(false); void check(); } }
   }
 
   const pending = steps.find(({ id }) => !permissions[id]);
@@ -196,7 +210,7 @@ export function MacOSFirstSetup() {
         {state && !running && (!state.ready || account.macos_password_pending) && <button className="primary" disabled={busy} onClick={() => act("start")}>{account.macos_password_pending ? "重试同步客机密码" : "继续启动并连接"}</button>}
         {pending && state?.ready && controls}
         {completionFailed && <button className="primary" disabled={busy || !canFinish} onClick={() => act("finish")}>重试完成设置</button>}
-        <button disabled={busy || running} onClick={() => void check()}>重新检查状态</button>
+        <button disabled={busy || running} onClick={() => void check(true)}>重新检查状态</button>
       </div>
       {running && <button disabled={busy} onClick={() => act("stop")}>停止当前操作，保留进度</button>}
       {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} managedCredential={permissions.managed_credential} disabled={!state.vm_running || running}
