@@ -6,7 +6,8 @@ import (
 )
 
 // Only PCM/IEEE float WAVE is supported. Rebuild the container from fmt/data
-// chunks: LIST/INFO, bext, iXML, XMP, ID3 and private chunks never cross over.
+// chunks and functional cue/loop/sample-count chunks. BWF/iXML and unknown
+// variants require explicit original consent; their timing semantics may matter.
 // Audio sample bytes are copied without transcoding.
 func sanitizeWAV(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 	var header [12]byte
@@ -48,7 +49,33 @@ func sanitizeWAV(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 		} else if tag == "data" {
 			hasData = true
 		}
-		if tag == "fmt " || tag == "data" {
+		keep := false
+		switch tag {
+		case "fmt ", "data", "fact", "cue ", "smpl", "inst", "plst":
+			keep = true
+		case "LIST":
+			if n < 4 {
+				return false, ErrUnsupported
+			}
+			var listType [4]byte
+			if _, err := src.Seek(pos+8, io.SeekStart); err != nil {
+				return false, err
+			}
+			if _, err := io.ReadFull(src, listType[:]); err != nil {
+				return false, err
+			}
+			switch string(listType[:]) {
+			case "INFO":
+			case "adtl":
+				keep = true
+			default:
+				return false, ErrUnsupported
+			}
+		case "XMP ", "JUNK", "PAD ": // Optional descriptive metadata or padding.
+		default:
+			return false, ErrUnsupported // BWF/iXML can control synchronisation and track interpretation.
+		}
+		if keep {
 			chunks = append(chunks, chunk{pos, n})
 			total += 8 + n + n%2
 		}

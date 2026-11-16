@@ -435,12 +435,15 @@ func (s *Server) clipboardArchive(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Cage-Clipboard-Status", status)
 		return
 	}
-	prepared, err := transfermeta.PrepareArchive(http.MaxBytesReader(w, r.Body, 201<<30))
+	prepared, err := transfermeta.PrepareArchive(http.MaxBytesReader(w, r.Body, 201<<30), s.transferOptions())
 	if err != nil {
 		transferMetadataError(w, err)
 		return
 	}
 	defer prepared.Close()
+	if prepared.Unclean {
+		w.Header().Set("X-Cage-Metadata-Warning", "metadata-may-remain")
+	}
 	cmd, source, err := s.clipboardCommand(ctx, "import", clipboardFileSelection{})
 	if err != nil {
 		http.Error(w, "传递剪贴板文件失败", 502)
@@ -517,7 +520,7 @@ func (s *Server) clipboardCopy(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, result)
 }
 
-func writeClipboardArchive(output io.Writer, paths []string) error {
+func writeClipboardArchive(output io.Writer, paths []string, options ...transfermeta.Options) error {
 	reader, writer := io.Pipe()
 	defer reader.Close()
 	done := make(chan error, 1)
@@ -526,7 +529,7 @@ func writeClipboardArchive(output io.Writer, paths []string) error {
 		_ = writer.CloseWithError(err)
 		done <- err
 	}()
-	err := transfermeta.SanitizeArchive(output, reader)
+	err := transfermeta.SanitizeArchive(output, reader, options...)
 	_ = reader.CloseWithError(err)
 	return errors.Join(err, <-done)
 }
@@ -592,10 +595,19 @@ func ClipboardFilesForConnection(configPath, connectionID, operation string, arg
 			client.client.Timeout = 5 * time.Second
 		}
 	} else if operation == "send" {
+		var settings struct {
+			Allow bool `json:"transfer_allow_unclean"`
+		}
+		code, err := client.call("GET", "/api/settings", nil, &settings)
+		if err != nil || code != http.StatusOK {
+			return nil, errors.New("无法确认文件元数据传递设置")
+		}
 		reader, writer := io.Pipe()
 		defer reader.Close()
 		body = reader
-		go func() { writer.CloseWithError(writeClipboardArchive(writer, args)) }()
+		go func() {
+			writer.CloseWithError(writeClipboardArchive(writer, args, transfermeta.Options{AllowUnclean: settings.Allow}))
+		}()
 	} else {
 		return nil, errors.New("剪贴板文件操作无效")
 	}

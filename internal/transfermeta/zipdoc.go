@@ -11,23 +11,23 @@ import (
 
 var fixedZipTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 
-func sanitizeZipDoc(name string, src *os.File, dst io.Writer, size int64, kind format) (bool, error) {
+func sanitizeZipDoc(name string, src *os.File, dst io.Writer, size int64, kind format, options Options) (bool, error) {
 	reader, err := zip.NewReader(src, size)
 	if err != nil {
 		return false, ErrMalformed
 	}
-	return sanitizeZipArchive(reader, dst, kind)
+	return sanitizeZipArchive(reader, dst, kind, options)
 }
 
-func sanitizeZipBytes(name string, data []byte, dst io.Writer, kind format) (bool, error) {
+func sanitizeZipBytes(name string, data []byte, dst io.Writer, kind format, options Options) (bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return false, ErrMalformed
 	}
-	return sanitizeZipArchive(reader, dst, kind)
+	return sanitizeZipArchive(reader, dst, kind, options)
 }
 
-func sanitizeZipArchive(reader *zip.Reader, dst io.Writer, kind format) (bool, error) {
+func sanitizeZipArchive(reader *zip.Reader, dst io.Writer, kind format, options Options) (bool, error) {
 	if len(reader.File) > 4096 {
 		return false, ErrUnsupported
 	}
@@ -58,20 +58,24 @@ func sanitizeZipArchive(reader *zip.Reader, dst io.Writer, kind format) (bool, e
 			} else {
 				return false, ErrMalformed
 			}
-		case kind == formatODF && entry.Name == "settings.xml":
-			if cleaned, ok := clearXMLRoot(data, "document-settings"); ok {
-				content = cleaned
-			} else {
-				return false, ErrMalformed
-			}
+			// settings.xml is functional content and is preserved.
 		}
 		// Nested document containers need a separate recursive resource budget;
 		// deny them rather than allowing arbitrarily deep decompression.
 		nested := detectFormat(entry.Name, content)
 		if nested == formatOOXML || nested == formatODF {
-			return false, ErrUnsupported
+			if !options.AllowUnclean {
+				return false, ErrUnsupported
+			}
+			options.markUnclean()
+			nested = formatUnknown
 		}
-		cleaned, err := SanitizeBytes(entry.Name, content)
+		var cleaned []byte
+		if nested == formatUnknown {
+			cleaned = content
+		} else {
+			cleaned, err = SanitizeBytes(entry.Name, content, options)
+		}
 		if err != nil {
 			return false, err
 		}

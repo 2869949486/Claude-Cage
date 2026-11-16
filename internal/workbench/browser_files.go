@@ -71,12 +71,15 @@ func (s *Server) browserUpload(w http.ResponseWriter, r *http.Request) {
 	}
 	query := url.Values{"id": {id}, "name": {name}}
 	r.Body = http.MaxBytesReader(w, r.Body, browserFileLimit)
-	prepared, err := transfermeta.Prepare(name, r.Body, r.ContentLength)
+	prepared, err := transfermeta.Prepare(name, r.Body, r.ContentLength, s.transferOptions())
 	if err != nil {
 		transferMetadataError(w, err)
 		return
 	}
 	defer prepared.Close()
+	if prepared.Unclean {
+		w.Header().Set("X-Cage-Metadata-Warning", "metadata-may-remain")
+	}
 	s.proxyBrowserFile(w, r, token, "POST", "/upload-file?"+query.Encode(), prepared.Body, prepared.Size)
 }
 

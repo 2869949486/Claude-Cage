@@ -129,7 +129,7 @@ func (s *Server) startMacOSProjectShare(ctx context.Context, hostDir, guestDir s
 	cmd := s.sshCommand(s.lifetimeContext(), "-T", s.sshTarget(), "--", command)
 	stderr := &fileControlStderr{}
 	cmd.Stderr = stderr
-	conn, err := startProjectTransport(cmd, hostDir)
+	conn, err := startProjectTransport(cmd, hostDir, s.sharedReadView)
 	if err != nil {
 		return nil, err
 	}

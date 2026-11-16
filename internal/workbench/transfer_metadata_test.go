@@ -4,6 +4,7 @@ import (
 	"archive/tar"
 	"bytes"
 	"encoding/binary"
+	"encoding/json"
 	"fmt"
 	"hash/crc32"
 	"image"
@@ -56,6 +57,7 @@ func TestSharedMetadata(t *testing.T) {
 				t.Fatal(err)
 			}
 			server, conn := net.Pipe()
+			policy := &Server{}
 			_ = server.SetDeadline(time.Now().Add(20 * time.Second))
 			_ = conn.SetDeadline(time.Now().Add(20 * time.Second))
 			done := make(chan struct{})
@@ -63,9 +65,9 @@ func TestSharedMetadata(t *testing.T) {
 				defer close(done)
 				defer server.Close()
 				if virtual {
-					_ = reversesshfs.ServeConfinedVirtual(server, root, false, nil, sharedReadView)
+					_ = reversesshfs.ServeConfinedVirtual(server, root, false, nil, policy.sharedReadView)
 				} else {
-					_ = reversesshfs.ServeConfined(server, root, false, nil, sharedReadView)
+					_ = reversesshfs.ServeConfined(server, root, false, nil, policy.sharedReadView)
 				}
 			}()
 			client, err := sftp.NewClientPipe(conn, conn)
@@ -126,6 +128,25 @@ func TestSharedMetadata(t *testing.T) {
 					f.Close()
 					t.Fatal("unsupported media escaped")
 				}
+			}
+			policy.mu.Lock()
+			policy.preferences.TransferAllowUnclean = true
+			policy.mu.Unlock()
+			rawFile, err := client.Open(base + "/blocked.pdf")
+			if err != nil {
+				t.Fatal("consented shared read failed", err)
+			}
+			raw, err := io.ReadAll(rawFile)
+			_ = rawFile.Close()
+			if err != nil || string(raw) != "%PDF-1.7 GPS=31.23" {
+				t.Fatal("original shared bytes changed")
+			}
+			policy.mu.Lock()
+			policy.preferences.TransferAllowUnclean = false
+			policy.mu.Unlock()
+			if f, err := client.Open(base + "/blocked.pdf"); err == nil {
+				f.Close()
+				t.Fatal("revocation did not affect new opens")
 			}
 			f, err := client.OpenFile(path, os.O_RDWR)
 			if err != nil {
@@ -227,6 +248,83 @@ func TestClipboardMetadata(t *testing.T) {
 	archive.Reset()
 	if err := writeClipboardArchive(&archive, []string{root}); err == nil {
 		t.Fatal("native clipboard passed unsupported document")
+	}
+	archive.Reset()
+	if err := writeClipboardArchive(&archive, []string{root}, transfermeta.Options{AllowUnclean: true}); err != nil {
+		t.Fatal(err)
+	}
+	r = tar.NewReader(&archive)
+	sawOriginal, sawClean := false, false
+	for {
+		h, err := r.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		b, err := io.ReadAll(r)
+		if err != nil {
+			t.Fatal(err)
+		}
+		switch filepath.Base(h.Name) {
+		case "blocked.pdf":
+			sawOriginal = string(b) == "%PDF-1.7 GPS=31.23"
+		case "photo.png":
+			sawClean = !bytes.Contains(b, []byte("GPS"))
+		}
+	}
+	if !sawOriginal || !sawClean {
+		t.Fatal("clipboard consent bypassed cleaning or changed original")
+	}
+}
+
+func TestTransferConsentSettings(t *testing.T) {
+	s := testServer(t)
+	if s.transferOptions().AllowUnclean {
+		t.Fatal("raw transfer enabled by default")
+	}
+	c, err := loadConfig(s.configPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := settingsView(c, s.preferences)
+	settings.TransferAllowUnclean = true
+	body, err := json.Marshal(settings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	w := request(s, "POST", "/api/settings", s.origin, string(body), true)
+	if w.Code != http.StatusOK {
+		t.Fatalf("settings request: %d", w.Code)
+	}
+	if job := awaitJobIdle(t, &s.jobs); job.Error != "" {
+		t.Fatal(job.Error)
+	}
+	if !s.transferOptions().AllowUnclean {
+		t.Fatal("explicit consent not applied")
+	}
+	var saved Preferences
+	data, err := os.ReadFile(filepath.Join(s.profile, "workbench.json"))
+	if err != nil || json.Unmarshal(data, &saved) != nil || !saved.TransferAllowUnclean {
+		t.Fatal("consent not persisted")
+	}
+	// Old clients that omit the new option must not silently reset consent.
+	var legacy map[string]any
+	if err := json.Unmarshal(body, &legacy); err != nil {
+		t.Fatal(err)
+	}
+	delete(legacy, "transfer_allow_unclean")
+	legacyBody, err := json.Marshal(legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := httptest.NewRequest("POST", "/api/settings", bytes.NewReader(legacyBody))
+	r.Header.Set("Content-Type", "application/json")
+	preview := httptest.NewRecorder()
+	proposed, ok := s.proposed(preview, r)
+	if !ok || !proposed.Preferences.TransferAllowUnclean {
+		t.Fatal("omitted setting lost explicit consent")
 	}
 }
 

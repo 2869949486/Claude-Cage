@@ -10,7 +10,7 @@ import (
 // SanitizeArchive cleans each clipboard file, including files in directories.
 // Rebuilding headers also drops PAX/xattr records, owner names and timestamps.
 // An error never copies the offending original file to the destination.
-func SanitizeArchive(dst io.Writer, src io.Reader) error {
+func SanitizeArchive(dst io.Writer, src io.Reader, options ...Options) error {
 	r := tar.NewReader(src)
 	w := tar.NewWriter(dst)
 	var total int64
@@ -33,7 +33,7 @@ func SanitizeArchive(dst io.Writer, src io.Reader) error {
 				return err
 			}
 		case tar.TypeReg, tar.TypeRegA:
-			p, err := Prepare(h.Name, r, h.Size)
+			p, err := Prepare(h.Name, r, h.Size, optionsValue(options))
 			if err != nil {
 				return err
 			}
@@ -53,12 +53,16 @@ func SanitizeArchive(dst io.Writer, src io.Reader) error {
 }
 
 // PrepareArchive completes validation on the host before a guest import starts.
-func PrepareArchive(src io.Reader) (*Prepared, error) {
+func PrepareArchive(src io.Reader, options ...Options) (*Prepared, error) {
+	opts := optionsValue(options)
+	if opts.warning == nil {
+		opts.warning = new(bool)
+	}
 	out, err := os.CreateTemp("", "cage-transfer-archive-*")
 	if err != nil {
 		return nil, err
 	}
-	if err = SanitizeArchive(out, src); err != nil {
+	if err = SanitizeArchive(out, src, opts); err != nil {
 		_ = closeAndRemove(out)
 		return nil, err
 	}
@@ -70,5 +74,5 @@ func PrepareArchive(src io.Reader) (*Prepared, error) {
 		_ = closeAndRemove(out)
 		return nil, err
 	}
-	return &Prepared{Body: out, Size: size, cleanup: func() error { return closeAndRemove(out) }}, nil
+	return &Prepared{Unclean: *opts.warning, Body: out, Size: size, cleanup: func() error { return closeAndRemove(out) }}, nil
 }

@@ -317,9 +317,12 @@ func TestODFMetadataRemovedWithoutChangingContent(t *testing.T) {
 	}
 	entries := readZipEntries(t, cleaned)
 	for _, value := range []string{"zh-CN", "Sandro", "2026-11-15"} {
-		if bytes.Contains(entries["meta.xml"], []byte(value)) || bytes.Contains(entries["settings.xml"], []byte(value)) {
+		if bytes.Contains(entries["meta.xml"], []byte(value)) {
 			t.Fatalf("%q survived", value)
 		}
+	}
+	if !bytes.Contains(entries["settings.xml"], []byte("zh-CN")) {
+		t.Fatal("functional ODF language settings changed")
 	}
 	if !bytes.Contains(entries["content.xml"], []byte("Hello")) {
 		t.Fatal("content removed")

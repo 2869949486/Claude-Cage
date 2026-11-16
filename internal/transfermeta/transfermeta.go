@@ -27,13 +27,37 @@ const (
 	formatOOXML
 	formatODF
 	formatWAV
+	formatPDF
+	formatTIFF
+	formatFLAC
+	formatMP3
+	formatBMFF
 	formatBlocked
 )
 
-// Prepared is a host-side file body ready for the guest. Body is either the
-// original stream or a private temporary file with metadata removed. Close
-// releases any temporary file; it is safe to call more than once.
+// Options controls an explicitly accepted original-file fallback.
+type Options struct {
+	AllowUnclean bool // User explicitly accepted that original metadata may remain.
+	warning      *bool
+}
+
+func optionsValue(options []Options) Options {
+	if len(options) > 0 {
+		return options[0]
+	}
+	return Options{}
+}
+
+func (o Options) markUnclean() {
+	if o.warning != nil {
+		*o.warning = true
+	}
+}
+
+// Prepared is a host-side body. Unclean reports that any part of the body was
+// passed through with explicit consent and may retain metadata.
 type Prepared struct {
+	Unclean bool
 	Body    io.Reader
 	Size    int64
 	cleanup func() error
@@ -47,10 +71,14 @@ func (p *Prepared) Close() error {
 }
 
 // Prepare inspects the stream and removes supported metadata before it reaches
-// the guest. Unsupported media/containers and malformed supported files fail
-// closed. Ordinary non-media files pass through. The size hint
+// the guest. Unsupported media/containers and unsafe rewrites require explicit
+// original-file consent. Ordinary non-media files pass through. The size hint
 // may be -1 when the caller does not know the content length.
-func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
+func Prepare(name string, src io.Reader, hint int64, options ...Options) (*Prepared, error) {
+	opts := optionsValue(options)
+	if opts.warning == nil {
+		opts.warning = new(bool)
+	}
 	if src == nil {
 		return nil, errors.New("文件内容为空")
 	}
@@ -61,10 +89,14 @@ func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 	}
 	kind := detectFormat(name, head)
 	if kind == formatBlocked {
+		if opts.AllowUnclean {
+			opts.markUnclean()
+			return &Prepared{Body: reader, Size: hint, Unclean: true}, nil
+		}
 		return nil, ErrUnsupported
 	}
 	if kind == formatUnknown {
-		return &Prepared{Body: reader, Size: hint}, nil
+		return &Prepared{Unclean: *opts.warning, Body: reader, Size: hint}, nil
 	}
 	source, size, err := stageSource(reader)
 	if err != nil {
@@ -75,9 +107,17 @@ func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 		_ = closeAndRemove(source)
 		return nil, err
 	}
-	changed, err := sanitize(kind, name, source, out, size)
+	changed, err := sanitize(kind, name, source, out, size, opts)
 	if err != nil {
 		_ = closeAndRemove(out)
+		if opts.AllowUnclean {
+			opts.markUnclean()
+			if _, seekErr := source.Seek(0, 0); seekErr != nil {
+				_ = closeAndRemove(source)
+				return nil, seekErr
+			}
+			return &Prepared{Unclean: *opts.warning, Body: source, Size: size, cleanup: func() error { return closeAndRemove(source) }}, nil
+		}
 		_ = closeAndRemove(source)
 		return nil, errors.Join(ErrMalformed, err)
 	}
@@ -85,7 +125,7 @@ func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 		_ = out.Close()
 		_ = os.Remove(out.Name())
 		_, _ = source.Seek(0, 0)
-		return &Prepared{Body: source, Size: size, cleanup: func() error { return closeAndRemove(source) }}, nil
+		return &Prepared{Unclean: *opts.warning, Body: source, Size: size, cleanup: func() error { return closeAndRemove(source) }}, nil
 	}
 	if err := out.Sync(); err != nil {
 		_ = closeAndRemove(source)
@@ -104,22 +144,30 @@ func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 		return nil, err
 	}
 	_ = closeAndRemove(source)
-	return &Prepared{Body: out, Size: info.Size(), cleanup: func() error { return closeAndRemove(out) }}, nil
+	return &Prepared{Unclean: *opts.warning, Body: out, Size: info.Size(), cleanup: func() error { return closeAndRemove(out) }}, nil
 }
 
 // SanitizeBytes applies the same format-aware scrub to an in-memory image or
 // document. It returns the original slice when no metadata was found.
-func SanitizeBytes(name string, data []byte) ([]byte, error) {
+func SanitizeBytes(name string, data []byte, options ...Options) ([]byte, error) {
 	kind := detectFormat(name, data)
 	if kind == formatBlocked {
+		if optionsValue(options).AllowUnclean {
+			optionsValue(options).markUnclean()
+			return data, nil
+		}
 		return nil, ErrUnsupported
 	}
 	if kind == formatUnknown {
 		return data, nil
 	}
 	var out bytes.Buffer
-	changed, err := sanitizeBytes(kind, name, data, &out)
+	changed, err := sanitizeBytes(kind, name, data, &out, optionsValue(options))
 	if err != nil {
+		if optionsValue(options).AllowUnclean {
+			optionsValue(options).markUnclean()
+			return data, nil
+		}
 		return nil, errors.Join(ErrMalformed, err)
 	}
 	if !changed {
@@ -143,6 +191,24 @@ func detectFormat(name string, head []byte) format {
 	}
 	if len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WAVE" {
 		return formatWAV
+	}
+	if bytes.HasPrefix(bytes.TrimSpace(head), []byte("%PDF-")) {
+		return formatPDF
+	}
+	if len(head) >= 4 && (bytes.Equal(head[:4], []byte{'I', 'I', 42, 0}) || bytes.Equal(head[:4], []byte{'M', 'M', 0, 42})) {
+		return formatTIFF
+	}
+	if bytes.HasPrefix(head, []byte("fLaC")) {
+		return formatFLAC
+	}
+	if bytes.HasPrefix(head, []byte("ID3")) {
+		return formatMP3
+	}
+	if len(head) >= 8 {
+		switch string(head[4:8]) {
+		case "ftyp", "moov", "wide":
+			return formatBMFF
+		}
 	}
 	if blockedFormat(name, head) {
 		return formatBlocked
@@ -195,7 +261,7 @@ func closeAndRemove(file *os.File) error {
 	return err
 }
 
-func sanitize(kind format, name string, src *os.File, dst io.Writer, size int64) (bool, error) {
+func sanitize(kind format, name string, src *os.File, dst io.Writer, size int64, options Options) (bool, error) {
 	switch kind {
 	case formatJPEG:
 		return sanitizeJPEG(src, dst)
@@ -206,14 +272,24 @@ func sanitize(kind format, name string, src *os.File, dst io.Writer, size int64)
 	case formatWebP:
 		return sanitizeWebP(src, dst, size)
 	case formatOOXML, formatODF:
-		return sanitizeZipDoc(name, src, dst, size, kind)
+		return sanitizeZipDoc(name, src, dst, size, kind, options)
+	case formatPDF:
+		return sanitizePDF(src, dst)
+	case formatTIFF:
+		return sanitizeTIFF(src, dst, size)
+	case formatFLAC:
+		return sanitizeFLAC(src, dst)
+	case formatMP3:
+		return sanitizeMP3(src, dst, size)
+	case formatBMFF:
+		return sanitizeBMFF(src, dst, size)
 	case formatWAV:
 		return sanitizeWAV(src, dst, size)
 	}
 	return false, nil
 }
 
-func sanitizeBytes(kind format, name string, data []byte, dst io.Writer) (bool, error) {
+func sanitizeBytes(kind format, name string, data []byte, dst io.Writer, options Options) (bool, error) {
 	switch kind {
 	case formatJPEG:
 		return sanitizeJPEG(bytes.NewReader(data), dst)
@@ -224,7 +300,17 @@ func sanitizeBytes(kind format, name string, data []byte, dst io.Writer) (bool, 
 	case formatWebP:
 		return sanitizeWebP(bytes.NewReader(data), dst, int64(len(data)))
 	case formatOOXML, formatODF:
-		return sanitizeZipBytes(name, data, dst, kind)
+		return sanitizeZipBytes(name, data, dst, kind, options)
+	case formatPDF:
+		return sanitizePDF(bytes.NewReader(data), dst)
+	case formatTIFF:
+		return sanitizeTIFF(bytes.NewReader(data), dst, int64(len(data)))
+	case formatFLAC:
+		return sanitizeFLAC(bytes.NewReader(data), dst)
+	case formatMP3:
+		return sanitizeMP3(bytes.NewReader(data), dst, int64(len(data)))
+	case formatBMFF:
+		return sanitizeBMFF(bytes.NewReader(data), dst, int64(len(data)))
 	case formatWAV:
 		return sanitizeWAV(bytes.NewReader(data), dst, int64(len(data)))
 	}

@@ -149,8 +149,12 @@ func TestWAVMetadata(t *testing.T) {
 	binary.LittleEndian.PutUint16(fmt[12:], 2)
 	binary.LittleEndian.PutUint16(fmt[14:], 16)
 	writeChunk("fmt ", fmt)
-	for _, tag := range []string{"LIST", "bext", "iXML", "ID3 ", "XMP ", "priv"} {
-		writeChunk(tag, []byte("Asia/Shanghai;zh-CN;GPS=31.23"))
+	for _, tag := range []string{"LIST", "XMP ", "JUNK"} {
+		payload := []byte("Asia/Shanghai;zh-CN;GPS=31.23")
+		if tag == "LIST" {
+			payload = append([]byte("INFO"), payload...)
+		}
+		writeChunk(tag, payload)
 	}
 	samples := []byte{1, 2, 3, 4, 5, 6}
 	writeChunk("data", samples)

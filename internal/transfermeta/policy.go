@@ -8,8 +8,8 @@ import (
 )
 
 var (
-	ErrUnsupported = errors.New("此媒体或容器格式暂不能可靠清除元数据，请先在本机转换为支持的格式")
-	ErrMalformed   = errors.New("文件结构异常，无法确认元数据已清除，已停止传递")
+	ErrUnsupported = errors.New("此格式暂不能安全清理元数据。可在设置→通用中明确开启“允许未支持格式原样传递”；原样文件可能保留定位、时区和地区元数据。")
+	ErrMalformed   = errors.New("无法在保持文件可用的前提下安全清理。可在设置→通用中明确允许原样传递，元数据可能保留。")
 )
 
 // Check both signatures and names: renaming a PDF, TIFF, MP4 or ZIP must not

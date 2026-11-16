@@ -735,6 +735,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.MobileRelay = s.preferences.MobileRelay
 	input.BalancedDisplay = s.preferences.BalancedDisplay
 	input.ProjectFileCache = s.preferences.ProjectFileCache
+	input.TransferAllowUnclean = s.preferences.TransferAllowUnclean
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	s.mu.Unlock()
 	if !readJSON(w, r, &input) {

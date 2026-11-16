@@ -21,6 +21,43 @@ import (
 
 const testBrowserFileID = "34e399c1-78fe-4cf1-93b0-d7fef431b211"
 
+func TestBrowserUploadExplicitOriginal(t *testing.T) {
+	s := testServer(t)
+	s.ready = true
+	var uploaded []byte
+	s.browserControl = browserClientForTest(t, s, browserTransport(func(r *http.Request) (*http.Response, error) {
+		body := `{"uploads":[{"id":"` + testBrowserFileID + `"}]}`
+		if r.Method == "POST" {
+			uploaded, _ = io.ReadAll(r.Body)
+			body = `{"ok":true}`
+		}
+		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
+	}))
+	data := []byte("opaque archive with GPS=31.23;country=CN")
+	path := "/api/browser/files/uploads/" + testBrowserFileID + "?name=archive.7z&allow_unclean=true"
+	call := func(name string, payload []byte) *httptest.ResponseRecorder {
+		r := httptest.NewRequest("POST", s.origin+name, bytes.NewReader(payload))
+		r.Host = "localhost:17777"
+		r.Header.Set("Origin", s.origin)
+		r.AddCookie(&http.Cookie{Name: s.cookieName(), Value: s.session})
+		w := httptest.NewRecorder()
+		s.handler().ServeHTTP(w, r)
+		return w
+	}
+	if w := call(path, data); w.Code != 422 || uploaded != nil {
+		t.Fatal("query parameter bypassed stored consent")
+	}
+	s.preferences.TransferAllowUnclean = true
+	w := call(path, data)
+	if w.Code != 200 || w.Header().Get("X-Cage-Metadata-Warning") == "" || !bytes.Equal(uploaded, data) {
+		t.Fatal("explicit original bytes or warning missing")
+	}
+	w = call("/api/browser/files/uploads/"+testBrowserFileID+"?name=photo.jpg", browserJPEGWithMetadata(t))
+	if w.Code != 200 || bytes.Contains(uploaded, []byte("GPSLatitude")) {
+		t.Fatal("consent skipped supported format cleaning")
+	}
+}
+
 func TestBrowserUploadStreamsOnlyToLiveChooser(t *testing.T) {
 	s := testServer(t)
 	s.ready = true

@@ -19,12 +19,26 @@ func transferMetadataError(w http.ResponseWriter, err error) {
 }
 
 // The SFTP server owns src and any temporary replacement returned here.
+func (s *Server) transferOptions() transfermeta.Options {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return transfermeta.Options{AllowUnclean: s.preferences.TransferAllowUnclean}
+}
+
+func (s *Server) sharedReadView(name string, src *os.File) (*os.File, error) {
+	return sharedReadViewWithOptions(name, src, s.transferOptions())
+}
+
 func sharedReadView(name string, src *os.File) (*os.File, error) {
+	return sharedReadViewWithOptions(name, src, transfermeta.Options{})
+}
+
+func sharedReadViewWithOptions(name string, src *os.File, options transfermeta.Options) (*os.File, error) {
 	fi, err := src.Stat()
 	if err != nil {
 		return nil, err
 	}
-	prepared, err := transfermeta.Prepare(name, src, fi.Size())
+	prepared, err := transfermeta.Prepare(name, src, fi.Size(), options)
 	if err != nil {
 		return nil, err
 	}
