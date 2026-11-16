@@ -53,7 +53,7 @@ if (evidence) await fs.mkdir(evidence, { recursive: true });
     await dialog.getByRole("button", { name, exact: true }).click();
   };
   try {
-    await page.getByRole("heading", { name: "环境已启动，等待联网检查", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "系统已安装，完成使用检查", exact: true }).waitFor();
     assert.equal(await bind.count(), 0, "no candidate must offer no binding");
     state.status.safety.macos_exit_candidate = { ip };
     await bind.waitFor(); // Red against the original initialization screen: the entry is missing.
@@ -222,7 +222,7 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     if (evidence) await page.screenshot({ path: `${evidence}/${platform}-progress-compact.png`, fullPage: true });
     state.status.job = { id: "install-2", kind: "start", running: false, message: "环境已启动，联网检查未通过", error: "联网检查未通过：浏览器检测通道返回 HTTP 503，外网保持关闭" };
     Object.assign(state.status, { ready: true, vm_running: true, safety: { gate: { mode: "closed" } } });
-    await page.getByRole("heading", { name: "环境已启动，等待联网检查", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "系统已安装，完成使用检查", exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "继续安装", exact: true }).count(), 0);
     let networkChecks = 0;
     await page.route("**/api/safety/check", route => {

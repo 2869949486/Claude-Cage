@@ -65,6 +65,9 @@
 .mac-setup-help { margin-top: 24px; border-top: 1px solid var(--line); padding-top: 18px; }
 .mac-setup-help summary { cursor: pointer; }
 .mac-setup-help p, .mac-setup-retention { font-size: 14px; color: var(--muted); }
+.mac-setup-instructions ol { margin: 12px 0; padding-left: 24px; }
+.mac-setup-instructions li { padding-left: 4px; margin: 8px 0; }
+.mac-setup-password-help { padding-top: 10px; border-top: 1px solid var(--line); }
 .initialization-checks { padding-left: 22px; font-size: 14px; }
 .initialization-checks li { margin: 10px 0; }
 .initialization-checks p { margin: 4px 0; }

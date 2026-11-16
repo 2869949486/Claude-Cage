@@ -135,9 +135,9 @@ func TestMacOSProjectApprovalIsBoundToOnePendingShare(t *testing.T) {
 	s.beginMacOSProjectApproval(folder, share)
 	grant := share.approval
 	t.Cleanup(func() { share.approvalTimer.Stop() })
-	call := func(path, proof string) int {
+	call := func(path, proof, action string) int {
 		t.Helper()
-		body, _ := json.Marshal(map[string]string{"workspace": path, "grant": proof, "action": "cancel"})
+		body, _ := json.Marshal(map[string]string{"workspace": path, "grant": proof, "action": action})
 		r := httptest.NewRequest("POST", s.origin+"/api/macos/project-approval", bytes.NewReader(body))
 		r.Header.Set("Content-Type", "application/json")
 		r.Header.Set("Origin", s.origin)
@@ -147,10 +147,12 @@ func TestMacOSProjectApprovalIsBoundToOnePendingShare(t *testing.T) {
 		s.handler().ServeHTTP(w, r)
 		return w.Code
 	}
-	if call(folder, "invalid") != http.StatusConflict || call(folder+"/other", grant) != http.StatusConflict || s.projectShares[folder] != share {
-		t.Fatal("unrelated approval canceled the pending host share")
+	for _, action := range []string{"frame", "click", "confirm", "cancel"} {
+		if call(folder, "invalid", action) != http.StatusConflict || call(folder+"/other", grant, action) != http.StatusConflict || s.projectShares[folder] != share {
+			t.Fatalf("unrelated %s accessed the pending host share", action)
+		}
 	}
-	if call(folder, grant) != 200 || s.projectShares[folder] != nil || call(folder, grant) != http.StatusConflict {
+	if call(folder, grant, "cancel") != 200 || s.projectShares[folder] != nil || call(folder, grant, "confirm") != http.StatusConflict {
 		t.Fatal("a canceled project grant can still be reused")
 	}
 }

@@ -38,26 +38,27 @@ for (const mode of ["project-approval", "legacy", "guest-login", "filesystem-per
   }});
   const { page, state, browser, errors } = fixture;
   try {
-    await page.getByRole("heading", { name: "环境已启动，等待联网检查", exact: true }).waitFor();
+    await page.getByRole("heading", { name: "系统已安装，完成使用检查", exact: true }).waitFor();
     await page.getByRole("button", { name: "查看操作详情", exact: true }).click();
     const details = page.getByRole("dialog", { name: "初始化操作详情" });
     await details.getByText("请在 Cage 显示的客机授权窗口中允许此项目，然后验证授权。", { exact: true }).waitFor();
     await details.getByText("客机文件夹授权未完成", { exact: true }).waitFor();
     await details.getByRole("button", { name: "关闭面板" }).click();
-    if (mode === "guest-login") await page.getByRole("button", { name: "登录客机账户", exact: true }).waitFor();
+    if (mode === "guest-login") await page.getByRole("button", { name: "查看客机登录界面", exact: true }).waitFor();
     if (mode === "filesystem-permission") await page.getByRole("button", { name: "打开客机授权设置", exact: true }).waitFor();
     if (["project-approval", "legacy"].includes(mode)) {
-      const action = mode === "project-approval" ? "打开工作区授权" : "连接工作区并继续检查";
+      const action = mode === "project-approval" ? "确认文件夹并继续" : "连接文件夹并继续检查";
       if (evidence) await page.screenshot({ path: `${evidence}/${mode}.png`, fullPage: true });
       await page.reload();
       await page.getByRole("button", { name: action, exact: true }).click();
-      const approval = page.getByRole("dialog", { name: "允许客机访问所选项目" });
-      await approval.getByRole("button", { name: "取消", exact: true }).click();
+      const approval = page.getByRole("dialog", { name: "允许使用这个文件夹" });
+      await approval.getByRole("button", { name: "暂不授权", exact: true }).click();
       assert.equal(checks, 0, "cancel must not start network verification");
       await page.getByRole("button", { name: action, exact: true }).click();
-      await approval.getByRole("button", { name: "验证授权", exact: true }).waitFor();
+      await approval.getByText("查看 macOS 授权窗口 / 已允许但未继续？", { exact: true }).click();
+      await approval.getByRole("button", { name: "我已允许，重新检查", exact: true }).waitFor();
       connected = true;
-      await approval.getByRole("button", { name: "验证授权", exact: true }).click();
+      await approval.getByRole("button", { name: "我已允许，重新检查", exact: true }).click();
       await page.getByRole("button", { name: "进入工作台", exact: true }).waitFor();
       assert.equal(checks, 1);
     } else if (mode === "restart") {
@@ -68,7 +69,7 @@ for (const mode of ["project-approval", "legacy", "guest-login", "filesystem-per
       await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '停止安装'));
       assert.equal(starts, 1);
     } else {
-      await page.getByRole("button", { name: "运行网络与隔离检查", exact: true }).click();
+      await page.getByRole("button", { name: "重新检查并继续", exact: true }).click();
       await page.getByRole("button", { name: "进入工作台", exact: true }).waitFor();
     }
     await page.setViewportSize({ width: 390, height: 700 });

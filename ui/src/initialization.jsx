@@ -247,12 +247,12 @@ function Initialization({ initial, onComplete }) {
   const failed = Boolean(job.error || error);
   const networkPending = Boolean(status?.ready && status.vm_running && network.mode !== "open");
   const progress = !status?.ready && job.setup_progress ? { ...job, setup_progress: job.setup_progress } : null;
-  const title = step === "system" ? "为 Cage 准备独立环境" : step === "proxy" ? "连接你的网络代理" : ready ? "Cage 已准备就绪" : !busy && networkPending ? "环境已启动，等待联网检查" : failed ? "继续完成环境安装" : busy ? "正在准备你的环境" : "安装并检查客机环境";
+  const title = step === "system" ? "为 Cage 准备独立环境" : step === "proxy" ? "连接你的网络代理" : ready ? "Cage 已准备就绪" : !busy && networkPending ? "系统已安装，完成使用检查" : failed ? "继续完成环境安装" : busy ? "正在准备你的环境" : "安装并检查客机环境";
   const index = steps.findIndex(([key]) => key === step);
   return <InitializationFrame>
     <section className="initialization-content">
       <ol className="initialization-steps" aria-label="初始化步骤">{steps.map(([key, label], position) => <li key={key} aria-current={step === key ? "step" : undefined}><span>{position < index ? <Check size={14} /> : position + 1}</span>{label}</li>)}</ol>
-      <div className="initialization-title"><h1>{title}</h1><p>{step === "system" ? "选择客机系统和存储位置。初始化完成后，再进入工作台。" : step === "proxy" ? "这里的代理供客机内的进程和开发工具使用。系统镜像通过主机代理下载，遵循 Clash 等软件的系统代理或 TUN 设置。" : ready ? "系统、开发组件和网络检查均已完成，可以进入工作台开始使用。" : "下载、安装、必要授权和检查都在这里完成。中断后可以继续原任务。"}</p></div>
+      <div className="initialization-title"><h1>{title}</h1><p>{step === "system" ? "Cage 会在这台电脑里创建一套独立系统，供终端、浏览器和编辑器使用。可以保留默认系统和存储位置，再点击下一步。" : step === "proxy" ? "先准备已有的代理订阅链接、配置文件或节点信息，Cage 不提供代理节点。导入后选择出口，点击「应用代理」，再开始安装。" : ready ? "系统、开发组件和网络检查均已完成，可以进入工作台开始使用。" : networkPending ? "系统已经装好，无需重新安装。按下方指引完成检查，就能进入工作台。" : "Cage 会自动下载系统、安装工具，再引导你完成授权。需要你操作时会显示具体步骤；中断后可以继续原任务。"}</p></div>
       {connectionError && <div className="initialization-notice" role="alert"><SafetyMessage message={connectionError} /><button onClick={() => pollNow.current?.()}>重新连接</button></div>}
       {!status ? <p role="status"><LoaderCircle size={18} className="spin" />正在读取安装状态…</p> : <>
         <div className="initialization-stage" key={step}>
@@ -262,7 +262,7 @@ function Initialization({ initial, onComplete }) {
             <GuestProfileOptions value={guestProfile} onChange={setGuestProfile} disabled={busy} system={choice?.guest_system} />
           </>}
           {step === "proxy" && <><ProxySettings initializing status={status} onConfirm={confirm} onDirty={setProxyDirty} onApplied={async () => { setProxy(await api("/proxy")); pollNow.current?.(); }} />{choice?.clone && !needsProxySetup(null, status, proxy) && <HostCloneSummary pending={choice.pending} onChange={setChoice} />}</>}
-          {step === "install" && (ready ? <div className="initialization-ready"><ShieldCheck size={36} /><h2>环境已就绪</h2><p>独立客机已安装，工具、文件和登录状态会持续保存。以后打开 Cage 可直接进入工作台。</p></div> : <>
+          {step === "install" && (ready ? <div className="initialization-ready"><ShieldCheck size={36} /><h2>环境已就绪</h2><p>{status.guest_system === "macos" ? "虚拟 Mac" : "独立系统"}已安装，工具、文件和登录状态会持续保存。以后打开 Cage 可直接进入工作台。</p></div> : <>
             {exitCandidate && <section className="initialization-notice" aria-label="确认固定出口"><p>客机终端、浏览器和代理已测得一致出口。请确认是否将它绑定为固定出口。</p><button disabled={busy || Boolean(connectionError)} onClick={bindExit}>绑定检测到的固定出口 {exitCandidate}</button></section>}
             {needsExitRestart && <section className="initialization-notice" aria-label="固定出口已保存"><p>固定出口已保存。重启客机并重新检测后才能进入工作台。</p><button className="primary" disabled={busy || Boolean(connectionError)} onClick={restart}>{status.vm_running ? "重启客机并重新检测" : "启动客机并重新检测"}</button></section>}
             {progress ? <SetupProgress job={progress} onDetails={() => setDetails(true)} onStop={stop} onRetry={needsExitRestart ? restart : install} disconnected={Boolean(connectionError) || submitting} /> : (busy || status.guest_system !== "macos" || !networkPending) && <div className="initialization-operation" role="status">{busy && <LoaderCircle size={22} className="spin" />}<p>{job.message || (status.vm_running ? "请完成客机连接和网络检查。" : "准备继续原安装，已有文件和磁盘会保留。")}</p>{!busy && !job.error && !needsExitRestart && <button className="primary" disabled={Boolean(connectionError)} onClick={install}>{status.ready ? "重新启动并检查" : "继续安装"}</button>}{busy && <button onClick={stop} disabled={submitting}>停止安装</button>}</div>}
@@ -298,7 +298,7 @@ function Initialization({ initial, onComplete }) {
             {status.guest_system === "macos" && status.vm_running && !status.ready && !busy && <section className="initialization-notice"><h2>连接虚拟 Mac</h2><p>{status.environment_update_error || "客机已经启动，尚未建立工作台连接。请先检查客机是否停在登录画面。"}</p><MacOSLogin onSessionClosed={() => pollNow.current?.()} /><button disabled={Boolean(connectionError)} onClick={install}>重新连接并检查</button></section>}
             {status.ready && network.mode !== "open" && !busy && !needsExitRestart && <>
               {status.guest_system === "macos" && <InitializationChecks status={status} busy={Boolean(connectionError)} onWorkspace={setApprovalWorkspace} onCheck={checkNetwork} onStart={install} onRestart={restart} onUpdate={() => run(() => api("/environment/update", {}))} onDiagnostics={() => setHelp(true)} />}
-              <div className="initialization-network"><p>{status.safety?.error || job.error || status.network_error || "客机已经连接，请完成网络和隔离检查后进入工作台。"}</p><button disabled={Boolean(connectionError)} onClick={checkNetwork}>运行网络与隔离检查</button></div>
+              {status.guest_system !== "macos" && <div className="initialization-network"><p>{status.safety?.error || job.error || status.network_error || "客机已经连接，请完成网络和隔离检查后进入工作台。"}</p><button disabled={Boolean(connectionError)} onClick={checkNetwork}>运行网络与隔离检查</button></div>}
             </>}
             {(progress?.setup_progress.phase === "image" || (failed && !networkPending)) && <p>系统镜像和在主机上准备的 macOS 安装组件遵循主机代理设置。下载失败时，可在操作详情中查看当前文件和重试记录。客机内的联网请求使用 Cage 代理。</p>}
             <div className="initialization-recovery"><button onClick={() => setStep("proxy")} disabled={busy}>检查 Cage 代理配置</button>{!progress && <button onClick={() => setDetails(true)}>查看操作详情</button>}</div>

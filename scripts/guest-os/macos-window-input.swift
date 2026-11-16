@@ -12,7 +12,7 @@ struct MacInputWindow {
 
 @MainActor
 func checkedMacInputWindow(_ input: Request, window: SCWindow) throws -> MacInputWindow {
-    let project = input.action == "project-click"
+    let project = input.action == "project-click" || input.action == "project-confirm"
     func unavailable(_ reason: String) -> Failure {
         project ? Failure(7, "project_" + reason) : Failure(7, "window_changed", detail: reason)
     }
