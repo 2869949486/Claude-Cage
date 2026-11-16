@@ -343,11 +343,15 @@ func (s *Server) claudeDesktopVNC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	s.streamDesktopSocket(w, r, "/run/cage-desktop/vnc.sock")
+}
+
+func (s *Server) streamDesktopSocket(w http.ResponseWriter, r *http.Request, socket string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	// No extra localhost port or public VNC listener on the host. SSH is bound
 	// to this profile's single guest and carries the authenticated RFB session.
-	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec socat STDIO UNIX-CONNECT:/run/cage-desktop/vnc.sock")
+	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec socat STDIO UNIX-CONNECT:"+socket)
 	reader, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "无法连接应用画面", 502)

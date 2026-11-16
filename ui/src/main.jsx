@@ -33,6 +33,7 @@ import { InitializationGate } from "./initialization";
 import { MacOSLogin } from "./macos-login";
 import { MacOSAppWindow } from "./macos-claude-window";
 import { ProjectRecovery } from "./project-recovery";
+import { DesktopPanes, useAccountDesktops } from "./account-desktops";
 import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
 import { AccountProvider, AccountGate, useAccount } from "./account";
@@ -263,7 +264,12 @@ function App() {
   useEffect(() => {
     if (finishedLogins) claudeProfiles.load();
   }, [finishedLogins, claudeProfiles.load]);
-  const audio = useAudioOutput(running && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
+  const notify = (text) => setToast(text);
+  const accountDesktops = useAccountDesktops(
+    () => {setManagementPage(""); setHome(false); setDesktopOpen(true);},
+    () => {setDesktopOpen(false); setHome(true);}, notify, (...args) => confirm(...args));
+  const viewingAccountDesktop = desktopOpen && accountDesktops.panes.length > 0;
+  const audio = useAudioOutput(running && !viewingAccountDesktop && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
   useEffect(() => {
     if (audio.error) setToast(audio.error);
   }, [audio.error]);
@@ -294,7 +300,6 @@ function App() {
         : running
           ? status?.environment_update_required ? "环境待更新" : "浏览器待恢复"
           : "已停止";
-  const notify = (text) => setToast(text);
   // A Linux environment keeps what it learned about project files for a while.
   const projectFilesCached = settings?.project_file_cache === true &&
     !/^(windows|macos)/.test(account?.guest_system || status?.guest_system || "");
@@ -311,7 +316,7 @@ function App() {
   };
   const clipboardConnection = getClientContext().connection_id;
   useEffect(() => {
-    if (!status?.ready || !clipboardAvailable || !nativeAvailable()) return;
+    if (!status?.ready || viewingAccountDesktop || !clipboardAvailable || !nativeAvailable()) return;
     const clipboard = shareClipboard({
       connect: () => new WebSocket(runtimeSocketURL("/clipboard")), native,
       onStatus: setToast,
@@ -319,8 +324,8 @@ function App() {
     });
     window.cageSyncClipboard = () => clipboard.sync();
     return () => { clipboard.dispose(); delete window.cageSyncClipboard; };
-  }, [status?.ready, clipboardAvailable, clipboardConnection]);
-  const desktopFiles = useDesktopFiles(Boolean(status?.ready && desktopAvailable), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
+  }, [status?.ready, viewingAccountDesktop, clipboardAvailable, clipboardConnection]);
+  const desktopFiles = useDesktopFiles(Boolean(status?.ready && desktopAvailable && !viewingAccountDesktop), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
   const downloads = [...(browser.downloads || []), ...desktopFiles.downloads];
   useDownloadNotifications(downloads, notify, Boolean(browser.uploads?.length || desktopFiles.uploads.length));
   const refreshSettings = async () => {
@@ -857,6 +862,7 @@ function App() {
       const b = JSON.parse(event.data);
       setBrowserError("");
       if (b.desktopFocus === true) {
+        accountDesktops.clear();
         setDesktopOpen(true);
         setHome(false);
         setSettingsOpen(false);
@@ -992,6 +998,7 @@ function App() {
         }
         return;
       }
+      if (event.target.closest?.(".account-desktop-screen")) return;
       // The guest owns Chrome's address bar, tabs and browser shortcuts.
       if (macGuest && !showHome && !desktopOpen && !terminal && event.target.closest?.(".mac-claude-frame")) return;
       let handle;
@@ -1194,7 +1201,7 @@ function App() {
     };
   }
   const claudeLabels = new Map(claudeProfiles.accounts?.map((account) => [account.id, account.label || account.email]));
-  const claudeNumbers = new Map(claudeProfiles.accounts?.map((account, index) => [account.id, index + 1]));
+  const claudeNumbers = new Map(claudeProfiles.accounts?.map(account => [account.id, account.number]));
   const terminalAccountName = (tab) => claudeLabels.get(tab.claude_account_id) ||
     (tab.terminalKind === "claude-login" ? "新账号登录" : tab.claude_account_id ? "Claude 账号" : "");
   const displayTabs = orderedTabs(tabs, metadata).map((tab) =>
@@ -1502,7 +1509,8 @@ function App() {
             }}
             desktopOpen={!managementPage && desktopOpen}
             onClaudeWeb={() => openBrowserPage("https://claude.ai/")}
-            onClaudeDesktop={() => { setManagementPage(""); setHome(false); setDesktopOpen(true); }}
+            accountDesktops={status.account_desktops_supported ? accountDesktops : null}
+            onClaudeDesktop={() => { accountDesktops.clear(); setManagementPage(""); setHome(false); setDesktopOpen(true); }}
             onEditor={openEditor}
             onSettings={openSettings}
             onAccountConfirm={confirm}
@@ -1556,7 +1564,7 @@ function App() {
                     const nativeGuest = ["macos", "windows-11"].includes(status.guest_system);
                     if (nativeGuest && !await confirm({ title: "更新环境组件？", body: "更新会重新连接浏览器和显示组件，请先保存工作。设备身份、公钥和个人数据保留。", confirm: "更新组件" })) return;
                     await action(nativeGuest ? "/environment/update" : "/tailscale/install", {});
-                  }} /> : <ClaudeAccountsPanel store={claudeProfiles} tabs={tabs} onConfirm={confirm}
+                  }} /> : <ClaudeAccountsPanel desktopNetwork={status.account_desktops_supported} store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
                   login={(id) => createTerminal(workspace, "claude-login", id)} />}
               </div>
@@ -1568,7 +1576,8 @@ function App() {
             {!storageRecovery && desktopOpen && macGuest && <MacOSAppWindow key="claude-desktop" uploads={desktopFiles.uploads} keyboard={status.keyboard} remoteRef={remote}
               onStatus={notify} onFallback={(text, message) => setTransfer({ text, message })} visible={!settingsOpen && !managementPage} onConfirm={confirm}
               sidebarCollapsed={sidebarCollapsed} onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)} />}
-            {!storageRecovery && desktopOpen && !macGuest && <ClaudeDesktop
+            {!storageRecovery && desktopOpen && !macGuest && accountDesktops.panes.length>0 && <DesktopPanes model={accountDesktops} visible={!settingsOpen && !managementPage && windowVisible}/>}
+            {!storageRecovery && desktopOpen && !macGuest && !accountDesktops.panes.length && <ClaudeDesktop
               uploads={desktopFiles.uploads}
               onProjectOpened={() => refreshStatus.current?.()}
               status={status} visible={!settingsOpen && !managementPage} remoteRef={remote}

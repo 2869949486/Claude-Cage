@@ -24,6 +24,16 @@ keywords: 多账号 账号池 登录 加入调度 自动分配 接续 切换 分
   <figcaption>Claude 账号面板：环境未启动、尚未登记账号。截图版本：0.1.6-alpha-preview（开发构建） · macOS 原生应用 · 2026-11-07。<a href="../../www/public/docs/screenshots/claude-accounts.jpg" target="_blank" rel="noopener">查看原图（2560 × 1764） ↗</a></figcaption>
 </figure>
 
+## 在 Linux 工作台并排使用两个 Desktop
+
+启动 Linux 虚拟机并安装 Claude Desktop 后，展开侧栏的“Claude Desktop”。“默认 Desktop”使用原来的登录资料。下面的编号与账号管理中的编号一致。点一个账号打开它，再点另一行的“并排打开”，即可在左右两栏分别操作。点某个账号行可单独查看它，另一实例仍在运行。“关闭实例”只结束对应账号的 Desktop 和授权浏览器。下次打开时，继续使用该账号的登录资料。
+
+每个编号有自己的 Desktop 数据目录、密钥环和授权浏览器。Desktop 首次登录须在对应窗口完成。独立添加的 Code 账号使用该账号的 Code 配置；从普通终端登记的账号可随终端重新登录而改变，因此其编号 Desktop 使用单独的 Code 配置。编号实例目前支持画面和键鼠操作，使用客机内的文件选择器。默认 Desktop 的本机文件桥、音频和系统剪贴板尚未按编号接入。
+
+默认情况下，编号实例沿用环境的网络出口。已部署专属网络时，在“Claude 账号管理”的账号卡片勾选“Desktop 下次启动使用专属网络”，关闭并重开该实例。这个选项作用于该 Desktop、它发起的授权浏览器及其子进程。独立终端仍按环境的网络设置运行。
+
+部署专属出口的管理员需在 Linux 客机中预先准备名为 `desktop-<账号 ID>` 的持久绑定网络命名空间，以及 `/etc/netns/desktop-<账号 ID>/resolv.conf`。账号 ID 可在当前配置目录的 `claude-accounts.json` 查看。管理员负责将该命名空间接入指定出口，限制 DNS 和直连回落，并在客机重启后恢复绑定。启用专属网络后，启动需要同时找到命名空间和 DNS 配置。实际公网 IP 由该网络的上游决定。macOS 和 Windows 客机继续使用默认 Desktop。
+
 ## 将已有登录加入调度
 
 在 Cage 普通终端运行 `claude auth login`。如果终端显示 Claude 官方授权链接，点击它即可在 Cage 浏览器的临时标签中继续。按页面提示完成后，回到原终端确认登录结果。
