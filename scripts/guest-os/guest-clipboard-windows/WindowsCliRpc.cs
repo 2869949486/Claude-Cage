@@ -110,6 +110,12 @@ internal static class WindowsCliRpc
             }
             script=Path.Combine(layout.Code,"cage-claude-account.py");
         }
+        else if(action=="token-usage")
+        {
+            input=request["input"] as JsonObject??throw new InvalidDataException("statistics_input_invalid");
+            PrivateDirectory(Path.Combine(layout.Root,"token-usage"),layout.Sandbox);
+            script=Path.Combine(layout.Code,"token_usage.py");args=[];
+        }
         else if(action=="channel")
         {
             var mode=request["mode"]?.GetValue<string>()??"";if(!Modes.Contains(mode))throw new InvalidDataException("cli_channel_operation_invalid");
@@ -136,6 +142,7 @@ internal static class WindowsCliRpc
         foreach(var path in new[]{root,accounts,state,shared})PrivateDirectory(path,sandbox);
         string Read(string resource){using var input=Assembly.GetExecutingAssembly().GetManifestResourceStream(resource)??throw new InvalidDataException("cli_helper_missing");using var reader=new StreamReader(input,Protocol.Utf8);return reader.ReadToEnd();}
         var files=new Dictionary<string,string>{{"client_runtime.py",Read("Cage.ClientRuntime")},{"cli_channel.py",Read("Cage.CliChannel")},{"cage-claude-account.py",Read("Cage.CliAccount")},{"windows_cli_platform.py",Read("Cage.CliPlatform")},{"windows_ccs_launch.cjs",Read("Cage.CliCCS")},{"mobile_cli_identity.py",Read("Cage.CliIdentity")},{"cli_channel.resume.md",Read("Cage.CliResume")},{"cli_channel.account-resume.md",Read("Cage.CliAccountResume")}};
+        files["token_usage.py"]=Read("Cage.TokenUsage");
         var digest=Convert.ToHexString(SHA256.HashData(Protocol.Utf8.GetBytes(string.Join("\n",files.Values)))).ToLowerInvariant();
         var code=Path.Combine(root,"code",digest);PrivateDirectory(code,sandbox,readOnly:true);
         foreach(var file in files){var path=Path.Combine(code,file.Key);if(!File.Exists(path))File.WriteAllText(path,file.Value,Protocol.Utf8);else if(File.ReadAllText(path,Protocol.Utf8)!=file.Value)throw new InvalidDataException("cli_helper_changed");}
