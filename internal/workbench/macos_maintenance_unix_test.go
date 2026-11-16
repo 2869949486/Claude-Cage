@@ -22,6 +22,32 @@ type disconnectedMacLoginResponse struct{ *httptest.ResponseRecorder }
 
 func (disconnectedMacLoginResponse) Write([]byte) (int, error) { return 0, io.ErrClosedPipe }
 
+func TestMacLoginSocketRetainsShortMigratedStoragePath(t *testing.T) {
+	physical := filepath.Join(t.TempDir(), strings.Repeat("physical-", 20))
+	if err := os.MkdirAll(physical, 0700); err != nil {
+		t.Fatal(err)
+	}
+	root, err := os.MkdirTemp("/tmp", "mac-socket-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(root)
+	logical := filepath.Join(root, "storage")
+	if err := os.Symlink(physical, logical); err != nil {
+		t.Fatal(err)
+	}
+	listener, err := net.Listen("unix", filepath.Join(logical, "cage-login.sock"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer listener.Close()
+	conn, err := net.Dial("unix", macLoginSocket(logical))
+	if err != nil {
+		t.Fatal("short storage anchor was replaced with an unusable physical socket path:", err)
+	}
+	conn.Close()
+}
+
 func TestMacOSMaintenanceHTTPBoundaryAndRunnerUpgrade(t *testing.T) {
 	s := testServer(t)
 	profile, err := os.MkdirTemp("/tmp", "cage-maint-")
@@ -29,13 +55,22 @@ func TestMacOSMaintenanceHTTPBoundaryAndRunnerUpgrade(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer os.RemoveAll(profile)
-	s.profile = profile
+	// A long profile alias must reach the runner's shorter physical socket,
+	// including the close request that revokes access when the account locks.
+	logical := filepath.Join(t.TempDir(), strings.Repeat("logical-", 20), "profile")
+	if err := os.MkdirAll(filepath.Dir(logical), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(profile, logical); err != nil {
+		t.Fatal(err)
+	}
+	s.profile = logical
 	s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "trial"}
 	s.ready = true
 	if err := os.MkdirAll(s.instanceDir(), 0700); err != nil {
 		t.Fatal(err)
 	}
-	listener, err := net.Listen("unix", filepath.Join(s.instanceDir(), "cage-login.sock"))
+	listener, err := net.Listen("unix", filepath.Join(profile, "state", "lima", "mac", "cage-login.sock"))
 	if err != nil {
 		t.Fatal(err)
 	}

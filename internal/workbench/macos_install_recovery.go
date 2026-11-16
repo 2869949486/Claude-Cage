@@ -175,7 +175,8 @@ func (s *Server) macOSInstallRecovery(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	var dial net.Dialer
-	conn, err := dial.DialContext(ctx, "unix", filepath.Join(s.profile, "state", "lima", "mac", "cage-login.sock"))
+	socket := macLoginSocket(filepath.Join(s.profile, "state", "lima", "mac"))
+	conn, err := dial.DialContext(ctx, "unix", socket)
 	if err != nil {
 		s.recordInstallRecovery("连接恢复画面失败：" + err.Error())
 		http.Error(w, "请先启动恢复客机", http.StatusConflict)
@@ -208,7 +209,7 @@ func (s *Server) macOSInstallRecovery(w http.ResponseWriter, r *http.Request) {
 	// below takes the same lock.
 	lifetime := s.lifetimeContext()
 	if input.Action == "open" && result.Session != "" {
-		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: true}, socket: filepath.Join(s.profile, "state", "lima", "mac", "cage-login.sock")}
+		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: true}, socket: socket}
 		s.mu.Lock()
 		previous := s.macLoginLease
 		s.macLoginLease = lease
