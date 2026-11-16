@@ -35,6 +35,7 @@ export function MacOSFirstSetup() {
   const [busy, setBusy] = useState(false);
   const [diagnostics, setDiagnostics] = useState(false);
   const [details, setDetails] = useState(false);
+  const [viewRequest, setViewRequest] = useState(0);
   const current = useRef({ account, refresh });
   current.current = { account, refresh };
   const control = useRef({ active: false, inFlight: false, actionPending: false, probeDone: null, started: false, finished: false, measured: false, waitingSince: 0, requested: "", pending: "" });
@@ -152,7 +153,11 @@ export function MacOSFirstSetup() {
       await c.probeDone;
       if (!c.active) return;
       c.inFlight = true;
-      if (steps.some(({ id }) => id === action)) { setPermissionPage(action); c.requested = action === "projects" ? `projects:${Boolean(permissions.project_install_required)}` : action; }
+      if (steps.some(({ id }) => id === action)) {
+        setPermissionPage(action);
+        c.requested = action === "projects" ? `projects:${Boolean(permissions.project_install_required)}` : action;
+        setViewRequest(value => value + 1);
+      }
       await request(action);
       if (action === "finish") { await current.current.refresh(); setCompletionFailed(false); }
     } catch (e) {
@@ -202,7 +207,7 @@ export function MacOSFirstSetup() {
       <h2>{!state?.ready ? "连接虚拟 Mac" : pending ? `确认${pending.label}` : "完成系统设置"}</h2>
       <p role="status">{busy && <LoaderCircle size={16} className="spin" aria-hidden="true" />} {progress}</p>
       {pending && state?.ready && <><PermissionInstructions step={pending} installing={projectInstallation} />
-        <p className="mac-setup-retention">点击「打开客机画面」进入操作。所有设置都在那张画面中完成。</p>
+        <p className="mac-setup-retention">点击下方的设置按钮，即可进入虚拟 Mac 完成操作。</p>
         {pending.id === "projects" && permissions.projects_error && <p>{permissions.projects_error}</p>}
         {pending.id === "sharing" && <ScreenSharingChecks checks={permissions.sharing_checks} summary={permissions.sharing_summary} />}
       </>}
@@ -213,7 +218,7 @@ export function MacOSFirstSetup() {
         <button disabled={busy || running} onClick={() => void check(true)}>重新检查状态</button>
       </div>
       {running && <button disabled={busy} onClick={() => act("stop")}>停止当前操作，保留进度</button>}
-      {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} managedCredential={permissions.managed_credential} disabled={!state.vm_running || running}
+      {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} openRequest={viewRequest} managedCredential={permissions.managed_credential} disabled={!state.vm_running || running}
         label="打开客机画面" setupActions={controls} setupHint={selectedHint}
         setupProgress={<ol className="mac-setup-workspace-progress" aria-label="系统授权进度">{steps.map(({ id, label }, index) => <li key={id} data-complete={Boolean(permissions[id])} aria-current={pending?.id === id ? "step" : undefined}><span>{permissions[id] ? <Check size={12} aria-hidden="true" /> : index + 1}</span>{label}<small>{permissions[id] ? "已完成" : pending?.id === id ? "进行中" : ""}</small></li>)}</ol>}
         setupStatus={failure || progress} setupError={Boolean(failure)} />}
