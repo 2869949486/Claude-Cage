@@ -435,7 +435,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             let opened = NSWorkspace.shared.open(URL(string: "https://github.com/Lee-xeo/Claude-Cage/" + path)!)
             replyHandler(opened ? true : nil, opened ? nil : "无法打开项目页面，请检查默认浏览器")
         case "appUpdate":
-            guard let operation = body["operation"] as? String, ["status", "check", "install", "cancel"].contains(operation) else { replyHandler(nil,"更新操作无效"); return }
+            guard let operation = body["operation"] as? String, ["status", "check", "install", "complete", "cancel"].contains(operation) else { replyHandler(nil,"更新操作无效"); return }
             replyHandler(appUpdater.handle(operation),nil)
         case "appearance":
             guard let mode = body["mode"] as? String, ["system", "light", "dark"].contains(mode), let background = body["background"] as? String, background.range(of: "^#[0-9a-fA-F]{6}$", options: .regularExpression) != nil else { replyHandler(nil,"外观参数无效"); return }
