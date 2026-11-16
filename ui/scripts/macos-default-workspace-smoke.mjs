@@ -106,7 +106,7 @@ try {
 } finally { await browser.close(); }
 
 {
-  let grant = "", generation = 0, approved = false;
+  let grant = "", generation = 0, approved = false, failClick = "";
   const f = await createWorkbench({
     initialization: { required: true, tracked: true, started: true, prepared: true },
     async beforeNavigate(page, state) {
@@ -131,7 +131,11 @@ try {
           status: 409, headers: { "Content-Type": "text/plain; charset=utf-8", "X-Cage-Recovery": "project-approval-ended" }, body: "项目授权请求已失效，请重新请求授权。",
         });
         if (q.action === "frame") return route.fulfill({ json: { image, window: 1, pid: 2, nonce: grant } });
-        if (q.action === "click") { assert.equal(q.nonce, grant); approved = true; }
+        if (q.action === "click") {
+          assert.equal(q.nonce, grant);
+          if (failClick) return route.fulfill({ json: { error: failClick } });
+          approved = true;
+        }
         if (q.action === "cancel") grant = "";
         return route.fulfill({ json: {} });
       });
@@ -164,6 +168,21 @@ try {
     assert.equal(generation, 3);
     await dialog.getByRole("button", { name: "验证授权" }).click();
     assert.equal(approved, false, "verification must not approve a pending project");
+    for (const [code, message] of [
+      ["project_panel_changed", "这次文件夹授权请求已变化"],
+      ["project_window_identity_changed", "显示的授权窗口已被替换"],
+      ["project_window_not_frontmost", "文件夹授权窗口未处于客机前台"],
+      ["project_window_focus_unavailable", "无法读取文件夹授权窗口的焦点"],
+      ["project_window_geometry_unavailable", "无法读取文件夹授权窗口的位置和尺寸"],
+      ["project_window_geometry_changed", "文件夹授权窗口的位置或尺寸与当前画面不一致"],
+    ]) {
+      failClick = code;
+      await dialog.getByRole("img").click();
+      await dialog.getByRole("alert").filter({ hasText: message }).waitFor();
+      await dialog.getByRole("img").waitFor();
+      assert.equal(approved, false, "failed input cannot authorize the project");
+    }
+    failClick = "";
     await dialog.getByRole("img").click();
     await dialog.waitFor({ state: "hidden" });
     await enter.click();

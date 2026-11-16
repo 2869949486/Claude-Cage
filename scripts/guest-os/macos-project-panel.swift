@@ -72,9 +72,12 @@ func visibleProjectPanel(_ panel: ProjectPanel) async throws -> SCWindow {
     guard CGPreflightScreenCaptureAccess() else { throw Failure(6, "project_screen_permission") }
     let candidates = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
     guard let window = candidates.windows.first(where: { $0.windowID == panel.windowNumber && $0.isOnScreen }),
-          let owner = window.owningApplication, NSWorkspace.shared.frontmostApplication?.processIdentifier == panel.pid,
+          let owner = window.owningApplication,
           owner.processID == panel.pid, owner.bundleIdentifier == "dev.cage.guest.project-access" else {
         throw Failure(7, "no_project_panel")
+    }
+    guard NSWorkspace.shared.frontmostApplication?.processIdentifier == panel.pid else {
+        throw Failure(7, "project_window_not_frontmost")
     }
     return window
 }
