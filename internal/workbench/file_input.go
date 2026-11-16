@@ -448,7 +448,7 @@ func (s *Server) fileInputUpload(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, browserFileLimit)
 	prepared, err := transfermeta.Prepare(name, r.Body, r.ContentLength)
 	if err != nil {
-		http.Error(w, "文件元数据清理失败，请重试", http.StatusInternalServerError)
+		transferMetadataError(w, err)
 		return
 	}
 	defer prepared.Close()

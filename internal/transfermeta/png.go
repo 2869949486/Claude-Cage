@@ -12,31 +12,32 @@ import (
 func sanitizePNG(src io.ReadSeeker, dst io.Writer) (bool, error) {
 	signature := make([]byte, len(pngSignature))
 	if _, err := io.ReadFull(src, signature); err != nil {
-		return false, nil
+		return false, ErrMalformed
 	}
 	if !bytes.Equal(signature, pngSignature) {
-		return false, nil
+		return false, ErrMalformed
 	}
 	if _, err := dst.Write(signature); err != nil {
 		return false, err
 	}
-	changed := false
 	for {
 		var header [8]byte
 		if _, err := io.ReadFull(src, header[:]); err != nil {
-			return false, nil
+			return false, ErrMalformed
 		}
 		length := binary.BigEndian.Uint32(header[:4])
 		chunkType := string(header[4:8])
+		if chunkType == "IEND" && length != 0 || chunkType == "IHDR" && length != 13 {
+			return false, ErrMalformed
+		}
 		if int64(length) > MaxBytes {
-			return false, nil
+			return false, ErrMalformed
 		}
 		if pngMetadataChunk(chunkType) {
 			// Length, payload and CRC are all removed.
 			if _, err := io.CopyN(io.Discard, src, int64(length)+4); err != nil {
 				return false, err
 			}
-			changed = true
 		} else {
 			if _, err := dst.Write(header[:]); err != nil {
 				return false, err
@@ -46,25 +47,22 @@ func sanitizePNG(src io.ReadSeeker, dst io.Writer) (bool, error) {
 			}
 			var crc [4]byte
 			if _, err := io.ReadFull(src, crc[:]); err != nil {
-				return false, nil
+				return false, ErrMalformed
 			}
 			if _, err := dst.Write(crc[:]); err != nil {
 				return false, err
 			}
 		}
 		if chunkType == "IEND" {
-			if _, err := io.Copy(dst, src); err != nil {
-				return false, err
-			}
-			return changed, nil
+			return true, nil
 		}
 	}
 }
 
 func pngMetadataChunk(chunkType string) bool {
 	switch chunkType {
-	case "tEXt", "zTXt", "iTXt", "eXIf", "tIME":
-		return true
+	case "IHDR", "PLTE", "IDAT", "IEND", "cHRM", "gAMA", "iCCP", "sRGB", "pHYs", "sBIT", "bKGD", "tRNS", "hIST", "acTL", "fcTL", "fdAT", "cICP", "mDCV", "cLLI":
+		return false
 	}
-	return false
+	return true
 }

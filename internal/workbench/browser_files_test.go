@@ -34,7 +34,7 @@ func TestBrowserUploadStreamsOnlyToLiveChooser(t *testing.T) {
 		body := `{"uploads":[{"id":"` + testBrowserFileID + `"}]}`
 		if r.Method == "POST" {
 			posts++
-			if r.URL.Path != "/upload-file" || r.URL.Query().Get("id") != testBrowserFileID || r.URL.Query().Get("name") != "参考视频.mp4" {
+			if r.URL.Path != "/upload-file" || r.URL.Query().Get("id") != testBrowserFileID || r.URL.Query().Get("name") != "参考附件.bin" {
 				t.Fatal("wrong upload target", r.URL)
 			}
 			got, err := io.ReadAll(r.Body)
@@ -69,10 +69,13 @@ func TestBrowserUploadStreamsOnlyToLiveChooser(t *testing.T) {
 	if code := call(s.origin, true, "video.mp4", browserFileLimit+1); code != 413 {
 		t.Fatal(code)
 	}
+	if code := call(s.origin, true, "video.mp4", int64(len(data))); code != 422 {
+		t.Fatal("unsupported video was accepted", code)
+	}
 	if posts != 0 {
 		t.Fatal("rejected stream reached guest")
 	}
-	if code := call(s.origin, true, "%E5%8F%82%E8%80%83%E8%A7%86%E9%A2%91.mp4", int64(len(data))); code != 200 || posts != 1 {
+	if code := call(s.origin, true, "%E5%8F%82%E8%80%83%E9%99%84%E4%BB%B6.bin", int64(len(data))); code != 200 || posts != 1 {
 		t.Fatal(code, posts)
 	}
 }

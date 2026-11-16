@@ -3,11 +3,9 @@ package transfermeta
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/xml"
 	"io"
 	"os"
-	"path"
-	"regexp"
-	"strings"
 	"time"
 )
 
@@ -16,7 +14,7 @@ var fixedZipTime = time.Date(1980, 1, 1, 0, 0, 0, 0, time.UTC)
 func sanitizeZipDoc(name string, src *os.File, dst io.Writer, size int64, kind format) (bool, error) {
 	reader, err := zip.NewReader(src, size)
 	if err != nil {
-		return false, nil
+		return false, ErrMalformed
 	}
 	return sanitizeZipArchive(reader, dst, kind)
 }
@@ -24,15 +22,22 @@ func sanitizeZipDoc(name string, src *os.File, dst io.Writer, size int64, kind f
 func sanitizeZipBytes(name string, data []byte, dst io.Writer, kind format) (bool, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return false, nil
+		return false, ErrMalformed
 	}
 	return sanitizeZipArchive(reader, dst, kind)
 }
 
 func sanitizeZipArchive(reader *zip.Reader, dst io.Writer, kind format) (bool, error) {
+	if len(reader.File) > 4096 {
+		return false, ErrUnsupported
+	}
 	writer := zip.NewWriter(dst)
-	changed := false
+	var total uint64
 	for _, entry := range reader.File {
+		if entry.UncompressedSize64 > 64<<20 || total > 256<<20-entry.UncompressedSize64 {
+			return false, ErrUnsupported
+		}
+		total += entry.UncompressedSize64
 		data, err := readZipEntry(entry)
 		if err != nil {
 			return false, err
@@ -43,29 +48,40 @@ func sanitizeZipArchive(reader *zip.Reader, dst io.Writer, kind format) (bool, e
 			if local := ooxmlMetadataRoot(entry.Name); local != "" {
 				if cleaned, ok := clearXMLRoot(data, local); ok {
 					content = cleaned
-					changed = true
+				} else {
+					return false, ErrMalformed
 				}
 			}
 		case kind == formatODF && entry.Name == "meta.xml":
-			if cleaned, ok := clearODFMeta(data); ok {
+			if cleaned, ok := clearXMLRoot(data, "document-meta"); ok {
 				content = cleaned
-				changed = true
+			} else {
+				return false, ErrMalformed
 			}
 		case kind == formatODF && entry.Name == "settings.xml":
-			if cleaned, ok := removeODFLanguage(data); ok {
+			if cleaned, ok := clearXMLRoot(data, "document-settings"); ok {
 				content = cleaned
-				changed = true
+			} else {
+				return false, ErrMalformed
 			}
 		}
-		if imageEntryName(entry.Name) {
-			if cleaned, err := SanitizeBytes(entry.Name, content); err == nil && !bytes.Equal(cleaned, content) {
-				content = cleaned
-				changed = true
-			}
+		// Nested document containers need a separate recursive resource budget;
+		// deny them rather than allowing arbitrarily deep decompression.
+		nested := detectFormat(entry.Name, content)
+		if nested == formatOOXML || nested == formatODF {
+			return false, ErrUnsupported
 		}
+		cleaned, err := SanitizeBytes(entry.Name, content)
+		if err != nil {
+			return false, err
+		}
+		content = cleaned
 		header := entry.FileHeader
 		header.Modified = fixedZipTime
 		header.Extra = nil
+		header.Comment = ""
+		header.ModifiedDate = 33
+		header.ModifiedTime = 0
 		header.CRC32 = 0
 		header.CompressedSize = 0
 		header.UncompressedSize = 0
@@ -82,7 +98,7 @@ func sanitizeZipArchive(reader *zip.Reader, dst io.Writer, kind format) (bool, e
 	if err := writer.Close(); err != nil {
 		return false, err
 	}
-	return changed, nil
+	return true, nil
 }
 
 func readZipEntry(entry *zip.File) ([]byte, error) {
@@ -91,7 +107,7 @@ func readZipEntry(entry *zip.File) ([]byte, error) {
 		return nil, err
 	}
 	defer reader.Close()
-	return io.ReadAll(reader)
+	return io.ReadAll(io.LimitReader(reader, 64<<20+1))
 }
 
 func ooxmlMetadataName(name string) bool {
@@ -112,48 +128,65 @@ func ooxmlMetadataRoot(name string) string {
 	return ""
 }
 
-func imageEntryName(name string) bool {
-	switch strings.ToLower(path.Ext(name)) {
-	case ".jpg", ".jpeg", ".png", ".gif", ".webp":
-		return true
-	}
-	return false
-}
-
-var xmlPrefix = `(?:[\w.-]+:)?`
-
 func clearXMLRoot(data []byte, localName string) ([]byte, bool) {
-	if localName == "" {
-		return data, false
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	depth, roots := 0, 0
+	var root xml.Name
+	for {
+		token, err := decoder.Token()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return nil, false
+		}
+		switch t := token.(type) {
+		case xml.StartElement:
+			if depth == 0 {
+				roots++
+				root = t.Name
+			}
+			depth++
+		case xml.EndElement:
+			depth--
+		case xml.CharData:
+			if depth == 0 && len(bytes.TrimSpace(t)) != 0 {
+				return nil, false
+			}
+		}
 	}
-	expression := regexp.MustCompile(`(?s)(<(` + xmlPrefix + regexp.QuoteMeta(localName) + `)\b[^>]*>).*?</` + xmlPrefix + regexp.QuoteMeta(localName) + `>`)
-	match := expression.FindSubmatch(data)
-	if match == nil {
-		return data, false
+	if roots != 1 || depth != 0 || root.Local != localName {
+		return nil, false
 	}
-	out := append([]byte{}, match[1]...)
-	out = append(out, []byte("</"+string(match[2])+">")...)
-	return out, true
-}
-
-func clearODFMeta(data []byte) ([]byte, bool) {
-	expression := regexp.MustCompile(`(?s)(<(` + xmlPrefix + `meta)\b[^>]*>).*?</` + xmlPrefix + `meta>`)
-	match := expression.FindSubmatch(data)
-	if match == nil {
-		return data, false
+	// Fixed namespaces avoid retaining xml:lang, custom root attributes or
+	// private namespace declarations from the original property document.
+	namespace := root.Space
+	switch localName {
+	case "coreProperties":
+		namespace = "http://schemas.openxmlformats.org/package/2006/metadata/core-properties"
+	case "Properties":
+		if namespace != "http://schemas.openxmlformats.org/officeDocument/2006/custom-properties" {
+			namespace = "http://schemas.openxmlformats.org/officeDocument/2006/extended-properties"
+		}
+	case "document-meta", "document-settings":
+		namespace = "urn:oasis:names:tc:opendocument:xmlns:office:1.0"
+	default:
+		return nil, false
 	}
-	open := strings.TrimSuffix(string(match[1]), ">") + "/>"
-	return expression.ReplaceAll(data, []byte(open)), true
-}
-
-func removeODFLanguage(data []byte) ([]byte, bool) {
-	paired := regexp.MustCompile(`(?s)<config:config-item\b[^>]*config:name="(?:Language|Locale|TimeZone)"[^>]*>.*?</config:config-item>`)
-	selfClosing := regexp.MustCompile(`<config:config-item\b[^>]*config:name="(?:Language|Locale|TimeZone)"[^>]*/>`)
-	if paired.Match(data) {
-		return paired.ReplaceAll(data, nil), true
+	start := xml.StartElement{Name: xml.Name{Space: namespace, Local: localName}}
+	var out bytes.Buffer
+	encoder := xml.NewEncoder(&out)
+	if encoder.EncodeToken(start) != nil {
+		return nil, false
 	}
-	if selfClosing.Match(data) {
-		return selfClosing.ReplaceAll(data, nil), true
+	if localName == "document-meta" {
+		meta := xml.StartElement{Name: xml.Name{Space: namespace, Local: "meta"}}
+		if encoder.EncodeToken(meta) != nil || encoder.EncodeToken(meta.End()) != nil {
+			return nil, false
+		}
 	}
-	return data, false
+	if encoder.EncodeToken(start.End()) != nil || encoder.Flush() != nil {
+		return nil, false
+	}
+	return out.Bytes(), true
 }

@@ -324,14 +324,14 @@ func TestODFMetadataRemovedWithoutChangingContent(t *testing.T) {
 	if !bytes.Contains(entries["content.xml"], []byte("Hello")) {
 		t.Fatal("content removed")
 	}
-	if !bytes.Contains(entries["meta.xml"], []byte("office:meta")) {
+	if !bytes.Contains(entries["meta.xml"], []byte("meta")) {
 		t.Fatal("meta root removed")
 	}
 }
 
 func TestUnknownFormatIsPassedThrough(t *testing.T) {
 	data := []byte("ordinary video bytes")
-	prepared, err := Prepare("clip.mp4", bytes.NewReader(data), int64(len(data)))
+	prepared, err := Prepare("ordinary.bin", bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -397,8 +397,8 @@ func TestZipWithoutMetadataIsUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Equal(cleaned, original) {
-		t.Fatal("zip without metadata changed")
+	if string(readZipEntries(t, cleaned)["word/document.xml"]) != "hello" {
+		t.Fatal("document content changed")
 	}
 }
 

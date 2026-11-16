@@ -26,6 +26,8 @@ const (
 	formatWebP
 	formatOOXML
 	formatODF
+	formatWAV
+	formatBlocked
 )
 
 // Prepared is a host-side file body ready for the guest. Body is either the
@@ -45,18 +47,22 @@ func (p *Prepared) Close() error {
 }
 
 // Prepare inspects the stream and removes supported metadata before it reaches
-// the guest. Unknown formats are passed through byte-for-byte. The size hint
+// the guest. Unsupported media/containers and malformed supported files fail
+// closed. Ordinary non-media files pass through. The size hint
 // may be -1 when the caller does not know the content length.
 func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 	if src == nil {
 		return nil, errors.New("文件内容为空")
 	}
 	reader := bufio.NewReaderSize(src, 64<<10)
-	head, err := reader.Peek(32)
+	head, err := reader.Peek(1024)
 	if err != nil && err != io.EOF && err != bufio.ErrBufferFull {
 		return nil, err
 	}
 	kind := detectFormat(name, head)
+	if kind == formatBlocked {
+		return nil, ErrUnsupported
+	}
 	if kind == formatUnknown {
 		return &Prepared{Body: reader, Size: hint}, nil
 	}
@@ -71,10 +77,9 @@ func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 	}
 	changed, err := sanitize(kind, name, source, out, size)
 	if err != nil {
-		_ = out.Close()
-		_ = os.Remove(out.Name())
-		_, _ = source.Seek(0, 0)
-		return &Prepared{Body: source, Size: size, cleanup: func() error { return closeAndRemove(source) }}, nil
+		_ = closeAndRemove(out)
+		_ = closeAndRemove(source)
+		return nil, errors.Join(ErrMalformed, err)
 	}
 	if !changed {
 		_ = out.Close()
@@ -106,12 +111,18 @@ func Prepare(name string, src io.Reader, hint int64) (*Prepared, error) {
 // document. It returns the original slice when no metadata was found.
 func SanitizeBytes(name string, data []byte) ([]byte, error) {
 	kind := detectFormat(name, data)
+	if kind == formatBlocked {
+		return nil, ErrUnsupported
+	}
 	if kind == formatUnknown {
 		return data, nil
 	}
 	var out bytes.Buffer
 	changed, err := sanitizeBytes(kind, name, data, &out)
-	if err != nil || !changed {
+	if err != nil {
+		return nil, errors.Join(ErrMalformed, err)
+	}
+	if !changed {
 		return data, nil
 	}
 	return out.Bytes(), nil
@@ -130,11 +141,19 @@ func detectFormat(name string, head []byte) format {
 	if len(head) >= 12 && string(head[0:4]) == "RIFF" && string(head[8:12]) == "WEBP" {
 		return formatWebP
 	}
+	if len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WAVE" {
+		return formatWAV
+	}
+	if blockedFormat(name, head) {
+		return formatBlocked
+	}
 	switch strings.ToLower(path.Ext(name)) {
 	case ".docx", ".docm", ".xlsx", ".xlsm", ".pptx", ".pptm":
 		return formatOOXML
 	case ".odt", ".ods", ".odp", ".odg", ".odf":
 		return formatODF
+	case ".jpg", ".jpeg", ".png", ".gif", ".webp", ".wav":
+		return formatBlocked // a supported extension with an invalid signature
 	}
 	return formatUnknown
 }
@@ -188,6 +207,8 @@ func sanitize(kind format, name string, src *os.File, dst io.Writer, size int64)
 		return sanitizeWebP(src, dst, size)
 	case formatOOXML, formatODF:
 		return sanitizeZipDoc(name, src, dst, size, kind)
+	case formatWAV:
+		return sanitizeWAV(src, dst, size)
 	}
 	return false, nil
 }
@@ -204,6 +225,8 @@ func sanitizeBytes(kind format, name string, data []byte, dst io.Writer) (bool, 
 		return sanitizeWebP(bytes.NewReader(data), dst, int64(len(data)))
 	case formatOOXML, formatODF:
 		return sanitizeZipBytes(name, data, dst, kind)
+	case formatWAV:
+		return sanitizeWAV(bytes.NewReader(data), dst, int64(len(data)))
 	}
 	return false, nil
 }

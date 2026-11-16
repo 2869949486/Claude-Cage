@@ -27,11 +27,11 @@ func sanitizeWebP(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 	}
 	header := make([]byte, 12)
 	if _, err := io.ReadFull(src, header); err != nil {
-		return false, nil
+		return false, ErrMalformed
 	}
 	newSize := riffSize - removed
 	if newSize < 4 {
-		return false, nil
+		return false, ErrMalformed
 	}
 	outHeader := make([]byte, 12)
 	copy(outHeader[:4], "RIFF")
@@ -45,13 +45,13 @@ func sanitizeWebP(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 	for position < end {
 		var chunk [8]byte
 		if _, err := io.ReadFull(src, chunk[:]); err != nil {
-			return false, nil
+			return false, ErrMalformed
 		}
 		length := int64(binary.LittleEndian.Uint32(chunk[4:8]))
 		padding := length % 2
 		total := 8 + length + padding
 		if position+total > end {
-			return false, nil
+			return false, ErrMalformed
 		}
 		if webPMetadataChunk(string(chunk[:4])) {
 			if _, err := io.CopyN(io.Discard, src, length+padding); err != nil {
@@ -68,7 +68,7 @@ func sanitizeWebP(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 			// container does not advertise chunks that no longer exist.
 			payload := make([]byte, length)
 			if _, err := io.ReadFull(src, payload); err != nil {
-				return false, nil
+				return false, ErrMalformed
 			}
 			payload[0] &^= (0x08 | 0x04)
 			if _, err := dst.Write(payload); err != nil {
@@ -77,7 +77,7 @@ func sanitizeWebP(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 			if padding > 0 {
 				var pad [1]byte
 				if _, err := io.ReadFull(src, pad[:]); err != nil {
-					return false, nil
+					return false, ErrMalformed
 				}
 				if _, err := dst.Write(pad[:]); err != nil {
 					return false, err
@@ -96,31 +96,31 @@ func sanitizeWebP(src io.ReadSeeker, dst io.Writer, size int64) (bool, error) {
 
 func scanWebP(src io.ReadSeeker, size int64) (removed int64, riffSize int64, changed bool, err error) {
 	if size < 12 {
-		return 0, 0, false, nil
+		return 0, 0, false, ErrMalformed
 	}
 	header := make([]byte, 12)
 	if _, err := io.ReadFull(src, header); err != nil {
 		return 0, 0, false, err
 	}
 	if string(header[:4]) != "RIFF" || string(header[8:12]) != "WEBP" {
-		return 0, 0, false, nil
+		return 0, 0, false, ErrMalformed
 	}
 	riffSize = int64(binary.LittleEndian.Uint32(header[4:8]))
 	end := 8 + riffSize
-	if end > size {
-		end = size
+	if end != size || riffSize < 4 {
+		return 0, 0, false, ErrMalformed
 	}
 	position := int64(12)
 	for position < end {
 		var chunk [8]byte
 		if _, err := io.ReadFull(src, chunk[:]); err != nil {
-			return 0, 0, false, nil
+			return 0, 0, false, ErrMalformed
 		}
 		length := int64(binary.LittleEndian.Uint32(chunk[4:8]))
 		padding := length % 2
 		total := 8 + length + padding
 		if position+total > end {
-			return 0, 0, false, nil
+			return 0, 0, false, ErrMalformed
 		}
 		if webPMetadataChunk(string(chunk[:4])) {
 			removed += total
@@ -135,5 +135,9 @@ func scanWebP(src io.ReadSeeker, size int64) (removed int64, riffSize int64, cha
 }
 
 func webPMetadataChunk(chunkType string) bool {
-	return chunkType == "EXIF" || chunkType == "XMP "
+	switch chunkType {
+	case "VP8X", "ICCP", "ALPH", "VP8 ", "VP8L", "ANIM", "ANMF":
+		return false
+	}
+	return true
 }
