@@ -218,7 +218,7 @@ function accountCaption(profile) {
   return profile.number ? `#${String(profile.number).padStart(2, "0")} ${label}` : label;
 }
 
-function ProfileCard({ profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
+function ProfileCard({ desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState("");
   const [group, setGroup] = useState(profile.handoff_group || "");
@@ -258,6 +258,9 @@ function ProfileCard({ profile, environment, usageEnvironment, busy, active, def
       </label>
     </div>
     <ProfileUsage quota={profile.quota} state={usage.state} />
+    {desktopNetwork && <label className="check-line"><input type="checkbox" checked={Boolean(profile.desktop_dedicated_network)} disabled={busy}
+      onChange={event=>{const dedicated=event.target.checked;perform(()=>change({action:"update",id:profile.id,desktop_dedicated_network:dedicated}));}}/>
+      Desktop 下次启动使用专属网络（需已配置）</label>}
     <form className="claude-handoff-group" onSubmit={event => { event.preventDefault(); perform(() => change({action:"update",id:profile.id,handoff_group:group})); }}>
       <label>接续分组<input aria-label={`${displayName} 的接续分组`} value={group} maxLength={32} placeholder="未分组，不跨账号接续" onChange={event => setGroup(event.target.value)} /></label>
       <button disabled={busy || group === (profile.handoff_group || "")}>保存分组</button>
@@ -285,7 +288,7 @@ function ProfileCard({ profile, environment, usageEnvironment, busy, active, def
   </article>;
 }
 
-export function ClaudeAccountsPanel({ store, running, environmentBusy, tabs, login, onConfirm }) {
+export function ClaudeAccountsPanel({ desktopNetwork, store, running, environmentBusy, tabs, login, onConfirm }) {
   const { accounts, detected, detectionStatus, detectionError, loginNotice, usageRunning, usageUnavailable, load, error } = store;
   const [busy, setBusy] = useState(false);
   const [requestingUsage, setRequestingUsage] = useState(false);
@@ -399,7 +402,7 @@ export function ClaudeAccountsPanel({ store, running, environmentBusy, tabs, log
         {detected && <DetectedProfile key={detected.identity} profile={detected} usageEnvironment={usageEnvironment} busy={busy || environmentBusy || !!environment}
           perform={perform} change={load}
           join={() => perform(joinDetected)} />}
-        {accounts?.map((profile) => <ProfileCard key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
+        {accounts?.map((profile) => <ProfileCard desktopNetwork={desktopNetwork} key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
           busy={busy || environmentBusy} perform={perform} change={load} login={login} cancelDraft={cancelDraft}
           active={activeCounts.get(profile.id)?.all || 0} defaultActive={activeCounts.get(profile.id)?.fromDefault || 0} />)}
       </QuotaClock>

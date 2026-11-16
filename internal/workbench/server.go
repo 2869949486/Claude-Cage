@@ -476,6 +476,9 @@ func (s *Server) handler() http.Handler {
 		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale || s.windowsGuest != nil, "pixel_wheel": s.macosGuest == nil && s.windowsGuest == nil})
 	})
 	mux.HandleFunc("GET /api/vnc", s.vnc)
+	mux.HandleFunc("GET /api/desktop-instances", s.accountDesktopList)
+	mux.HandleFunc("GET /api/desktop-instances/{id}/{action}", s.accountDesktop)
+	mux.HandleFunc("POST /api/desktop-instances/{id}/{action}", s.accountDesktop)
 	mux.HandleFunc("GET /api/claude-desktop", s.claudeDesktopStatus)
 	mux.HandleFunc("GET /api/claude-desktop/vnc-credentials", s.claudeDesktopCredentials)
 	mux.HandleFunc("GET /api/claude-desktop/vnc", s.claudeDesktopVNC)
@@ -702,7 +705,8 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		projectError = "当前本机项目已断开，请重新共享或选择其他项目。"
 	}
 	view := map[string]any{
-		"projects": projects, "project_groups": groups, "ready": s.ready, "vm_running": running,
+		"account_desktops_supported": s.accountDesktopsSupported(),
+		"projects":                   projects, "project_groups": groups, "ready": s.ready, "vm_running": running,
 		"workspace": s.workspaceLocked(), "environment_directory": s.environmentDir(),
 		"environment_identity_directory": cage.EnvironmentIdentityDir(s.profile),
 		"local_vm_storage":               s.localVMStorage(), "project_error": projectError, "project_errors": s.projectErrors,

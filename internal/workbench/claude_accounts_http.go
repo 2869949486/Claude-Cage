@@ -12,14 +12,15 @@ import (
 var errClaudeAccessLost = errors.New("Cage 已锁定，请先解锁")
 
 type claudeAccountInput struct {
-	Action       string            `json:"action"`
-	Identity     string            `json:"identity"`
-	ID           string            `json:"id"`
-	Label        string            `json:"label"`
-	Enabled      *bool             `json:"enabled"`
-	HandoffGroup *string           `json:"handoff_group"`
-	Scheduling   *claudeScheduling `json:"scheduling"`
-	Order        []string          `json:"order"`
+	DesktopDedicatedNetwork *bool             `json:"desktop_dedicated_network,omitempty"`
+	Action                  string            `json:"action"`
+	Identity                string            `json:"identity"`
+	ID                      string            `json:"id"`
+	Label                   string            `json:"label"`
+	Enabled                 *bool             `json:"enabled"`
+	HandoffGroup            *string           `json:"handoff_group"`
+	Scheduling              *claudeScheduling `json:"scheduling"`
+	Order                   []string          `json:"order"`
 }
 
 func (s *Server) listClaudeAccounts(w http.ResponseWriter, r *http.Request) {
@@ -146,6 +147,19 @@ func (s *Server) cancelClaudeDraft(id string) (claudeAccountList, error) {
 	for _, session := range s.terminals.snapshot() {
 		if session["claude_account_id"] == id && session["closed"] == false {
 			return list, errors.New("请先结束该账号的登录或工作终端，再撤销添加")
+		}
+	}
+	if s.accountDesktopsSupported() && s.vmRunning() {
+		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		defer cancel()
+		state, err := s.guest(ctx, "systemctl show --property=ActiveState --value desktop-"+id+".service")
+		if err != nil {
+			return list, errors.New("无法确认 Desktop 已关闭，请重新连接环境后再撤销账号")
+		}
+		switch strings.TrimSpace(string(state)) {
+		case "inactive", "failed":
+		default:
+			return list, errors.New("请先关闭该账号的 Desktop，再撤销添加")
 		}
 	}
 	list.Accounts = slices.DeleteFunc(list.Accounts, func(a claudeAccount) bool { return a.ID == id })

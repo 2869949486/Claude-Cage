@@ -21,22 +21,23 @@ import (
 // A profile ID selects a guest CLI configuration directory. Only public status
 // fields enter this registry; the official CLI owns authentication in the VM.
 type claudeAccount struct {
-	Number         uint32       `json:"number"`
-	ID             string       `json:"id"`
-	Label          string       `json:"label"`
-	Source         string       `json:"source"`
-	ProfileID      string       `json:"profile_id,omitempty"`
-	Enabled        bool         `json:"enabled"`
-	Status         string       `json:"status"`
-	Email          string       `json:"email,omitempty"`
-	Organization   string       `json:"organization,omitempty"`
-	Plan           string       `json:"plan,omitempty"`
-	HandoffGroup   string       `json:"handoff_group,omitempty"`
-	Quota          *claudeQuota `json:"quota,omitempty"`
-	CheckedAt      int64        `json:"checked_at,omitempty"`
-	UsageStatus    string       `json:"usage_status,omitempty"`
-	UsageCheckedAt int64        `json:"usage_checked_at,omitempty"`
-	UsageChecking  bool         `json:"usage_checking,omitempty"`
+	DesktopDedicatedNetwork bool         `json:"desktop_dedicated_network,omitempty"`
+	Number                  uint32       `json:"number"`
+	ID                      string       `json:"id"`
+	Label                   string       `json:"label"`
+	Source                  string       `json:"source"`
+	ProfileID               string       `json:"profile_id,omitempty"`
+	Enabled                 bool         `json:"enabled"`
+	Status                  string       `json:"status"`
+	Email                   string       `json:"email,omitempty"`
+	Organization            string       `json:"organization,omitempty"`
+	Plan                    string       `json:"plan,omitempty"`
+	HandoffGroup            string       `json:"handoff_group,omitempty"`
+	Quota                   *claudeQuota `json:"quota,omitempty"`
+	CheckedAt               int64        `json:"checked_at,omitempty"`
+	UsageStatus             string       `json:"usage_status,omitempty"`
+	UsageCheckedAt          int64        `json:"usage_checked_at,omitempty"`
+	UsageChecking           bool         `json:"usage_checking,omitempty"`
 }
 
 type claudeQuota struct {
@@ -229,6 +230,9 @@ func (list *claudeAccountList) change(input claudeAccountInput) error {
 			return errors.New("备注最多 64 个字符，不能含控制字符")
 		}
 		a.Label = label
+	}
+	if input.DesktopDedicatedNetwork != nil {
+		a.DesktopDedicatedNetwork = *input.DesktopDedicatedNetwork
 	}
 	if input.Enabled != nil {
 		a.Enabled = *input.Enabled
