@@ -184,10 +184,10 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     await option.waitFor();
     for (const name of [/^Debian/, /^Ubuntu/, /^macOS/, /^Windows/]) assert.equal(await page.getByRole("option", { name }).count(), 1);
     const expanded = await storage.boundingBox();
-    assert.ok(Math.abs(expanded.y - before.y) < 1, "floating system choices must not move storage");
+    assert.ok(expanded.y > before.y + 100, "inline system choices must push the storage section down");
     const menu = await page.getByRole("listbox").boundingBox();
-    assert.ok(menu.x >= 0 && menu.y >= 0 && menu.x + menu.width <= 1280 && menu.y + menu.height <= 850, "floating menu must stay inside the viewport");
-    if (evidence) await page.screenshot({ path: `${evidence}/${platform}-systems-floating.png`, fullPage: true });
+    assert.ok(menu.x >= 0 && menu.y >= 0 && menu.x + menu.width <= 1280, "inline choices must stay inside the page width");
+    if (evidence) await page.screenshot({ path: `${evidence}/${platform}-systems-inline.png`, fullPage: true });
     await picker.press("Home"); await picker.press("Enter");
     await page.getByText("Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。").waitFor();
     await page.getByText(/系统镜像通过主机网络下载.*系统代理或 TUN/).waitFor();
@@ -295,7 +295,8 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     state.status.local_vm_storage = true;
     await page.route("**/api/environment/storage", route => route.fulfill({ json: { directory: "/preview/cage-state", has_environment: false } }));
     await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: true, system: "macos" } }));
-    await page.route("**/api/proxy", route => route.fulfill({ json: { active: applied, selected: applied ? "node" : "", sources: imported ? [{ id: "source", name: "自有节点", nodes: [{ id: "node", name: "本机测试代理", type: "socks5" }] }] : [], port: 17896, core_available: true } }));
+    const nodes = [{ id: "node", name: "本机测试代理", type: "socks5" }, ...Array.from({ length: 244 }, (_, i) => ({ id: `other-${i}`, name: `其他节点 ${i}`, type: "socks5" }))];
+    await page.route("**/api/proxy", route => route.fulfill({ json: { active: applied, selected: applied ? "node" : "", sources: imported ? [{ id: "source", name: "自有节点", nodes }] : [], port: 17896, core_available: true } }));
     for (const action of ["import", "route"]) await page.route(`**/api/proxy/${action}`, route => {
       if (action === "import") imported = true;
       else applied = true;
@@ -315,6 +316,9 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     await page.getByLabel("服务器", { exact: true }).fill("127.0.0.1");
     await page.getByRole("button", { name: "导入并验证", exact: true }).click();
     await page.getByRole("tab", { name: "节点", exact: true }).click();
+    await page.locator('.proxy-node-list').waitFor();
+    const nodeList = await page.locator('.proxy-node-list').evaluate(el => ({ height: el.clientHeight, content: el.scrollHeight }));
+    assert.ok(nodeList.height <= 384 && nodeList.content > nodeList.height, "large node imports must scroll inside a bounded list");
     await page.getByRole("button", { name: "选择节点 本机测试代理", exact: true }).click();
     await page.getByRole("button", { name: "应用代理", exact: true }).click();
     await page.getByText("已完成", { exact: true }).waitFor();

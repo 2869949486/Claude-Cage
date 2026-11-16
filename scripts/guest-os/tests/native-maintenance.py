@@ -151,7 +151,10 @@ uname() { echo Darwin; }
 sysctl() { echo "$MODEL"; }
 id() { if [[ $1 == -u ]]; then echo 501; else echo "$GROUPS_FIXTURE"; fi; }
 stat() { echo 0; }
-dscl() { test -f "$QA_ROOT/group"; }
+dscl() {
+    if [[ $3 == "$QA_ROOT/Users/blue" && $4 == GeneratedUID ]]; then echo 'GeneratedUID: fixture-guid';
+    else test -f "$QA_ROOT/group"; fi
+}
 dseditgroup() {
     case "$2" in create) touch "$QA_ROOT/group";; edit) touch "$QA_ROOT/member";;
         checkmember) test -f "$QA_ROOT/member";; *) return 1;; esac
@@ -177,6 +180,19 @@ nc() { test "$1/$2/$3" = "-z/127.0.0.1/5900" && test -f "$QA_ROOT/loaded"; }
         env['GROUPS_FIXTURE'] = 'staff admin'
         self.assertNotEqual(enable('blue').returncode, 0)
         self.assertFalse((self.root / 'group').exists())
+        receipt = dict(version=2, state='ready', user='other', ordinary_uid='501', ordinary_guid='fixture-guid')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertNotEqual(enable('blue').returncode, 0, 'another bound account was accepted')
+        receipt.update(user='blue', state='retired')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertNotEqual(enable('blue').returncode, 0, 'retired setup privileges were accepted')
+        receipt.update(state='ready', ordinary_guid='replaced-guid')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertNotEqual(enable('blue').returncode, 0, 'a replaced account was accepted')
+        self.assertFalse((self.root / 'group').exists())
+        receipt.update(ordinary_guid='fixture-guid')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertEqual(enable('blue').returncode, 0, 'bound first-setup account must enable sharing')
         env['GROUPS_FIXTURE'] = 'staff'
         for model in ('Macmini8,1', 'VirtualMac2,1'):
             env['MODEL'] = model

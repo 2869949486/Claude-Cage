@@ -92,7 +92,7 @@ export function GuestSystemPicker({ system, onChange, onReselect, preserveOnUnmo
   return (
     <div className="guest-system-picker">
       <span>客户机系统</span>
-      <InlineSelect aria-label="客户机系统" value={system.clone ? "host" : os} disabled={system.pending}
+      <InlineSelect inline aria-label="客户机系统" value={system.clone ? "host" : os} disabled={system.pending}
         onValueChange={(value) => onChange({ guest_system: value === "host" ? view.system : value, clone: value === "host", clone_key: "", clone_ready: false, media: "", sha256: "", editor_terms: false })}>
         {Boolean(view.system) && <option value="host" disabled={!view.available}>自动匹配本机系统版本{view.available ? "" : "（暂不可用）"}</option>}
         <option value="debian-13">Debian 13</option>

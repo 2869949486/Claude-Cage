@@ -510,6 +510,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                       <div className="proxy-hop-control">
                         <label htmlFor={`proxy-hop-${index}`}>{label}</label>
                         <InlineSelect
+                          inline={initializing}
                           id={`proxy-hop-${index}`}
                           aria-label={label}
                           value={id}
@@ -661,6 +662,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
               />
             </label>
             <InlineSelect
+              inline={initializing}
               aria-label="节点来源"
               value={source}
               onValueChange={(next) => setSource(next)}
@@ -919,6 +921,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                   <label>
                     自动更新间隔
                     <InlineSelect
+                      inline={initializing}
                       aria-label="自动更新间隔"
                       value={form.interval_hours}
                       onValueChange={(next) =>
@@ -993,6 +996,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                     <label>
                       协议
                       <InlineSelect
+                        inline={initializing}
                         inline
                         aria-label="协议"
                         value={manual.type}
@@ -1040,6 +1044,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
                     <label>
                       认证方式
                       <InlineSelect
+                        inline={initializing}
                         inline
                         aria-label="认证方式"
                         value={manual.sshAuth}

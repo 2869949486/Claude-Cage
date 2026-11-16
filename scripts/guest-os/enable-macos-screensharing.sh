@@ -11,8 +11,19 @@ export PATH=/usr/bin:/bin:/usr/sbin:/sbin
 [[ $(sysctl -n hw.model) =~ ^VirtualMac[0-9]+,[0-9]+$ ]] || /usr/local/libexec/cage-guest-check --check
 user=$1
 [[ $user =~ ^[a-z][a-z0-9_]{0,30}$ && $user != root && $user != cageprovision && $user != cagesetup ]] || exit 1
-[[ $(id -u "$user") -ge 500 && " $(id -Gn "$user") " != *' admin '* ]] || exit 1
+[[ $(id -u "$user") -ge 500 ]] || exit 1
 [[ -f /var/db/cage-guest-os && ! -L /var/db/cage-guest-os && $(stat -f %u /var/db/cage-guest-os) == 0 && $(cat /var/db/cage-guest-os) == macos ]] || exit 1
+if [[ " $(id -Gn "$user") " == *' admin '* ]]; then
+    # First installation temporarily elevates the same graphical account. Later
+    # repair continues to require a standard user, after this receipt is retired.
+    receipt=/var/db/cage-initial-setup/account.json
+    [[ -f $receipt && ! -L $receipt && $(stat -f %u "$receipt") == 0 &&
+       $(plutil -extract version raw "$receipt") == 2 &&
+       $(plutil -extract state raw "$receipt") == ready &&
+       $(plutil -extract user raw "$receipt") == "$user" &&
+       $(plutil -extract ordinary_uid raw "$receipt") == "$(id -u "$user")" &&
+       $(dscl . -read /Users/$user GeneratedUID) == "GeneratedUID: $(plutil -extract ordinary_guid raw "$receipt")" ]] || exit 1
+fi
 
 plist=/System/Library/LaunchDaemons/com.apple.screensharing.plist
 [[ -f $plist ]] || exit 1
