@@ -190,29 +190,25 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
             // NSOpenPanel's remote view returns the hosting AXWindow from
             // point queries. Hit-test only its actual approval button, using
             // its live accessibility bounds and the user's frame coordinates.
-            var visited = 0
             func attribute(_ node: AXUIElement, _ name: String) -> CFTypeRef? {
                 var result: CFTypeRef?
                 guard AXUIElementCopyAttributeValue(node, name as CFString, &result) == .success else { return nil }
                 return result
             }
-            func buttonAtPoint(_ node: AXUIElement, depth: Int) -> AXUIElement? {
-                guard depth <= 14, visited < 2048 else { return nil }
-                visited += 1
+            let button = findProjectPanelElement(focused, children: { node in
+                attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? []
+            }, matching: { node in
                 if attribute(node, kAXRoleAttribute) as? String == kAXButtonRole,
                    attribute(node, kAXTitleAttribute) as? String == "Use Project",
                    let pos = attribute(node, kAXPositionAttribute), CFGetTypeID(pos) == AXValueGetTypeID(),
                    let dim = attribute(node, kAXSizeAttribute), CFGetTypeID(dim) == AXValueGetTypeID() {
                     var p = CGPoint.zero, s = CGSize.zero
                     if AXValueGetValue(pos as! AXValue, .cgPoint, &p), AXValueGetValue(dim as! AXValue, .cgSize, &s),
-                       CGRect(origin: p, size: s).contains(point) { return node }
+                       CGRect(origin: p, size: s).contains(point) { return true }
                 }
-                for child in attribute(node, kAXChildrenAttribute) as? [AXUIElement] ?? [] {
-                    if let match = buttonAtPoint(child, depth: depth + 1) { return match }
-                }
-                return nil
-            }
-            guard let button = buttonAtPoint(focused, depth: 0),
+                return false
+            })
+            guard let button,
                   AXUIElementPerformAction(button, kAXPressAction as CFString) == .success else {
                 throw Failure(8, "project_button_not_hit")
             }

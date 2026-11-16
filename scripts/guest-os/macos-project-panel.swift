@@ -10,6 +10,22 @@ struct ProjectPanel: Decodable, Equatable {
     let windowNumber: CGWindowID
 }
 
+// File lists can expose thousands of AX nodes before the panel's action bar.
+// Visit shallow controls first, keeping the same depth and node bounds.
+func findProjectPanelElement<Element>(_ root: Element, children: (Element) -> [Element], matching: (Element) -> Bool) -> Element? {
+    var pending: [(Element, Int)] = [(root, 0)]
+    var index = 0
+    while index < pending.count {
+        let (element, depth) = pending[index]
+        index += 1
+        if matching(element) { return element }
+        if depth < 14 {
+            pending.append(contentsOf: children(element).prefix(2048 - pending.count).map { ($0, depth + 1) })
+        }
+    }
+    return nil
+}
+
 private func matchesInstalledProjectApp(pid: pid_t) -> Bool {
     let path = "/Applications/CageProjectAccess.app"
     guard NSRunningApplication(processIdentifier: pid)?.bundleURL?.path == path else { return false }
