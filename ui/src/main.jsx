@@ -58,7 +58,7 @@ import { networkState, isGuestLocalURL } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
 import { useWindowVisibility } from "./window-visibility";
-import { AppUpdateButton, useAppUpdates } from "./app-updates";
+import { AppUpdateButton, AppUpdateDialog, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
 import { guestCapability } from "./guest-capabilities.mjs";
@@ -1338,6 +1338,7 @@ function App() {
     onRecover={() => recoverEditor(tab)} />;
   const dialogs = (
     <>
+      <AppUpdateDialog updates={appUpdates} onStatus={setStatus} />
       {dialog && (
         <Modal
           title={dialog.title}
