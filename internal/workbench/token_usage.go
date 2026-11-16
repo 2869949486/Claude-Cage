@@ -25,6 +25,7 @@ type tokenUsageDay struct {
 	Date     string `json:"date"`
 	Model    string `json:"model"`
 	Source   string `json:"source"`
+	Client   string `json:"client,omitempty"`
 	Input    int64  `json:"input_tokens"`
 	Output   int64  `json:"output_tokens"`
 	Read     int64  `json:"cache_read_input_tokens"`
@@ -185,6 +186,11 @@ func (s *Server) collectTokenUsage(ctx context.Context, state *tokenUsageState, 
 		return errors.New("用量记录格式暂不支持，已保存的统计仍然保留")
 	}
 	for _, d := range snapshot.Days {
+		switch d.Client {
+		case "", "unknown", "terminal", "desktop_code", "cowork", "ide", "automation", "remote", "other":
+		default:
+			return errors.New("运行入口记录校验失败，已保存的统计仍然保留")
+		}
 		if _, e := time.Parse("2006-01-02", d.Date); e != nil || d.Input < 0 || d.Output < 0 || d.Read < 0 || d.Write < 0 || d.Requests < 0 || len(d.Model) > 128 || !(d.Source == "unknown" || validClaudeGuestID(d.Source)) {
 			return errors.New("用量记录校验失败，已保存的统计仍然保留")
 		}

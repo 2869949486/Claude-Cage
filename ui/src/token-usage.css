@@ -31,6 +31,16 @@
 .token-day-detail { display: flex; flex-wrap: wrap; gap: 16px; padding: 16px; border-radius: 6px; background: var(--chrome); font-size: .929rem; }
 .token-day-detail strong { font-weight: 500; color: var(--strong); }
 .token-trend { margin-top: 32px; }
+.token-breakdown { margin-top: 32px; }
+.token-breakdown table { width: 100%; margin-top: 16px; border-collapse: collapse; font-size: .929rem; font-variant-numeric: tabular-nums; }
+.token-breakdown th, .token-breakdown td { padding: 12px 0; border-bottom: 1px solid var(--line); text-align: end; vertical-align: middle; }
+.token-breakdown th:first-child { text-align: start; width: 56%; padding-right: 16px; font-weight: 400; }
+.token-breakdown thead th { color: var(--muted); font-weight: 400; }
+.token-breakdown tbody th button { background: transparent; border: none; padding: 0; color: var(--ink); text-align: start; font: inherit; min-height: 28px; }
+.token-breakdown td small { display: block; color: var(--muted); margin-top: 4px; font-size: .857rem; }
+.token-client-track { height: 4px; background: var(--chrome-dark); border-radius: 3px; margin-top: 4px; }
+.token-client-track span { display: block; height: 100%; background: var(--success); border-radius: inherit; }
+.token-coverage { font-size: .929rem; color: var(--muted); line-height: 1.7; margin: 16px 0 0; }
 .token-segments { display: flex; gap: 4px; padding: 4px; border-radius: 8px; background: var(--chrome); }
 .token-segments button { border: none; background: transparent; color: var(--muted); padding: 6px 12px; min-height: 32px; font-size: .929rem; }
 .token-segments button[aria-pressed="true"] { background: var(--paper); color: var(--strong); box-shadow: 0 1px 4px #00000012; }

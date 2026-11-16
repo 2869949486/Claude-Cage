@@ -71,6 +71,16 @@ func TestTokenUsageOfficialCLITranscript(t *testing.T) {
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("isolated official CLI: %v\n%s", err, output)
 	}
+	// Exercise the standard entrypoint field without launching a logged-in
+	// Desktop app. All four runs use the same network/credential sandbox.
+	for _, entrypoint := range []string{"claude-desktop", "local-agent", "claude-vscode"} {
+		child := exec.CommandContext(ctx, cmd.Path, cmd.Args[1:]...)
+		child.Dir = cmd.Dir
+		child.Env = append(append([]string{}, cmd.Env...), "CLAUDE_CODE_ENTRYPOINT="+entrypoint)
+		if output, err := child.CombinedOutput(); err != nil {
+			t.Fatalf("isolated entrypoint %s: %v\n%s", entrypoint, err, output)
+		}
+	}
 	s := testServer(t)
 	s.ready = true
 	mobileTestSSH(t, s, home, []string{"HOME=" + home, "PATH=" + os.Getenv("PATH"), "TZ=UTC"})
@@ -85,12 +95,19 @@ func TestTokenUsageOfficialCLITranscript(t *testing.T) {
 		t.Fatal(err)
 	}
 	var input, output, requests int64
+	clients := map[string]int64{}
 	for _, day := range view.Snapshot.Days {
 		input += day.Input
 		output += day.Output
 		requests += day.Requests
+		clients[day.Client] += day.Requests
 	}
-	if input != 8 || output != 5 || requests != 1 {
+	if input != 32 || output != 20 || requests != 4 {
 		t.Fatalf("official transcript counters: input=%d output=%d requests=%d invalid=%d", input, output, requests, view.Snapshot.Invalid)
+	}
+	for _, client := range []string{"desktop_code", "cowork", "ide", "automation"} {
+		if clients[client] != 1 {
+			t.Fatalf("official transcript classification %s: %+v", client, clients)
+		}
 	}
 }
