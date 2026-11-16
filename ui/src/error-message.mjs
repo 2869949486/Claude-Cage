@@ -15,6 +15,8 @@ export function operationName(path = "", method = "GET") {
   if (path.startsWith("/input/files") || path.startsWith("/browser/files")) return "传递文件";
   if (path.startsWith("/tailscale")) return reading ? "读取 Tailscale 状态" : "操作 Tailscale";
   if (path.startsWith("/browser")) return "操作浏览器";
+  if (path === "/proxy/local-configs") return "查找本机代理配置";
+  if (path === "/proxy/import-local") return "导入本机代理配置";
   if (path.startsWith("/proxy")) return reading ? "读取代理设置" : "应用代理设置";
   if (path.startsWith("/safety")) return "检查联网条件";
   if (path.startsWith("/settings/probe")) return "验证代理出口";
