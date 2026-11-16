@@ -49,6 +49,7 @@ type macSetupPermissions struct {
 	ProjectsError          string               `json:"projects_error,omitempty"`
 	Error                  string               `json:"error,omitempty"`
 	ManagedCredential      bool                 `json:"managed_credential,omitempty"`
+	AuthorizationUser      string               `json:"authorization_user,omitempty"`
 	Sharing                bool                 `json:"sharing"`
 	SharingSummary         string               `json:"sharing_summary,omitempty"`
 	SharingChecks          []screenSharingCheck `json:"sharing_checks,omitempty"`
@@ -153,6 +154,12 @@ func (s *Server) macSetupPermissions(ctx context.Context, refreshSharing bool) (
 	if install, err := guestos.LoadInstallation(s.profile); err == nil && install != nil {
 		password, err := s.account.savedMacGuestPassword(ctx, install.ID)
 		status.ManagedCredential = err == nil && password != ""
+		if status.ManagedCredential {
+			if err := s.prepareMacGuestAccount(ctx); err != nil {
+				return status, err
+			}
+			status.AuthorizationUser = s.macosGuest.User
+		}
 	}
 	return status, nil
 }

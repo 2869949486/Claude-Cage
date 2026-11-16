@@ -13,7 +13,12 @@ bound_user=$(plutil -extract user raw "$receipt" 2>/dev/null || echo cage)
 [[ $bound_user == "$user" ]] || exit 1
 phase=$(plutil -extract state raw "$receipt")
 [[ $phase == ready ]] || exit 1
-[[ $(dscl . -read /Users/$user NFSHomeDirectory) == "NFSHomeDirectory: /Users/$user" && " $(id -Gn "$user") " != *' admin '* ]] || exit 1
+[[ $(dscl . -read /Users/$user NFSHomeDirectory) == "NFSHomeDirectory: /Users/$user" ]] || exit 1
+if [[ " $(id -Gn "$user") " == *' admin '* ]]; then
+    [[ $(plutil -extract version raw "$receipt") == 2 &&
+       $(plutil -extract ordinary_uid raw "$receipt") == "$(id -u "$user")" &&
+       $(dscl . -read /Users/$user GeneratedUID) == "GeneratedUID: $(plutil -extract ordinary_guid raw "$receipt")" ]] || exit 1
+fi
 IFS= read -r password
 [[ -n $password ]] || exit 1
 printf '%s\n' "$password" | dscl /Local/Default -authonly "$user" >/dev/null

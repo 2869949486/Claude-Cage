@@ -111,14 +111,12 @@ func TestMacSharedPasswordLive(t *testing.T) {
 	if err = s.syncMacGuestPassword(ctx); err != nil {
 		t.Fatal(err)
 	}
-	// Both ordinary login and the temporary authorization user accept Cage's
-	// password. SSH still authenticates by key, so this checks password login too.
-	for _, user := range []string{bound.User, "cagesetup"} {
-		cmd = s.macOSSSHCommand(ctx, "-T", "cage-macos", "--", "/usr/bin/dscl /Local/Default -authonly "+user)
-		cmd.Stdin = strings.NewReader(target + "\n")
-		if err = cmd.Run(); err != nil {
-			t.Fatal("guest account did not accept shared password for", user, err)
-		}
+	// Ordinary login and first-setup authorization use this same account. SSH
+	// still authenticates by key, so this checks password authentication too.
+	cmd = s.macOSSSHCommand(ctx, "-T", "cage-macos", "--", "/usr/bin/dscl /Local/Default -authonly "+bound.User)
+	cmd.Stdin = strings.NewReader(target + "\n")
+	if err = cmd.Run(); err != nil {
+		t.Fatal("guest account did not accept shared password for", bound.User, err)
 	}
 	cmd = s.macOSSSHCommand(ctx, "-T", "cage-macos", "--", "/usr/bin/dscl /Local/Default -authonly "+bound.User)
 	cmd.Stdin = strings.NewReader(previous + "\n")
@@ -159,5 +157,5 @@ func TestMacSharedPasswordLive(t *testing.T) {
 	if err != nil || !bytes.Equal(accountBefore, accountAfter) {
 		t.Fatal("source QA account changed")
 	}
-	t.Log("Shared password accepted by ordinary and setup accounts; old password rejected; automatic login and replay passed; source account and guest sentinel retained")
+	t.Log("Shared password accepted by the guest account; old password rejected; automatic login and replay passed; source account and guest sentinel retained")
 }
