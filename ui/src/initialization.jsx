@@ -310,8 +310,8 @@ function Initialization({ initial, onComplete }) {
             {needsExitRestart && <section className="initialization-notice" aria-label="固定出口已保存"><p>固定出口已保存。重启客机并重新检测后才能进入工作台。</p><button className="primary" disabled={busy || Boolean(connectionError)} onClick={restart}>{status.vm_running ? "重启客机并重新检测" : "启动客机并重新检测"}</button></section>}
             {progress ? <SetupProgress job={progress} onDetails={() => setDetails(true)} onStop={stop} onRetry={needsExitRestart ? restart : install} disconnected={Boolean(connectionError) || submitting} /> : (busy || status.guest_system !== "macos" || !networkPending) && <div className="initialization-operation" role="status">{busy && <LoaderCircle size={22} className="spin" />}<p>{stopped ? "安装已停止，已有下载和磁盘会保留。点击「继续安装」接着完成。" : job.message || (status.vm_running ? "请完成客机连接和网络检查。" : "准备继续原安装，已有文件和磁盘会保留。")}</p>{!busy && !job.error && !needsExitRestart && <button className="primary" disabled={Boolean(connectionError)} onClick={install}>{status.ready ? "重新启动并检查" : "继续安装"}</button>}{busy && <button onClick={stop} disabled={submitting}>停止安装</button>}</div>}
             {pending?.system === "macos" && macRecovery?.available && <section hidden={busy && !job.gui_authorization} className="initialization-notice" aria-label="恢复 macOS 组件安装">
-              <h2>继续安装 macFUSE</h2>
-              <p>文件共享组件的安装需要你在虚拟 Mac 中完成管理员授权。系统和已有安装进度会保留，请按以下顺序继续：</p>
+              <h2>{job.gui_authorization ? "继续完成安装授权" : "需要在客机内完成安装授权？"}</h2>
+              <p>系统和安装进度已保留。先点击「继续安装」重试；如果操作详情提示 macFUSE 需要管理员授权，再按下方步骤打开客机画面。其他安装错误无需进入此画面。</p>
               <ol>
                 <li>启动恢复客机。</li>
                 <li>打开恢复画面，先登录安装时创建的客机普通账户。</li>

@@ -174,3 +174,53 @@ func TestMacOSStartAndControllerReconnectRequireFreshNetworkCheck(t *testing.T) 
 		})
 	}
 }
+
+func TestMacOSConnectionAllowsTemporaryAdminOnlyDuringFirstSetup(t *testing.T) {
+	for _, tc := range []struct {
+		name, groups   string
+		setup, allowed bool
+	}{
+		{"standard account", "staff", false, true},
+		{"administrator after setup", "staff admin", false, false},
+		{"temporary setup administrator", "staff admin", true, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			g := newMacWorkspaceGuest(t, func(ch ssh.Channel, command string) (uint32, bool) {
+				if !strings.Contains(command, "uname -s") {
+					return 0, false
+				}
+				script := `uname() { echo Darwin; }; sysctl() { echo VirtualMac2,1; }; id() { case "$1" in -un) echo cage;; -Gn) echo '` + tc.groups + `';; *) return 1;; esac; }; export -f uname sysctl id; ` + command
+				cmd := exec.Command("/bin/bash", "-c", script)
+				cmd.Stdout, cmd.Stderr = ch, ch.Stderr()
+				if err := cmd.Run(); err != nil {
+					return 1, true
+				}
+				return 0, true
+			})
+			s := g.s
+			if tc.setup {
+				s.macosGuest.SetupID = "awaiting-first-setup"
+			}
+			cfg, err := loadConfig(s.configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			gate, err := cage.NewEgressGate(cfg)
+			if err != nil {
+				t.Fatal(err)
+			}
+			stop, err := cage.StartGateControl(s.configPath, s.instanceDir(), gate)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stop()
+			err = s.checkMacOSGuest(t.Context())
+			if (err == nil) != tc.allowed {
+				t.Fatalf("connection error=%v, allowed=%t", err, tc.allowed)
+			}
+			if gate.Status().Mode != cage.GateClosed {
+				t.Fatal("identity check opened the setup gate")
+			}
+		})
+	}
+}
