@@ -49,6 +49,8 @@ type Server struct {
 	agentNativeQueue                                 agentNativeQueue
 	macSetupProjectsChecked                          time.Time
 	macSetupProjectsAttempt                          time.Time
+	macSetupAccountMu                                sync.Mutex
+	macSetupAccountPrepared                          bool
 	macSetupSharingConfirmed                         bool
 	macSetupSharingAttempt                           time.Time
 	macSetupSharingStatus                            macOSScreenSharingStatus

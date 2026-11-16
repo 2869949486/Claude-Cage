@@ -38,6 +38,9 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
     private var completeUpdateMenu: NSMenuItem!
     private var controllerNeedsUpdate = false
     private var appUpdater: CageAppUpdater!
+    private var guestWorkspace: GuestWorkspaceLayout?
+    private var workspacePreviousFrame: NSRect?
+    private var workspacePreviousMinimum: NSSize?
 
     private struct DesktopEntry {
         let status: String
@@ -254,6 +257,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         }
     }
     private func bootstrap(options: [String] = []) {
+        setGuestWorkspace(nil)
         loading.stringValue = options.contains("--complete-update") ? "正在停止环境并切换到新版后台…" : "正在启动 Cage 工作台…"
         loading.isHidden = false; retry.isHidden = true; webView.isHidden = true
         completeUpdateButton.isHidden = true; existingEnvironmentButton.isHidden = true
@@ -424,6 +428,13 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         case "workbenchReady":
             guard !controllerNeedsUpdate else { replyHandler(nil,"后台版本尚未同步，更新未完成"); return }
             appUpdater?.markLaunchReady()
+            replyHandler(true,nil)
+        case "guestWorkspace":
+            guard let active = body["active"] as? Bool else { replyHandler(nil,"客机画面参数无效"); return }
+            if active {
+                guard let aspect = body["aspect"] as? Double, aspect.isFinite, (0.5...4).contains(aspect) else { replyHandler(nil,"客机画面比例无效"); return }
+                setGuestWorkspace(GuestWorkspaceLayout(aspect: aspect))
+            } else { setGuestWorkspace(nil) }
             replyHandler(true,nil)
         case "appReference":
             let path: String
@@ -669,6 +680,36 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         let visible = !forceHidden && window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
         webView.evaluateJavaScript("window.cageWindowVisible = \(visible ? "true" : "false"); window.dispatchEvent(new Event('cage-window-visibility'));", completionHandler: nil)
     }
+    private func setGuestWorkspace(_ layout: GuestWorkspaceLayout?) {
+        if let layout {
+            let opening = guestWorkspace == nil
+            if guestWorkspace == nil { workspacePreviousFrame = window.frame; workspacePreviousMinimum = window.minSize }
+            guestWorkspace = layout
+            guard !window.styleMask.contains(.fullScreen), let screen = window.screen else { return }
+            let available = window.contentRect(forFrameRect: screen.visibleFrame).size
+            let content = layout.fitted(width: opening ? available.width : window.contentLayoutRect.width, available: available)
+            let minimum = layout.fitted(width: 0, available: available)
+            window.contentMinSize = minimum
+            var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: content))
+            frame.origin.x = max(screen.visibleFrame.minX, min(window.frame.minX, screen.visibleFrame.maxX - frame.width))
+            frame.origin.y = max(screen.visibleFrame.minY, min(window.frame.maxY, screen.visibleFrame.maxY) - frame.height)
+            window.setFrame(frame, display: true)
+        } else if guestWorkspace != nil {
+            guestWorkspace = nil
+            if let minimum = workspacePreviousMinimum { window.minSize = minimum }
+            if let frame = workspacePreviousFrame, !window.styleMask.contains(.fullScreen) { window.setFrame(frame, display: true) }
+            workspacePreviousFrame = nil; workspacePreviousMinimum = nil
+        }
+    }
+
+    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
+        guard let layout = guestWorkspace, !sender.styleMask.contains(.fullScreen), let screen = sender.screen else { return frameSize }
+        let proposed = sender.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
+        let available = sender.contentRect(forFrameRect: screen.visibleFrame).size
+        let content = layout.resized(proposed: proposed, current: sender.contentLayoutRect.size, available: available)
+        return sender.frameRect(forContentRect: NSRect(origin: .zero, size: content)).size
+    }
+
     func windowDidChangeOcclusionState(_ notification: Notification) { publishWindowVisibility() }
     func windowDidMiniaturize(_ notification: Notification) { publishWindowVisibility() }
     func windowDidDeminiaturize(_ notification: Notification) { publishWindowVisibility() }

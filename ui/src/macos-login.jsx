@@ -1,7 +1,7 @@
 import React, { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { ArrowLeft, Maximize, ZoomIn } from "lucide-react";
-import { api } from "./api";
+import { api, native, nativeAvailable } from "./api";
 import "./macos-login.css";
 
 // DOM physical codes and the matching ANSI key codes expected by the Apple VM keyboard.
@@ -184,6 +184,16 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
     return () => clearTimeout(timer);
   }, [authorizationPassword]);
 
+  useEffect(() => {
+    if (!opened || !initialSetup || !nativeAvailable()) return;
+    native("guestWorkspace", { active: true, aspect }).catch(() => {});
+  }, [opened, initialSetup, aspect]);
+
+  useEffect(() => {
+    if (!opened || !initialSetup || !nativeAvailable()) return;
+    return () => { native("guestWorkspace", { active: false }).catch(() => {}); };
+  }, [opened, initialSetup]);
+
   useEffect(() => () => {
     if (lease.current) {
       closeSession(lease.current.session, endpoint, maintenance);
@@ -204,7 +214,7 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
     const dismiss = () => end();
     document.addEventListener("cage-close-modal", dismiss);
     function measure() {
-      const { width, height } = control.getBoundingClientRect();
+      const { clientWidth: width, clientHeight: height } = control;
       setSize((old) => old.width === width && old.height === height ? old : { width, height });
     }
     measure();

@@ -31,7 +31,7 @@ if ! id $ordinary >/dev/null 2>&1; then
     id $ordinary >/dev/null
     if [[ ! -e /Users/$ordinary ]]; then /usr/sbin/createhomedir -c -u $ordinary; fi
 fi
-[[ $(dscl . -read /Users/$ordinary NFSHomeDirectory) == "NFSHomeDirectory: /Users/$ordinary" && " $(id -Gn $ordinary) " != *' admin '* ]] || exit 1
+[[ $(dscl . -read /Users/$ordinary NFSHomeDirectory) == "NFSHomeDirectory: /Users/$ordinary" ]] || exit 1
 if ! printf '%s\n' "$login_password" | dscl /Local/Default -authonly $ordinary >/dev/null; then
     echo '保存的客机凭据与安装账户不匹配，请核对加密保险箱。' >&2
     exit 1

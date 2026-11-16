@@ -239,6 +239,8 @@
 [data-mode="setup"] .mac-login-status[role="alert"] { color: var(--danger); }
 [data-mode="setup"] .mac-login-help { order: 3; padding: 0; margin: 0 0 16px; color: var(--muted); text-align: left; }
 [data-mode="setup"] .mac-login-stage { position: relative; inset: auto; flex: 1; min-width: 0; min-height: 0; height: 100%; background: var(--chrome-dark); }
+/* A fitted frame never needs scrollbars, including macOS's always-visible mode. */
+[data-mode="setup"] .mac-login-stage[data-zoom="fit"] { overflow: hidden; }
 @media (max-width: 760px) {
   [data-mode="setup"] .mac-login-controls { display: none; }
   [data-mode="setup"][data-guidance-open="true"] .mac-login-controls { display: flex; position: absolute; z-index: 2; top: 0; left: 0; bottom: 0; width: min(320px, calc(100% - 48px)); padding-top: 64px; box-shadow: 8px 0 24px #0002; }

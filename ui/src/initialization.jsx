@@ -11,7 +11,7 @@ import { SetupProgress } from "./setup-progress";
 import { DiagnosticSettings } from "./diagnostics.jsx";
 import { MacOSFirstSetup } from "./macos-first-setup";
 import { InitializationProjectApproval } from "./macos-project-approval";
-import { InitializationChecks, InitializationDetails } from "./initialization-checks";
+import { InitializationChecks, InitializationDetails, initializationRecovery } from "./initialization-checks";
 import { MacOSLogin } from "./macos-login";
 import { Modal } from "./modal";
 import { SafetyMessage } from "./safety-message";
@@ -73,6 +73,8 @@ function Initialization({ initial, onComplete }) {
   const [dialog, setDialog] = useState(null);
   const [approvalWorkspace, setApprovalWorkspace] = useState("");
   const [proxyDirty, setProxyDirty] = useState(false);
+  const [automaticMessage, setAutomaticMessage] = useState("");
+  const automaticAttempts = useRef(new Set());
   const alive = useRef(true);
   const pollNow = useRef(null);
   const activation = useRef(false);
@@ -200,10 +202,10 @@ function Initialization({ initial, onComplete }) {
       await waitForJob(accepted, "settings");
     });
   }
-  async function restart() {
+  async function restart({ automatic = false } = {}) {
     await run(async () => {
       const running = status.vm_running;
-      if (!await confirm({ title: running ? "重启虚拟 Mac 并检查？" : "启动客机并重新检测？", body: "请先保存文件。当前终端会话会结束，浏览器登录和项目文件会保留。重新检测通过前，外网保持关闭。", confirm: running ? "重启并检查" : "启动并检测" })) return;
+      if (!automatic && !await confirm({ title: running ? "重启虚拟 Mac 并检查？" : "启动客机并重新检测？", body: "请先保存文件。当前终端会话会结束，浏览器登录和项目文件会保留。重新检测通过前，外网保持关闭。", confirm: running ? "重启并检查" : "启动并检测" })) return;
       const current = await api("/status");
       if (!alive.current) return;
       if (current.job?.running) throw new Error("其他操作仍在进行，请等待完成后重试。");
@@ -249,6 +251,38 @@ function Initialization({ initial, onComplete }) {
       setStep("proxy");
     });
   }
+
+  // During first installation, mechanical steps follow the verified state.
+  // Each action is attempted once; failures retain the explicit retry controls.
+  useEffect(() => {
+    if (step !== "install" || status?.guest_system !== "macos" || busy || connectionError || error && !ready || dialog || approvalWorkspace || status.job?.canceled || status.job?.kind === "stop" || activation.current) return;
+    const recovery = initializationRecovery(status);
+    let key, message, action;
+    if (ready) {
+      key = "enter"; message = "检查已通过，正在打开工作台…"; action = enter;
+    } else if (needsExitRestart || recovery?.recovery === "environment-restart") {
+      key = `restart:${status.safety?.error || recovery.message}`;
+      message = "正在重启虚拟 Mac 并继续检查，系统和文件会保留…";
+      action = () => restart({ automatic: true });
+    } else if (recovery?.recovery === "environment-update") {
+      key = "update"; message = "正在同步环境组件，完成后继续检查…";
+      action = () => run(() => api("/environment/update", {}));
+    } else if (status.ready && status.vm_running && !exitCandidate) {
+      const workspaceChecked = status.safety?.report?.checks?.some(check => check.id === "filesystem_boundary" && check.state === "passed");
+      if (recovery?.workspace && !workspaceChecked && (!recovery.recovery || recovery.recovery === "project-approval")) {
+        key = `workspace:${recovery.workspace}`; action = () => setApprovalWorkspace(recovery.workspace);
+      } else if (!recovery?.recovery || recovery.recovery === "project-retry") {
+        key = "check"; message = "正在检查文件访问和网络连接，通过后自动打开工作台…"; action = checkNetwork;
+      }
+    } else if (status.vm_running && !status.ready && !status.job?.error) {
+      key = "connect"; message = "正在连接虚拟 Mac，完成后继续检查…"; action = install;
+    }
+    if (!action || automaticAttempts.current.has(key)) return;
+    automaticAttempts.current.add(key);
+    setAutomaticMessage(message || "");
+    Promise.resolve(action()).finally(() => { if (alive.current) setAutomaticMessage(""); });
+  }, [step, status, busy, connectionError, error, dialog, approvalWorkspace, ready, needsExitRestart, exitCandidate]);
+
   const failed = Boolean(job.error || error);
   const stopped = !busy && !status?.ready && (job.kind === "stop" || job.canceled);
   const networkPending = Boolean(status?.ready && status.vm_running && network.mode !== "open");
@@ -259,6 +293,7 @@ function Initialization({ initial, onComplete }) {
     <section className="initialization-content">
       <ol className="initialization-steps" aria-label="初始化步骤">{steps.map(([key, label], position) => <li key={key} aria-current={step === key ? "step" : undefined}><span>{position < index ? <Check size={14} /> : position + 1}</span>{label}</li>)}</ol>
       <div className="initialization-title"><h1>{title}</h1><p>{step === "system" ? "Cage 会在这台电脑里创建一套独立系统，供终端、浏览器和编辑器使用。先选择要使用的系统；不需要更换磁盘时，可以保留默认存储位置。" : step === "proxy" ? "先导入已有的代理配置。下方会自动查找本机代理软件，无需自己找文件；也可以添加订阅或节点。导入后选择出口，点击「应用代理」，再开始安装。" : ready ? "系统、开发组件和网络检查均已完成，可以进入工作台开始使用。" : networkPending ? "系统已经装好，无需重新安装。按下方指引完成检查，就能进入工作台。" : "Cage 会自动下载系统、安装工具，再引导你完成授权。需要你操作时会显示具体步骤；中断后可以继续原任务。"}</p></div>
+      {automaticMessage && <p role="status"><LoaderCircle size={16} className="spin" aria-hidden="true" /> {automaticMessage}</p>}
       {connectionError && <div className="initialization-notice" role="alert"><SafetyMessage message={connectionError} /><button onClick={() => pollNow.current?.()}>重新连接</button></div>}
       {!status ? <p role="status"><LoaderCircle size={18} className="spin" />正在读取安装状态…</p> : <>
         <div className="initialization-stage" key={step}>
@@ -281,12 +316,12 @@ function Initialization({ initial, onComplete }) {
                 <li>启动恢复客机。</li>
                 <li>打开恢复画面，先登录安装时创建的客机普通账户。</li>
                 <li>点击「打开 Apple Installer」继续安装。</li>
-                <li>安装器要求管理员认证时，用户名填 cagesetup，密码与你登录 Cage 的账户密码相同。</li>
+                <li>安装器要求管理员认证时，用户名使用你的客机账户名，密码与你登录 Cage 的账户密码相同。</li>
                 <li>系统弹出允许访问系统配置文件的提示时，选择允许。</li>
               </ol>
               <p>安装过程中关闭恢复画面会取消本次作业；取消不会丢失已有进度，重新启动客机后再试。反复失败时，可使用页面底部的「日志与诊断」查看记录。</p>
               {!macRecovery.running && <button disabled={busy} onClick={() => run(() => api("/macos/install-recovery", { action: "start" }))}>启动恢复客机</button>}
-              {macRecovery.running && <MacOSLogin initialSetup installRecovery label="打开恢复画面" setupHint="先登录安装时创建的客机普通账户，再点击「打开 Apple Installer」。管理员认证用户名填 cagesetup，密码与 Cage 账户相同；系统提示时选择允许。" setupStatus="安装完成后返回 Cage 继续置备。" setupActions={<button disabled={busy} onClick={() => run(() => api("/macos/install-recovery", { action: "resume" }))}>打开 Apple Installer</button>} onSettings={() => setHelp(true)} />}
+              {macRecovery.running && <MacOSLogin initialSetup installRecovery label="打开恢复画面" setupHint="先登录你的客机账户，再点击「打开 Apple Installer」。管理员认证使用同一个用户名，密码与 Cage 账户相同；系统提示时选择允许。" setupStatus="安装完成后返回 Cage 继续置备。" setupActions={<button disabled={busy} onClick={() => run(() => api("/macos/install-recovery", { action: "resume" }))}>打开 Apple Installer</button>} onSettings={() => setHelp(true)} />}
             </section>}
             {!busy && pending?.system === "macos" && macRecovery && !macRecovery.available && macRecovery.can_prepare && <section className="initialization-notice" aria-label="macOS 安装恢复">
               <p>检测到尚未完成的 macOS 安装，可以沿用原磁盘继续。先准备恢复入口，随后按页面指引完成剩余步骤。</p>
@@ -312,7 +347,7 @@ function Initialization({ initial, onComplete }) {
           {step === "system" ? <span /> : <button className="text-button" disabled={busy} onClick={back}><ChevronLeft size={16} />上一步</button>}
           {step === "system" && <button className="primary" disabled={busy || !storage?.directory.trim() || choice === undefined || (!choice?.clone && !validGuestChoice(choice)) || choice?.clone && choice.guest_system === "windows-11" && !choice.editor_terms || Boolean(connectionError)} onClick={nextFromSystem}>{submitting && <LoaderCircle size={16} className="spin" />}下一步：配置代理</button>}
           {step === "proxy" && <button className="primary" disabled={busy || proxyDirty || !account?.guest_system && !pending && !validGuestChoice(choice) || needsProxySetup(null, status, proxy) || Boolean(connectionError)} onClick={install}>{submitting ? <LoaderCircle size={16} className="spin" /> : null}开始安装</button>}
-          {step === "install" && ready && <button className="primary" disabled={submitting || Boolean(connectionError)} onClick={enter}>进入工作台</button>}
+          {step === "install" && ready && (status.guest_system === "macos" && !error ? <span role="status">正在打开工作台…</span> : <button className="primary" disabled={submitting || Boolean(connectionError)} onClick={enter}>进入工作台</button>)}
         </footer>
       </>}
       <div className="initialization-support"><button className="text-button" aria-expanded={help} onClick={() => setHelp(!help)}>日志与诊断</button>{navigation && !busy && <button className="text-button" onClick={() => navigation.open()}>只连接 SSH 主机</button>}</div>
