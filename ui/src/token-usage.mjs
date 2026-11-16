@@ -3,6 +3,13 @@ export const tokenMetrics = [
   ["cache_read_input_tokens", "缓存读取"], ["cache_creation_input_tokens", "缓存写入"],
 ];
 export const tokenFields = tokenMetrics.slice(1).map(([key]) => key);
+export const usageClients = [
+  ["terminal", "Claude Code · 终端"], ["desktop_code", "Claude Desktop · Code"],
+  ["cowork", "Claude Desktop · Cowork"], ["ide", "IDE 扩展"],
+  ["automation", "SDK / 自动化"], ["remote", "远程入口"],
+  ["other", "其他已知入口"], ["unknown", "未知入口"],
+];
+export const usageClient = row => usageClients.some(([key])=>key===row.client) ? row.client : "unknown";
 const dayMillis = 86400000;
 const isoDate = (millis) => new Date(millis).toISOString().slice(0, 10);
 export function localToday() {
@@ -13,10 +20,25 @@ export function metricValue(day, metric) {
   if (!day) return null;
   return metric === "total" ? tokenFields.reduce((sum, field) => sum + (day[field] || 0), 0) : day[metric] || 0;
 }
-export function summarizeUsage(rows, { model = "all", source = "all" } = {}) {
+export function filterUsage(rows, { model = "all", source = "all", client = "all", year } = {}) {
+  return (rows || []).filter(row => (model === "all" || row.model === model)
+    && (source === "all" || row.source === source) && (client === "all" || usageClient(row) === client)
+    && (!year || row.date.startsWith(year+"-")));
+}
+export function usageBreakdown(rows, filters, metric) {
+  const groups = new Map();
+  for (const row of filterUsage(rows,filters)) {
+    const key=usageClient(row);
+    const item=groups.get(key) || {client:key,value:0,requests:0};
+    item.value+=metricValue(row,metric);
+    item.requests+=row.requests || 0;
+    groups.set(key,item);
+  }
+  return [...groups.values()].sort((a,b)=>b.value-a.value || a.client.localeCompare(b.client));
+}
+export function summarizeUsage(rows, filters = {}) {
   const days = new Map();
-  for (const row of rows || []) {
-    if (model !== "all" && row.model !== model || source !== "all" && row.source !== source) continue;
+  for (const row of filterUsage(rows,filters)) {
     const day = days.get(row.date) || { date: row.date, requests: 0, ...Object.fromEntries(tokenFields.map(field => [field,0])) };
     for (const field of [...tokenFields,"requests"]) day[field] += row[field] || 0;
     days.set(row.date, day);

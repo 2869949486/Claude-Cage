@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { heatLevel, metricValue, summarizeUsage, usageSeries, yearCalendar } from "./token-usage.mjs";
+import { heatLevel, metricValue, summarizeUsage, usageBreakdown, usageSeries, yearCalendar } from "./token-usage.mjs";
 
 test("all four token categories are counted once, with model and source filters",()=>{
   const rows=[{date:"2026-01-01",model:"a",source:"default",input_tokens:10,output_tokens:20,cache_read_input_tokens:30,cache_creation_input_tokens:40,requests:1},
@@ -26,4 +26,15 @@ test("daily gaps stay unknown, weekly sums do not overlap, cumulative sums only 
   assert.deepEqual(usageSeries(calendar,days,"total","cumulative","2026-01-05").map(day=>day.value),[10,10,40,40,45]);
   assert.equal(heatLevel(null,100),-1);
   assert.equal(heatLevel(0,100),0);
+});
+test("entrypoint totals align with the selected year, model, source and token metric; old snapshots remain unknown",()=>{
+  const rows=[{date:"2026-01-01",model:"a",source:"default",client:"terminal",input_tokens:10,output_tokens:20,requests:2},
+    {date:"2026-01-02",model:"a",source:"default",client:"desktop_code",input_tokens:30,output_tokens:40,requests:3},
+    {date:"2026-01-03",model:"b",source:"managed",input_tokens:50,requests:4},
+    {date:"2025-01-01",model:"a",source:"default",client:"cowork",input_tokens:999,requests:1}];
+  const groups=usageBreakdown(rows,{year:"2026"},"total");
+  assert.equal(groups.reduce((sum,item)=>sum+item.value,0),150);
+  assert.equal(groups.find(item=>item.client==="unknown").value,50);
+  assert.deepEqual(usageBreakdown(rows,{year:"2026",model:"a",source:"default",client:"desktop_code"},"output_tokens"),[{client:"desktop_code",value:40,requests:3}]);
+  assert.equal(metricValue(summarizeUsage(rows,{client:"terminal"}).get("2026-01-01"),"total"),30);
 });

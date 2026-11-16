@@ -9,6 +9,7 @@ for(let day=0;day<108;day++) {
   const date=new Date(Date.UTC(2026,7,1+day));
   if(date.getUTCDay()===0)continue;
   rows.push({date:date.toISOString().slice(0,10),model:day%3?"claude-sonnet-4-6":"claude-opus-4-6",source:day%4?"default":"a".repeat(24),
+    client:["terminal","desktop_code","terminal","automation","cowork","unknown","ide"][Math.floor(day/2)%7],
     input_tokens:1200+day*60,output_tokens:2300+day*90,cache_read_input_tokens:10000+(day*1703)%30000,cache_creation_input_tokens:3000+day*75,requests:5+day%8});
 }
 let stored={enabled:true,available:true,cutoff:0,sources:{default:"默认配置（归属未核验）",["a".repeat(24)]:"工作配置"},
@@ -46,6 +47,18 @@ try {
   assert.ok(Math.abs((await totals.boundingBox()).y-totalsY)<=1,"closing list restores layout");
   await model.click();
   await main.getByRole("option",{name:"全部模型",exact:true}).click();
+  const origin=main.getByRole("combobox",{name:"筛选运行入口",exact:true});
+  await main.getByRole("table",{name:"运行入口用量"}).getByRole("button",{name:"只看Claude Desktop · Code",exact:true}).click();
+  assert.equal(await origin.textContent(),"Claude Desktop · Code");
+  assert.equal(await main.getByRole("table",{name:"运行入口用量"}).locator("tbody tr").count(),1);
+  const desktopCount=rows.filter(row=>row.client==="desktop_code").reduce((sum,row)=>sum+row.requests,0);
+  assert.equal(await totals.locator("dd").nth(2).textContent(),desktopCount.toLocaleString());
+  await origin.click();
+  await page.keyboard.press("Home");
+  await page.keyboard.press("Enter");
+  assert.equal(await origin.textContent(),"全部入口");
+  const classificationRows=main.getByRole("table",{name:"运行入口用量"}).locator("tbody tr");
+  assert.equal(await classificationRows.count(),6);
   const day=main.getByRole("button",{name:/^2026-11-16，/});
   await day.click();
   await page.keyboard.press("ArrowUp");
@@ -54,15 +67,21 @@ try {
     await main.getByRole("button",{name:label,exact:true}).click();
     await main.getByRole("group",{name:curve,exact:true}).waitFor();
   }
+  await page.locator(".management-content").evaluate(el=>{el.scrollTop=0;});
   if(output)await main.screenshot({path:output+"/desktop.png",animations:"disabled"});
   if(output)await main.locator(".token-trend").screenshot({path:output+"/curve.png",animations:"disabled"});
+  if(output)await main.locator(".token-breakdown").screenshot({path:output+"/clients.png",animations:"disabled"});
   await page.setViewportSize({width:375,height:812});
   await page.getByRole("button",{name:"收起侧栏",exact:true}).click();
+  await page.locator(".management-content").evaluate(el=>{el.scrollTop=0;});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert.ok(await main.locator(".token-curve-scroll").evaluate(el=>el.scrollWidth>el.clientWidth));
+  assert.ok(await main.getByRole("table",{name:"运行入口用量"}).evaluate(el=>el.getBoundingClientRect().width<=innerWidth));
   if(output)await page.screenshot({path:output+"/narrow.png",animations:"disabled"});
+  if(output)await main.locator(".token-breakdown").screenshot({path:output+"/clients-narrow.png",animations:"disabled"});
   await page.setViewportSize({width:1280,height:850});
   await page.evaluate(()=>document.documentElement.style.zoom="2");
+  await page.locator(".management-content").evaluate(el=>{el.scrollTop=0;});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   if(output)await page.screenshot({path:output+"/zoom-200.png",animations:"disabled"});
   await page.evaluate(()=>document.documentElement.style.zoom="");
@@ -95,5 +114,5 @@ try {
   assert.equal(operations.filter(op=>op.action==="clear").length,1);
   assert.equal(await totals.locator("dd").first().textContent(),"0");
   assert.deepEqual(errors,[]);
-  console.log("PASS: annual heatmap, daily/weekly/cumulative curves, model filter, inline keyboard selection, day navigation, 375px/200% layout, pause persistence, retry, clear/cancel and empty state.");
+  console.log("PASS: heatmap and curves, entrypoint distribution and filtering, matching request totals, model filter, inline keyboard selection, day navigation, 375px/200% layout, pause persistence, retry, clear/cancel and empty state.");
 }finally{await browser.close();}

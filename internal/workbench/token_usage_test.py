@@ -161,6 +161,46 @@ class UsageTests(unittest.TestCase):
         self.assertEqual(self.collect(cutoff=cutoff,scan=False)["days"],[])
         self.assertEqual(self.collect(cutoff=0)["days"],[])
 
+    def test_entrypoints_are_per_request_and_copies_never_claim_a_new_origin(self):
+        original=self.row("copied",entrypoint="cli")
+        copied={**original,"entrypoint":"claude-desktop"}
+        records=[original,copied,original]
+        expected={"unknown":2,"terminal":1,"desktop_code":1,"cowork":1,"ide":1,"automation":1,"remote":1}
+        for index,entrypoint in enumerate(["cli","claude-desktop-3p","local-agent","claude-vscode","sdk-ts","remote_mobile","future-client"]):
+            records.append(self.row("request-"+str(index),entrypoint=entrypoint))
+        self.write(records)
+        result=self.collect()
+        self.assertEqual({day["client"]:day["requests"] for day in result["days"]},expected)
+        self.assertEqual(sum(day["input_tokens"] for day in result["days"]),80)
+        # Repeated scanning or a later original copy cannot erase a conflict.
+        self.write(records+[original])
+        self.assertEqual(result["days"],self.collect()["days"])
+
+    def test_old_database_migration_keeps_deleted_history_and_backfills_retained_origins(self):
+        row=self.row(entrypoint="claude-desktop")
+        self.write([row])
+        self.root.mkdir(mode=0o700)
+        db=sqlite3.connect(self.root/"counters.sqlite3")
+        db.executescript("""
+            CREATE TABLE requests (id TEXT PRIMARY KEY,stamp REAL,model TEXT,source TEXT,input INTEGER,output INTEGER,read INTEGER,write INTEGER);
+            CREATE TABLE files (id TEXT PRIMARY KEY,signature TEXT,offset INTEGER,modified INTEGER,size INTEGER,invalid INTEGER,skipping INTEGER);
+            CREATE TABLE meta (key TEXT PRIMARY KEY,value REAL);
+            INSERT INTO meta VALUES ('cutoff',0);
+        """)
+        timestamp=dt.datetime.fromisoformat(row["timestamp"]).timestamp()
+        db.execute("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?)",(usage.digest("msg_1"),timestamp,"claude-sonnet-4-6","default",10,20,30,40))
+        db.execute("INSERT INTO requests VALUES (?,?,?,?,?,?,?,?)",(usage.digest("deleted"),timestamp,"claude-sonnet-4-6","default",50,0,0,0))
+        info=self.path.stat()
+        signature=usage.digest(f"{info.st_dev}:{info.st_ino}:"+self.path.read_bytes()[:64].hex())
+        file_key=usage.digest("default:"+str(self.path.relative_to(self.home/".claude")))
+        db.execute("INSERT INTO files VALUES (?,?,?,?,?,?,?)",(file_key,signature,info.st_size,info.st_mtime_ns,info.st_size,0,0))
+        db.commit();db.close()
+        result=self.collect()
+        self.assertEqual({day["client"]:day["input_tokens"] for day in result["days"]},{"desktop_code":10,"unknown":50})
+        self.assertEqual(sum(day["requests"] for day in result["days"]),2)
+        self.assertEqual(sum(sum(day[field] for field in usage.FIELDS) for day in result["days"]),150)
+        self.assertEqual(self.collect()["days"],result["days"])
+
 
 if __name__ == "__main__":
     unittest.main()

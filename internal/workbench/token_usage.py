@@ -15,6 +15,17 @@ MAX_LINE = 4 << 20
 MAX_BYTES = 32 << 20
 MODEL = re.compile(r"[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}\Z")
 ACCOUNT = re.compile(r"[a-f0-9]{24}\Z")
+ENTRYPOINTS = {
+    "cli": "terminal",
+    "claude-desktop": "desktop_code", "claude-desktop-3p": "desktop_code",
+    "local-agent": "cowork", "local_agent": "cowork",
+    "claude-vscode": "ide",
+    "sdk-cli": "automation", "sdk-ts": "automation", "sdk-py": "automation",
+    "claude-code-github-action": "automation",
+    "remote": "remote", "remote_desktop": "remote", "remote_mobile": "remote",
+    "remote_cowork": "remote", "ssh-remote": "remote",
+    "claude_in_slack": "other", "claude-in-slack": "other", "claude-in-teams": "other",
+}
 
 
 def digest(value):
@@ -101,7 +112,9 @@ def usage_record(row, cutoff, now):
     model = message.get("model", "unknown")
     if not isinstance(model, str) or not MODEL.fullmatch(model):
         model = "unknown"
-    return digest(key), timestamp, model, counters
+    entrypoint = row.get("entrypoint")
+    client = ENTRYPOINTS.get(entrypoint, "unknown") if isinstance(entrypoint, str) else "unknown"
+    return digest(key), timestamp, model, counters, client
 
 
 def collect(root, home, accounts, cutoff=0, scan=True):
@@ -129,6 +142,13 @@ def collect(root, home, accounts, cutoff=0, scan=True):
         # Serialize cutoff reads with every import, including old helper
         # processes which outlive their SSH/controller connection.
         db.execute("BEGIN IMMEDIATE")
+        # Additive migration: keep numeric history, and reread retained files
+        # once to recover entrypoints. Deleted history stays unclassified.
+        columns = {row[1] for row in db.execute("PRAGMA table_info(requests)")}
+        if "client" not in columns:
+            db.execute("ALTER TABLE requests ADD COLUMN client TEXT NOT NULL DEFAULT 'unknown'")
+            db.execute("ALTER TABLE requests ADD COLUMN client_conflict INTEGER NOT NULL DEFAULT 0")
+            db.execute("DELETE FROM files")
         old_cutoff = db.execute("SELECT value FROM meta WHERE key='cutoff'").fetchone()
         cutoff = max(cutoff, old_cutoff[0] if old_cutoff else 0)
         if old_cutoff is None or old_cutoff[0] < cutoff:
@@ -189,14 +209,23 @@ def collect(root, home, accounts, cutoff=0, scan=True):
                                     record = usage_record(json.loads(line), cutoff, now)
                                     if record is None:
                                         continue
-                                    key, timestamp, model, counters = record
-                                    db.execute("""INSERT INTO requests VALUES (?,?,?,?,?,?,?,?)
+                                    key, timestamp, model, counters, client = record
+                                    db.execute("""INSERT INTO requests
+                                        (id,stamp,model,source,input,output,read,write,client) VALUES (?,?,?,?,?,?,?,?,?)
                                         ON CONFLICT(id) DO UPDATE SET
                                         stamp=min(stamp,excluded.stamp),
                                         source=CASE WHEN source=excluded.source THEN source ELSE 'unknown' END,
+                                        client=CASE
+                                            WHEN client_conflict=1 THEN 'unknown'
+                                            WHEN client='unknown' THEN excluded.client
+                                            WHEN excluded.client='unknown' OR client=excluded.client THEN client
+                                            ELSE 'unknown' END,
+                                        client_conflict=CASE WHEN client_conflict=1 OR
+                                            (client!='unknown' AND excluded.client!='unknown' AND client!=excluded.client)
+                                            THEN 1 ELSE 0 END,
                                         input=max(input,excluded.input), output=max(output,excluded.output),
                                         read=max(read,excluded.read), write=max(write,excluded.write)""",
-                                               (key, timestamp, model, source, *counters))
+                                               (key, timestamp, model, source, *counters, client))
                                 except (ValueError, KeyError, TypeError, OverflowError):
                                     invalid += 1
                             db.execute("INSERT OR REPLACE INTO files VALUES (?,?,?,?,?,?,?)",
@@ -208,10 +237,10 @@ def collect(root, home, accounts, cutoff=0, scan=True):
         # SQLite localtime uses the runtime OS timezone on all three platforms,
         # including Windows without a separate IANA timezone database.
         daily = []
-        for row in db.execute("""SELECT date(stamp,'unixepoch','localtime'),model,source,
+        for row in db.execute("""SELECT date(stamp,'unixepoch','localtime'),model,source,client,
                 sum(input),sum(output),sum(read),sum(write),count(*)
-                FROM requests GROUP BY 1,2,3 ORDER BY 1,2,3"""):
-            daily.append(dict(zip(("date", "model", "source", *FIELDS, "requests"), row)))
+                FROM requests GROUP BY 1,2,3,4 ORDER BY 1,2,3,4"""):
+            daily.append(dict(zip(("date", "model", "source", "client", *FIELDS, "requests"), row)))
         updated = db.execute("SELECT value FROM meta WHERE key='updated'").fetchone()
         invalid = db.execute("SELECT coalesce(sum(invalid),0) FROM files").fetchone()[0]
         return {"version": 1, "updated_at": int(updated[0]) if updated else 0,
