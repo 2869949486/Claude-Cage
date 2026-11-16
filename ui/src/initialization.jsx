@@ -98,14 +98,16 @@ function Initialization({ initial, onComplete }) {
         const next = await api("/status");
         if (!alive.current) return;
         setStatus(next);
-        setConnectionError("");
         const results = await Promise.allSettled([
           api("/proxy"),
           account?.guest_system ? Promise.resolve(null) : api("/environment/guest-systems"),
         ]);
         if (!alive.current) return;
+        // A successful status read does not mean the related configuration
+        // reads recovered. Keep the notice mounted until the full poll succeeds.
+        const failedRead = results.find(result => result.status === "rejected");
+        setConnectionError(failedRead ? failedRead.reason.message : "");
         if (results[0].status === "fulfilled") setProxy(results[0].value);
-        else setConnectionError(results[0].reason.message);
         if (results[1].status === "fulfilled") {
           const install = results[1].value;
           if (install?.pending?.system === "macos" && !install?.activate) {
@@ -130,7 +132,7 @@ function Initialization({ initial, onComplete }) {
               if (alive.current) setError(error.message);
             }
           }
-        } else setConnectionError(results[1].reason.message);
+        }
         if (next.job?.running && ["start", "guest-install", "safety"].includes(next.job.kind)) setStep("install");
       } catch (error) { if (alive.current) setConnectionError(error.message); }
       finally {
