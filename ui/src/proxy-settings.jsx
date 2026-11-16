@@ -20,6 +20,8 @@ import {
 import { api } from "./api";
 import { SafetyMessage } from "./safety-message";
 import { ProxyYAMLInput } from "./proxy-yaml-input";
+import { LocalConfigImport } from "./local-config-import";
+import { getClientContext } from "./client-context.mjs";
 import "./proxy.css";
 
 const bytes = (v) => {
@@ -83,6 +85,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const [helpOpen, setHelpOpen] = useState(false);
   const [readingFile, setReadingFile] = useState(false);
   const alive = useRef(true),
+    mutating = useRef(false),
     loading = useRef(false),
     latest = useRef(null),
     measuring = useRef(false),
@@ -159,6 +162,8 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   }, [tab]);
   const busy = Boolean(pending) || Boolean(status.job?.running);
   const mutate = async (action, input = {}) => {
+    if (mutating.current) return false;
+    mutating.current = true;
     setError("");
     setNotice("");
     setPending(action);
@@ -191,10 +196,14 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
             : current.message || "已完成",
         );
         setDelays({});
+        if (action === "import-local") { setTab("nodes"); setSearch(""); setSource(""); setNotice("配置已导入。请在下方选择出口，再点击“应用代理”。"); }
       }
+      return true;
     } catch (e) {
       if (alive.current) setError(e.message);
+      return false;
     } finally {
+      mutating.current = false;
       if (alive.current) setPending("");
     }
   };
@@ -331,6 +340,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
         </div>
         <p>选择最终出口，按需添加中转，供 Cage 内所有程序共用。</p>
       </div>
+      {getClientContext().mode === "local" && <LocalConfigImport busy={busy} onImport={id => mutate("import-local", { id })} />}
       {helpOpen && (
         <section
           id="proxy-help"
