@@ -81,7 +81,7 @@ function closeSession(session, endpoint, maintenance) {
 
 // Setup workspace: the guest display is primary; guidance and the current action
 // share a 320px sidebar. Use the workbench theme and 24/16/12/8px spacing (§2.1, §3.2).
-export function MacOSLogin({ disabled, initialSetup = false, installRecovery = false, maintenance = "", label, setupActions, setupHint, setupProgress, setupStatus, setupError, autoOpen = false, managedCredential = false, onSessionClosed, onSettings }) {
+export function MacOSLogin({ disabled, initialSetup = false, installRecovery = false, maintenance = "", label, setupActions, setupHint, setupProgress, setupStatus, setupError, autoOpen = false, openRequest = 0, managedCredential = false, onSessionClosed, onSettings }) {
   const endpoint = installRecovery ? "/macos/install-recovery" : initialSetup ? "/macos/first-setup" : maintenance ? "/macos/maintenance" : "/macos/login";
   const scope = maintenance ? { maintenance } : {};
   const [opened, setOpened] = useState(false);
@@ -108,6 +108,7 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
   const drag = useRef(null);
   const dragged = useRef(false);
   const autoOpened = useRef(false);
+  const handledOpenRequest = useRef(0);
   const shown = useRef({ region: [0, 0, guestWidth, guestHeight], geometry: "" });
 
   const fitWidth = Math.min(size.width, size.height * aspect);
@@ -167,6 +168,15 @@ export function MacOSLogin({ disabled, initialSetup = false, installRecovery = f
       open();
     }
   }, [autoOpen, disabled]);
+
+  // A settings action on the guide must also reveal the guest. An existing
+  // lease makes open() a no-op, preserving the view during sidebar navigation.
+  useEffect(() => {
+    if (!disabled && openRequest !== handledOpenRequest.current) {
+      handledOpenRequest.current = openRequest;
+      open();
+    }
+  }, [openRequest, disabled]);
 
   useEffect(() => {
     if (!authorizationPassword) return;

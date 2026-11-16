@@ -88,8 +88,9 @@ for (const failure of ["http", "native"]) {
     await page.getByText("管理员密码与找不到设置页时的帮助",{exact:true}).click();
     await page.getByRole("button",{name:"重新打开文件系统扩展",exact:true}).click();
     await page.getByRole("alert").waitFor({state:"hidden"});
-    assert.ok(await retry.isVisible(), "checking permissions hid the completion retry");
-    await retry.click();
+    const viewerRetry = page.getByRole("dialog", {name:"首次设置虚拟 Mac"}).getByRole("button", {name:"重试完成设置",exact:true});
+    await viewerRetry.waitFor();
+    await viewerRetry.click();
     await page.getByRole("heading",{name:"完成虚拟 Mac 的系统授权"}).waitFor({state:"hidden"});
     await page.getByRole("complementary", { name: "项目与终端" }).waitFor();
     await page.evaluate(() => window.cageNativeAction("settings"));

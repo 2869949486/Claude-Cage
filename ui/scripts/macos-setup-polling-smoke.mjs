@@ -54,6 +54,7 @@ for (const opened of [false, true]) {
     holdRead = new Promise(resolve => { release = resolve; });
     await page.waitForRequest(request => request.url().endsWith("/api/macos/first-setup") && request.postDataJSON()?.action === "permissions");
     const before = settings;
+    frameClosed = false;
     await scope.getByRole("button", { name: "打开窗口录制", exact: true }).click();
     await scope.getByRole("button", { name: "正在处理…", exact: true }).waitFor();
     assert.equal(settings, before, "action overlapped the permission probe");
@@ -61,7 +62,7 @@ for (const opened of [false, true]) {
     release(); holdRead = undefined;
     await result;
     assert.equal(settings, before + 1, "queued click was dropped or repeated");
-    await scope.getByRole("button", { name: "打开窗口录制", exact: true }).waitFor();
+    await page.getByRole("dialog", { name: "首次设置虚拟 Mac" }).getByRole("button", { name: "打开窗口录制", exact: true }).waitFor();
     assert.deepEqual(f.errors, []);
     console.log(`PASS ${opened ? "workspace" : "guidance"}: passive polling keeps controls stable; clicks during a probe execute once`);
   } finally { await f.browser.close(); }
