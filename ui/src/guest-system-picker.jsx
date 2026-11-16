@@ -46,7 +46,7 @@ export function HostCloneSummary({ pending, onChange }) {
   </div>;
 }
 
-export function GuestSystemPicker({ system, onChange, preserveOnUnmount = false, deferMatch = false }) {
+export function GuestSystemPicker({ system, onChange, onReselect, preserveOnUnmount = false, deferMatch = false }) {
   const [view, setView] = useState(null);
   const [error, setError] = useState("");
   const [attempt, retry] = useState(0);
@@ -100,6 +100,7 @@ export function GuestSystemPicker({ system, onChange, preserveOnUnmount = false,
         {!view.host_match_only && <option value="macos" disabled={view.system !== "macos" || !view.available}>macOS{view.system === "macos" ? view.available ? "" : "（暂不可用）" : "（需要兼容的 Mac）"}</option>}
         <option value="windows-11" disabled={view.system !== "windows-11" || !view.available}>Windows 11{view.system === "windows-11" ? view.available ? "" : "（暂不可用）" : "（需要 Windows 11 与 Hyper-V）"}</option>
       </InlineSelect>
+      {view.system === "macos" && !system.pending && !system.activate && <small className="guest-install-fields">想使用虚拟 Mac，可选择「macOS」或「自动匹配本机系统版本」。已有系统镜像时，选择「macOS」后点击「选择本机 IPSW」即可复用，避免重复下载。Debian 和 Ubuntu 是 Linux 系统。</small>}
       {system.clone && !system.activate && (deferMatch ? <small className="guest-install-fields">Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。</small> : <HostCloneSummary pending={system.pending} onChange={onChange} />)}
       {!system.activate && <small className="guest-install-fields">系统镜像通过主机网络下载，遵循主机系统代理或 TUN 设置，不使用 Cage 的客机代理。使用 Clash 等软件时，请先开启系统代理或 TUN；代理规则决定镜像网站的实际出口。</small>}
       {!system.clone && os !== "debian-13" && !system.activate && <div className="guest-install-fields">
@@ -140,6 +141,7 @@ export function GuestSystemPicker({ system, onChange, preserveOnUnmount = false,
           await api("/environment/guest-systems", { id: view.pending.id }, "DELETE");
           setView(await api("/environment/guest-systems"));
           onChange({ guest_system: view.host_match_only ? view.system : "debian-13", clone: Boolean(view.host_match_only), clone_key: "", clone_ready: false, media: "", sha256: "", editor_terms: false });
+          onReselect?.();
         } catch (e) { setError(e.message); }
       }}>重新选择系统或镜像</button>}
       {system.activate && <small className="guest-install-fields">客机已安装，可以打开工作台。</small>}
