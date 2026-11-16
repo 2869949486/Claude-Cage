@@ -120,6 +120,8 @@ type Server struct {
 	recovery                                         networkRecovery
 	locations                                        map[string]Location
 	monitorCancel                                    context.CancelFunc
+	networkMonitorDone                               chan struct{}
+	projectOperationWaiters                          int
 	monitorSafetyOp                                  sync.Mutex
 	safetyOp                                         sync.Mutex
 	networkPaused                                    bool
@@ -620,6 +622,12 @@ func (s *Server) handler() http.Handler {
 			if phoneRoom != nil {
 				stopPhone := context.AfterFunc(phoneRoom, cancel)
 				defer stopPhone()
+			}
+			// A project request may wait for the monitor. Keep its original
+			// epoch available even before the asynchronous cancel callback runs.
+			switch r.URL.Path {
+			case "/api/projects/save", "/api/projects/open", "/api/input/files/directory":
+				ctx = context.WithValue(ctx, projectAccountEpochKey{}, epoch)
 			}
 			r = r.WithContext(ctx)
 		}

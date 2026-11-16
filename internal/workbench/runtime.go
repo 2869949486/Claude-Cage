@@ -693,10 +693,22 @@ func (s *Server) monitorNetwork(ctx context.Context) {
 	defer ticker.Stop()
 	skipped := 0
 	for ctx.Err() == nil {
-		if s.op.TryLock() {
+		s.mu.Lock()
+		// Publish ownership with acquisition and give project requests
+		// waiting on this round a chance before the next tick takes the lock.
+		acquired := s.projectOperationWaiters == 0 && s.op.TryLock()
+		if acquired {
+			s.networkMonitorDone = make(chan struct{})
+		}
+		s.mu.Unlock()
+		if acquired {
 			skipped = 0
 			s.monitorNetworkTick()
+			s.mu.Lock()
 			s.op.Unlock()
+			close(s.networkMonitorDone)
+			s.networkMonitorDone = nil
+			s.mu.Unlock()
 		} else {
 			skipped++
 			timing := s.startMonitorTiming()
