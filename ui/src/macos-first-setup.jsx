@@ -152,7 +152,7 @@ export function MacOSFirstSetup() {
   const projectInstallation = selected.id === "projects" && permissions.project_install_required;
   const selectedHint = <>
     {pending ? <><p className="mac-setup-eyebrow">第 {steps.indexOf(pending) + 1} / {steps.length} 项 · {pending.label} · 在虚拟 Mac 内操作</p><PermissionInstructions step={pending} installing={projectInstallation} compact /></> : <p>系统权限已检查完成，正在保存设置。</p>}
-    {pending && <details className="mac-setup-password-help"><summary>出现管理员密码窗口时怎么填？</summary><p>用户名填 <strong>cagesetup</strong>。{permissions.managed_credential ? "先点中密码框，再点击上方「填写授权密码」，最后在系统窗口中确认。" : account.macos_credentials_ready ? "密码填写 Cage 账户密码，再在系统窗口中确认。" : "输入安装时设置的客机管理员密码，再在系统窗口中确认。"}</p></details>}
+    {pending && <details className="mac-setup-password-help"><summary>出现管理员密码窗口时怎么填？</summary><p>用户名填 <strong>cagesetup</strong>。{permissions.managed_credential ? "先点中右侧密码框，再点击左侧「填写授权密码」，最后在系统窗口中确认。" : account.macos_credentials_ready ? "密码填写 Cage 账户密码，再在系统窗口中确认。" : "输入安装时设置的客机管理员密码，再在系统窗口中确认。"}</p></details>}
   </>;
   const running = Boolean(state?.job?.running);
   const canOperate = Boolean(state?.vm_running && !running && !busy);
@@ -201,6 +201,7 @@ export function MacOSFirstSetup() {
       {running && <button disabled={busy} onClick={() => act("stop")}>停止当前操作，保留进度</button>}
       {state?.vm_running && <MacOSLogin initialSetup autoOpen={Boolean(permissions.managed_credential)} managedCredential={permissions.managed_credential} disabled={!state.vm_running || running}
         label="打开客机画面" setupActions={controls} setupHint={selectedHint}
+        setupProgress={<ol className="mac-setup-workspace-progress" aria-label="系统授权进度">{steps.map(({ id, label }, index) => <li key={id} data-complete={Boolean(permissions[id])} aria-current={pending?.id === id ? "step" : undefined}><span>{permissions[id] ? <Check size={12} aria-hidden="true" /> : index + 1}</span>{label}<small>{permissions[id] ? "已完成" : pending?.id === id ? "进行中" : ""}</small></li>)}</ol>}
         setupStatus={failure || progress} setupError={Boolean(failure)} />}
     </section>
     {failure && <section className="initialization-notice" role="alert"><h2>这一步尚未完成</h2><p>{failure}</p><p>已有安装进度会保留。可以重新打开当前设置页，或重新检查状态后继续。</p></section>}
