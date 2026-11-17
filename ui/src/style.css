@@ -487,6 +487,20 @@ button.large {
   resize: none;
   font: 16px/24px system-ui;
 }
+.remote-preedit {
+  position: fixed;
+  z-index: 3;
+  max-width: min(40em, calc(100vw - 24px));
+  overflow: hidden;
+  white-space: pre;
+  pointer-events: none;
+  padding: 0 2px;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: system-ui;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
 .concealed {
   visibility: hidden;
   pointer-events: none;
