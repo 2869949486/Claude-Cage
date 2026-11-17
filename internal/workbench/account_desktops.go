@@ -53,7 +53,7 @@ func (s *Server) accountDesktopList(w http.ResponseWriter, r *http.Request) {
 	}
 	entries := make([]desktopEntry, 0, len(list.Accounts))
 	for _, a := range list.Accounts {
-		entries = append(entries, desktopEntry{a.ID, a.Number, a.Label, units["desktop-"+a.ID+".service"], a.DesktopDedicatedNetwork})
+		entries = append(entries, desktopEntry{a.ID, a.Number, a.Label, units["desktop-"+a.ID+".service"], a.DesktopDedicatedNetwork || a.ProxyNodeID != ""})
 	}
 	jsonReply(w, map[string]any{"supported": supported, "accounts": entries})
 }
@@ -132,6 +132,12 @@ func (s *Server) changeAccountDesktop(parent context.Context, account claudeAcco
 		scope = "shared"
 		if account.DesktopDedicatedNetwork {
 			scope = "dedicated"
+		}
+		if account.ProxyNodeID != "" {
+			if err = s.ensureAccountNetwork(parent, account.ID, account.ProxyNodeID); err != nil {
+				return err
+			}
+			scope = "node"
 		}
 		key, err = s.account.desktopKey()
 		if err != nil {

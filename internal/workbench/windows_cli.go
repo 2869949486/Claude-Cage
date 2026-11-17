@@ -132,6 +132,9 @@ func (s *Server) readWindowsClaudeAccount(ctx context.Context, mode, id, subject
 	if !validClaudeGuestID(id) {
 		return result, errors.New("Claude 账号 ID 无效")
 	}
+	if _, err := s.boundGuestAccount(id, subject); err != nil {
+		return result, err
+	}
 	err := s.windowsCLIRequest(ctx, map[string]any{"action": "account", "mode": mode, "account": id, "subject": subject}, &result)
 	return result, err
 }
@@ -241,6 +244,9 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 			return nil, err
 		}
 		if selection.ID != "" {
+			if _, err := s.boundGuestAccount(selection.GuestID, selection.Subject); err != nil {
+				return nil, err
+			}
 			if !validClaudeID(selection.ID) || !validClaudeGuestID(selection.GuestID) || login && selection.GuestID == "default" {
 				return nil, errors.New("Claude 账号 ID 无效")
 			}

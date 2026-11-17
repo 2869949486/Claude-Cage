@@ -642,7 +642,7 @@ def main(args, *, mobile_settings_fd=None, verify_mobile=None):
         return 0
     if mode == "login":
         if os.name != "nt":
-            env["BROWSER"] = _runtime["launcher"](OPEN, executable=True, arguments=["--login-id", account_id])
+            env["BROWSER"] = _controller_context.get("CAGE_ACCOUNT_BROWSER") or _runtime["launcher"](OPEN, executable=True, arguments=["--login-id", account_id])
         # Set the handler before spawning so SSH/window closure also disposes
         # the ephemeral browser and its cookies.
         def interrupted(_signum, _frame):
@@ -654,7 +654,7 @@ def main(args, *, mobile_settings_fd=None, verify_mobile=None):
             (base / "quota.json").unlink(missing_ok=True)
             return subprocess.call([_runtime["path"](binary), "auth", "login", *([] if os.name == "nt" else ["--claudeai"])], cwd=Path.home(), env=env)
         finally:
-            if os.name != "nt":
+            if os.name != "nt" and not _controller_context.get("CAGE_ACCOUNT_BROWSER"):
                 subprocess.run([OPEN, "--login-id", account_id, "--finish-login"], env=os.environ, timeout=8, check=False,
                                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if mode == "run":

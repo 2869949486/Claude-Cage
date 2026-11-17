@@ -81,6 +81,7 @@ type Server struct {
 	closing                                          bool
 	shutdown                                         func()
 	claudeAccounts                                   claudeAccountManager
+	accountNetworks                                  accountNetworks
 	favoritesMu                                      sync.Mutex
 	diagnosticMu                                     sync.Mutex
 	diagnosticRateMu                                 sync.Mutex

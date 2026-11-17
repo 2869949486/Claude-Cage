@@ -218,7 +218,7 @@ function accountCaption(profile) {
   return profile.number ? `#${String(profile.number).padStart(2, "0")} ${label}` : label;
 }
 
-function ProfileCard({ desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
+function ProfileCard({ proxySources, desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState("");
   const [group, setGroup] = useState(profile.handoff_group || "");
@@ -258,9 +258,19 @@ function ProfileCard({ desktopNetwork, profile, environment, usageEnvironment, b
       </label>
     </div>
     <ProfileUsage quota={profile.quota} state={usage.state} />
-    {desktopNetwork && <label className="check-line"><input type="checkbox" checked={Boolean(profile.desktop_dedicated_network)} disabled={busy}
-      onChange={event=>{const dedicated=event.target.checked;perform(()=>change({action:"update",id:profile.id,desktop_dedicated_network:dedicated}));}}/>
-      Desktop 下次启动使用专属网络（需已配置）</label>}
+    {desktopNetwork && <label>账号出口
+      <InlineSelect inline aria-label={displayName + " 的代理节点"}
+        value={profile.proxy_node_id || (profile.desktop_dedicated_network ? "legacy" : "")} disabled={busy}
+        onValueChange={node => perform(() => change({ action: "update", id: profile.id, proxy_node_id: node }))}>
+        <option value="">跟随环境出口</option>
+        {profile.desktop_dedicated_network && <option value="legacy" disabled>已有手动网络</option>}
+        {profile.proxy_node_id && !proxySources.some(source => source.nodes.some(node => node.id === profile.proxy_node_id)) &&
+          <option value={profile.proxy_node_id} disabled>已绑定节点不可用</option>}
+        {proxySources.map(source => <optgroup label={source.name} key={source.id}>
+          {source.nodes.map(node => <option value={node.id} key={node.id}>{node.name}</option>)}
+        </optgroup>)}
+      </InlineSelect>
+    </label>}
     <form className="claude-handoff-group" onSubmit={event => { event.preventDefault(); perform(() => change({action:"update",id:profile.id,handoff_group:group})); }}>
       <label>接续分组<input aria-label={`${displayName} 的接续分组`} value={group} maxLength={32} placeholder="未分组，不跨账号接续" onChange={event => setGroup(event.target.value)} /></label>
       <button disabled={busy || group === (profile.handoff_group || "")}>保存分组</button>
@@ -288,7 +298,7 @@ function ProfileCard({ desktopNetwork, profile, environment, usageEnvironment, b
   </article>;
 }
 
-export function ClaudeAccountsPanel({ desktopNetwork, store, running, environmentBusy, tabs, login, onConfirm }) {
+export function ClaudeAccountsPanel({ proxySources, desktopNetwork, store, running, environmentBusy, tabs, login, onConfirm }) {
   const { accounts, detected, detectionStatus, detectionError, loginNotice, usageRunning, usageUnavailable, load, error } = store;
   const [busy, setBusy] = useState(false);
   const [requestingUsage, setRequestingUsage] = useState(false);
@@ -402,7 +412,7 @@ export function ClaudeAccountsPanel({ desktopNetwork, store, running, environmen
         {detected && <DetectedProfile key={detected.identity} profile={detected} usageEnvironment={usageEnvironment} busy={busy || environmentBusy || !!environment}
           perform={perform} change={load}
           join={() => perform(joinDetected)} />}
-        {accounts?.map((profile) => <ProfileCard desktopNetwork={desktopNetwork} key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
+        {accounts?.map((profile) => <ProfileCard proxySources={proxySources} desktopNetwork={desktopNetwork} key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
           busy={busy || environmentBusy} perform={perform} change={load} login={login} cancelDraft={cancelDraft}
           active={activeCounts.get(profile.id)?.all || 0} defaultActive={activeCounts.get(profile.id)?.fromDefault || 0} />)}
       </QuotaClock>

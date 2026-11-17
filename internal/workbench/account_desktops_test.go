@@ -64,3 +64,30 @@ func TestDesktopInstanceNeverFallsBackToNativeDefault(t *testing.T) {
 		t.Fatal("native platform cannot query capabilities")
 	}
 }
+
+func TestBoundAccountProbeUsesSubscriptionAndGuestCapability(t *testing.T) {
+	s := testServer(t)
+	first := claudeAccount{ID: strings.Repeat("a", 24), Source: "default", Email: "one@example.org", ProxyNodeID: strings.Repeat("c", 24)}
+	second := claudeAccount{ID: strings.Repeat("b", 24), Source: "default", Email: "two@example.org"}
+	if err := s.saveClaudeAccounts(claudeAccountList{Accounts: []claudeAccount{first, second}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, a := range []claudeAccount{first, second} {
+		route, err := s.boundGuestAccount("default", claudeIdentityHash(a.Email, ""))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if a.ID == first.ID && (route == nil || route.ID != first.ID) || a.ID == second.ID && route != nil {
+			t.Fatal("default profile took another subscription's route")
+		}
+	}
+	s.windowsGuest = &guestos.WindowsProfile{}
+	if _, err := s.readWindowsClaudeAccount(t.Context(), "usage", "default", claudeIdentityHash(first.Email, "")); err != errUnsupportedAccountNetwork {
+		t.Fatal("expected to stop before the native CLI used the shared route", err)
+	}
+	s.windowsGuest = nil
+	s.macosGuest = &guestos.MacOSProfile{}
+	if _, err := s.readClaudeGuestSnapshot(t.Context(), "default"); err != errUnsupportedAccountNetwork {
+		t.Fatal("native identity discovery used a bound default profile", err)
+	}
+}

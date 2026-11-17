@@ -12,6 +12,7 @@ import (
 var errClaudeAccessLost = errors.New("Cage 已锁定，请先解锁")
 
 type claudeAccountInput struct {
+	ProxyNodeID             *string           `json:"proxy_node_id,omitempty"`
 	DesktopDedicatedNetwork *bool             `json:"desktop_dedicated_network,omitempty"`
 	Action                  string            `json:"action"`
 	Identity                string            `json:"identity"`
@@ -68,12 +69,33 @@ func (s *Server) mutateClaudeAccounts(w http.ResponseWriter, r *http.Request) {
 	case "refresh", "refresh_default":
 		err = s.refreshClaudeUsage(r.Context(), input)
 	case "update", "scheduling":
-		s.op.Lock()
-		defer s.op.Unlock()
+		if input.ProxyNodeID != nil {
+			s.op.Lock()
+			defer s.op.Unlock()
+		}
 		m := &s.claudeAccounts
 		m.mu.Lock()
 		list, loadErr := s.loadClaudeAccounts()
 		err = loadErr
+		// Wait for a usage lookup on the previous route, then reload its result.
+		for err == nil && input.ProxyNodeID != nil {
+			a := list.find(input.ID)
+			if a == nil {
+				break
+			}
+			active := m.usageActive[claudeIdentityHash(a.Email, a.Organization)]
+			if active == nil {
+				break
+			}
+			m.mu.Unlock()
+			select {
+			case <-active.done:
+			case <-r.Context().Done():
+				return
+			}
+			m.mu.Lock()
+			list, err = s.loadClaudeAccounts()
+		}
 		if err == nil && input.Action == "scheduling" {
 			if input.Scheduling == nil || !input.Scheduling.valid() {
 				err = errors.New("请选择有效的调度模式和切换授权")
@@ -102,6 +124,9 @@ func (s *Server) mutateClaudeAccounts(w http.ResponseWriter, r *http.Request) {
 			}
 		} else if err == nil {
 			err = list.change(input)
+			if err == nil && input.ProxyNodeID != nil {
+				err = s.setAccountNode(&list, input)
+			}
 		}
 		if err == nil {
 			err = s.saveClaudeAccounts(list)

@@ -330,7 +330,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       if (disposed || !visibleRef.current || !focusedRef.current || !isClaudeLoginLink(uri)) return;
       try {
         const tab = await api(`/terminals/${session.id}/login-link`, { url: uri });
-        if (!disposed && visibleRef.current && focusedRef.current) onLoginTab?.(tab);
+        if (!disposed && visibleRef.current && focusedRef.current) await onLoginTab?.({ ...tab, url: uri });
       } catch (error) { if (!disposed) onStatus(error.message); }
     };
     const terminal = new Terminal({
