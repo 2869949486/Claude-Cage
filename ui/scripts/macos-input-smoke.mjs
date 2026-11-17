@@ -2,12 +2,16 @@ import assert from "node:assert/strict";
 import { createWorkbench } from "./workbench-fixture.mjs";
 
 const chrome = process.argv.includes("--chrome");
+const nativeIME = process.argv.includes("--native-ime");
+const nativeCalls = [];
 const app = chrome ? "Google Chrome" : "Claude Desktop";
 const base = chrome ? "/api/macos-browser" : "/api/macos/claude";
 const inputs = [], status = { installed: true, running: true, screen: true, input: true, input_protocol: 1, persistent: true };
 let image, geometry = "input-geometry-1";
 const { page, browser, errors } = await createWorkbench({
+  nativeRequest(body) { if (body.action === "remoteInput") nativeCalls.push(body); return true; },
   async beforeNavigate(page, state) {
+    if (nativeIME) await page.addInitScript(() => { window.cageNativeIMEAvailable = true; });
     state.account.guest_system = state.status.guest_system = "macos";
     state.status.vm_running = state.status.ready = true;
     if (chrome) {
@@ -76,12 +80,32 @@ try {
   assert(inputs.some(input => input.code === "KeyF" && input.command));
   assert(inputs.some(input => input.code === "KeyA" && input.command));
   await until(() => inputs.some(input => input.action === "ime" && input.mode === "status"));
-  await page.getByLabel("向 " + app + " 输入").evaluate(element => {
+  if (nativeIME) await until(() => nativeCalls.some(call => call.operation === "activate"));
+  const owner = nativeCalls.findLast(call => call.operation === "activate")?.owner;
+  await page.getByLabel("向 " + app + " 输入").evaluate((element, owner) => {
+    if (owner) {
+      const send = (kind, fields = {}) => window.dispatchEvent(new CustomEvent("cage-native-input",{detail:{owner,kind,...fields}}));
+      send("compositionstart"); send("compositionupdate",{text:"nihao",selectionStart:5,selectionEnd:5});
+      return;
+    }
     element.dispatchEvent(new CompositionEvent("compositionstart", { bubbles: true }));
     element.value = "nihao";
     element.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertCompositionText", isComposing: true, data: "nihao" }));
+  }, owner);
+  const preview = page.locator(".remote-preedit");
+  await preview.waitFor({state:"visible"});
+  assert.equal(await preview.textContent(),"nihao");
+  const caretSurface = await surface.boundingBox(), previewBox = await preview.boundingBox();
+  assert(Math.abs(previewBox.x - (caretSurface.x + 80 / 640 * caretSurface.width)) < 1);
+  assert(Math.abs(previewBox.y - (caretSurface.y + 70 / 480 * caretSurface.height)) < 1);
+  assert(!inputs.some(input => input.action === "text"),"pinyin preview must not insert document text");
+  await page.getByLabel("向 " + app + " 输入").evaluate((element, owner) => {
+    if (owner) {
+      window.dispatchEvent(new CustomEvent("cage-native-input",{detail:{owner,kind:"compositionend",text:"你好🙂"}})); return;
+    }
     element.dispatchEvent(new CompositionEvent("compositionend", { bubbles: true, data: "你好🙂" }));
-  });
+  }, owner);
+  await preview.waitFor({state:"hidden"});
   await page.keyboard.press("Enter");
   await until(() => inputs.some(input => input.action === "ime" && input.mode === "commit"));
   const composition = inputs.filter(input => input.action === "ime" && input.mode !== "status");

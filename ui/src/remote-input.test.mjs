@@ -41,7 +41,13 @@ function fixture(native = false, browserComposition = false, options = {}) {
     },
     remove() {},
   });
-  doc.createElement = () => target;
+  const previews = [];
+  doc.createElement = tag => {
+    if (tag === "textarea") return target;
+    const element = { style: {}, setAttribute() {}, remove() { this.removed = true; } };
+    previews.push(element);
+    return element;
+  };
   win.innerWidth = 1280;
   win.innerHeight = 800;
   const rfb = new EventTarget();
@@ -129,6 +135,7 @@ function fixture(native = false, browserComposition = false, options = {}) {
       insertComposition: browserComposition ? async (id, value) => {
         if (id !== currentTabId) throw new Error("Input target changed");
         compositions.push({ id, ...value });
+        return options.compositionResult?.();
       } : null,
       tabId: () => currentTabId,
       caretRect: options.caretRect || (browserComposition ? async () => ({
@@ -166,6 +173,7 @@ function fixture(native = false, browserComposition = false, options = {}) {
     copyContexts,
     writes,
     statuses,
+    previews,
     armCopy: () => {
       const event = new Event("pointerdown");
       Object.defineProperty(event, "isTrusted", { value: true });
@@ -387,6 +395,43 @@ test("host IME receives composition keys and sends only committed Unicode in ord
   }
   assert.equal(f.rfb.target, null);
 });
+
+for (const capability of [false, true]) {
+  test(`preedit preview respects guest support (${capability}) and clears after commit or cancel`, async () => {
+    const clock = fakeClock();
+    let password = false;
+    const f = fixture(false, true, { ...clock,
+      surface: {getBoundingClientRect: () => ({left:10,top:20,width:800,height:600})},
+      caretRect: async () => ({available:true,context:"a".repeat(32),preedit_supported:capability,password,
+        rect:[240,120,0,24],width:800,height:600}),
+      compositionResult: () => ({available:true,context:"a".repeat(32),preedit_supported:capability,password}),
+    });
+    try {
+      f.rfb.focus(); await clock.advance(0);
+      inputEvent(f, "compositionstart"); f.target.value = "nihao";
+      inputEvent(f,"input",{inputType:"insertCompositionText",isComposing:true});
+      await clock.advance(0);
+      assert.equal(f.previews.length, capability ? 0 : 1);
+      if (!capability) {
+        assert.equal(f.previews[0].textContent,"nihao");
+        assert.equal(f.previews[0].style.left,"250px");
+        assert.equal(f.previews[0].style.top,"140px");
+        assert.equal(f.previews[0].hidden,false);
+      }
+      inputEvent(f,"compositionend",{data:"你好"});
+      if (!capability) assert.equal(f.previews[0].hidden,true);
+      inputEvent(f,"compositionstart"); f.target.value = "cancel";
+      inputEvent(f,"input",{inputType:"insertCompositionText",isComposing:true});
+      inputEvent(f,"compositionend",{data:""});
+      if (!capability) assert.equal(f.previews[0].hidden,true);
+      password = true; await clock.advance(caretPollFast);
+      inputEvent(f,"compositionstart"); f.target.value = "secret";
+      inputEvent(f,"input",{inputType:"insertCompositionText",isComposing:true});
+      assert(f.previews.every(preview => preview.hidden));
+    } finally { f.controller.dispose(); }
+    assert(f.previews.every(preview => preview.removed));
+  });
+}
 
 test("browser composition is forwarded as preedit, then committed separately", async () => {
   const f = fixture(false, true);
