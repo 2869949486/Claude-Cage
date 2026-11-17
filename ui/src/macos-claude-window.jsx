@@ -50,7 +50,7 @@ function matchWindowBackground(img, pane, canvasRef) {
   const canvas = canvasRef.current;
   const ctx = canvas.getContext("2d", {willReadFrequently:true});
   if (!ctx) return;
-  const w = img.naturalWidth, h = img.naturalHeight;
+  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
   if (w < 16 || h < 16) return;
   [[8,8],[w-9,8],[8,h-9],[w-9,h-9]].forEach(([x,y],i) =>
     ctx.drawImage(img,x,y,1,1,i,0,1,1));
@@ -99,6 +99,52 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     observer.observe(element);
     return () => { observer.disconnect(); viewport.current = null; };
   }, [visible, zoom]);
+  // A decoded video frame waits here until the canvas for its window exists.
+  const pendingVideo = useRef(null);
+  const videoKey = value => value.geometry || `${value.pid}-${value.window}`;
+  function dropVideo() {
+    pendingVideo.current?.video.close();
+    pendingVideo.current = null;
+  }
+  function paintVideo() {
+    const next = pendingVideo.current, canvas = surface.current;
+    if (!next || !(canvas instanceof HTMLCanvasElement) || canvas.dataset.frame !== videoKey(next)) return;
+    pendingVideo.current = null;
+    try {
+      // The guest sends the whole window; the title bar rows are left out here.
+      const top = Math.max(0, next.videoCropTop || 0);
+      const width = next.video.displayWidth, height = next.video.displayHeight - top;
+      const context = canvas.getContext("2d", { alpha: false });
+      if (!context || width < 1 || height < 1) throw new Error();
+      const resized = canvas.width !== width || canvas.height !== height;
+      if (resized) { canvas.width = width; canvas.height = height; }
+      // The window's transparent corners arrive black. Fill them with the
+      // window's own edge colour, as the still-image path does.
+      const corner = Math.min(96, next.videoCorner || 0);
+      context.save();
+      if (corner > 0 && context.roundRect) {
+        context.fillStyle = next.videoEdge || "#000";
+        context.fillRect(0, 0, width, height);
+        context.beginPath();
+        context.roundRect(0, 0, width, height, top > 0 ? [0, 0, corner, corner] : corner);
+        context.clip();
+      }
+      context.drawImage(next.video, 0, top, width, height, 0, 0, width, height);
+      context.restore();
+      next.video.close();
+      const contentWidth = next.contentWidth || width, contentHeight = next.contentHeight || height;
+      canvas.style.setProperty("--frame-width", contentWidth + "px");
+      canvas.style.setProperty("--frame-aspect", contentWidth / contentHeight);
+      frame.current = { window: next.window, pid: next.pid, geometry: next.geometry, surface: browser ? "browser" : undefined };
+      if (resized) matchWindowBackground(canvas, pane.current, backgroundSample);
+      next.acknowledge?.();
+    } catch {
+      try { next.video.close(); } catch { /* already closed */ }
+      frameConnection.current?.close(); frameConnection.current = null; frame.current = null;
+      setImage(null); setError("窗口画面无法解码，请重新连接。");
+    }
+  }
+  useLayoutEffect(paintVideo, [image]);
   const picker = useRef(null);
   const pickerTarget = useRef(null);
   const generation = useRef(0);
@@ -114,6 +160,17 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     function receiveFrame(next) {
       if (!live()) return;
       if (frame.current?.window !== next.window || frame.current?.pid !== next.pid || frame.current?.geometry !== next.geometry) frame.current = null;
+      if (next.video) {
+        dropVideo();
+        pendingVideo.current = next;
+        // Later frames of the same window are drawn without another render.
+        setImage(previous => previous?.video && previous.window === next.window && previous.pid === next.pid && previous.geometry === next.geometry
+          ? previous : { video: true, window: next.window, pid: next.pid, geometry: next.geometry });
+        setError("");
+        paintVideo();
+        return;
+      }
+      dropVideo();
       setImage({
         src: next.src || `data:${next.mime === "image/jpeg" ? "image/jpeg" : "image/png"};base64,${next.image}`,
         window: next.window, pid: next.pid,
@@ -153,6 +210,9 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
                 if (!live()) return;
                 frameConnection.current = null;
                 nextStatus = 0;
+                dropVideo();
+                // The next connection asks for still images; keep the last picture meanwhile.
+                if (reason === "video_fallback") return;
                 frame.current = null;
                 setImage(null);
                 setError(messages[reason] || "未能读取虚拟 Mac 的窗口画面，请重新连接。");
@@ -187,6 +247,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     poll();
     return () => {
       generation.current++; clearTimeout(timer); frame.current = null;
+      dropVideo();
       connection.current?.close(); connection.current = null;
       setInputChannel(null);
       frameConnection.current?.close(); frameConnection.current = null;
@@ -253,7 +314,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       input.dispose(); transport.dispose();
       if (controls.current?.transport === transport) controls.current = null;
     };
-  }, [screenVisible, state?.input, state?.persistent, inputChannel, image?.geometry, image?.pid, image?.window]);
+  }, [screenVisible, state?.input, state?.persistent, inputChannel, image?.geometry, image?.pid, image?.window, image?.video]);
 
   function receive(content, lease, prepared) {
     const target = lease?.target || frame.current;
@@ -305,7 +366,8 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
     {state?.running && state.screen && !state.input && <p>{messages.accessibility_permission}</p>}
     <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom }}>
-      {image && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
+      {image?.video && <canvas ref={surface} key={"video-" + videoKey(image)} data-frame={videoKey(image)} role="img" aria-label={appName + " 客机窗口"} />}
+      {image && !image.video && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
         onLoad={e => {
           const img = e.currentTarget;
           const width = image.width || img.naturalWidth;

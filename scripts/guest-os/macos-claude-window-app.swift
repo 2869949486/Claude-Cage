@@ -26,6 +26,7 @@ struct Request: Decodable {
     var keepAlive: Bool?
     var refresh: Bool?
     var wait, binary: Bool?
+    var video, keyframe: Bool?
     var id, kind: String?
     var ids: [String]?
     var transfer: String?
@@ -267,7 +268,7 @@ func launchClaudeWindow() async throws {
 }
 
 @MainActor
-private func handle(_ input: Request, inputSession: MacWindowInputSession) async throws -> [String: Any] {
+private func handle(_ input: Request, inputSession: MacWindowInputSession, video: MacWindowVideoEncoder) async throws -> [String: Any] {
     try requireGuest()
     var input = input
     let browser = input.surface == "browser"
@@ -369,7 +370,8 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
         if let width=input.width, let height=input.height, let scale=input.scale,
            let cached = canvas.cachedTarget(width:width, height:height, scale:scale) {
             do {
-                var reply = try await canvas.capture(cached.0, filter:cached.1, layout:cached.2, after:input.after, wait:input.wait == true, binary:input.binary == true)
+                var reply = try await canvas.capture(cached.0, filter:cached.1, layout:cached.2, after:input.after, wait:input.wait == true, binary:input.binary == true,
+                                                       video:input.video == true ? video : nil, keyframe:input.keyframe == true)
                 try consoleUser()
                 reply["targetMs"] = 0; reply["layoutMs"] = 0; reply["cached"] = true
                 return reply
@@ -398,7 +400,8 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
                 source = selection ?? SCContentFilter(desktopIndependentWindow: fresh)
             }
             let layoutMs = (Date().timeIntervalSince(layoutStarted) * 1000).rounded()
-            var reply = try await canvas.capture(target, filter:source, layout:layout, after:input.after, wait:input.wait == true, binary:input.binary == true)
+            var reply = try await canvas.capture(target, filter:source, layout:layout, after:input.after, wait:input.wait == true, binary:input.binary == true,
+                                                       video:input.video == true ? video : nil, keyframe:input.keyframe == true)
             try consoleUser()
             canvas.remember(target, filter:source, layout:layout, width:width, height:height, scale:scale)
             reply["targetMs"] = targetMs; reply["layoutMs"] = layoutMs
@@ -452,11 +455,13 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
 
 private func respond(_ fd: Int32) async {
     let inputSession = await MainActor.run { MacWindowInputSession() }
-    await respondConnection(fd, inputSession: inputSession)
+    let video = MacWindowVideoEncoder()
+    await respondConnection(fd, inputSession: inputSession, video: video)
+    video.close()
     await MainActor.run { inputSession.reset() }
 }
 
-private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession) async {
+private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession, video: MacWindowVideoEncoder) async {
     let connection = MacWindowSocket(fd)
     defer { connection.close() }
     var peer = uid_t(), group = gid_t()
@@ -494,7 +499,7 @@ private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession)
                     image.append(chunk)
                 }
                 reply = try await MacDesktopFiles.shared.pasteImage(image, window: window)
-            } else { reply = try await handle(request, inputSession: inputSession) }
+            } else { reply = try await handle(request, inputSession: inputSession, video: video) }
         }
         catch {
             let reason = (error as? Failure)?.message.components(separatedBy: ":").first ?? "window_unavailable"
