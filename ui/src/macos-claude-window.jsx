@@ -483,7 +483,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   }
   if (!visible) return null;
   const loading = ["connecting", "starting", "waiting-window", "stopping", "synchronizing"].includes(phase);
-  return <section className="claude-desktop-view mac-claude" aria-label={"虚拟 Mac 中的 " + appName}>
+  return <section className={`claude-desktop-view mac-claude${browser ? " mac-browser" : ""}`} aria-label={"虚拟 Mac 中的 " + appName}>
     {(browser || !nativeAvailable()) && <BrowserUploads requests={uploads} onStatus={onStatus} />}
     <DesktopToolbar title={appName} desktop={state} platform="macOS" zoom={zoom} setZoom={setZoom} onConfirm={onConfirm} busy={loading}
       onStop={browser ? undefined : () => action("stop")} refresh={() => { if (!stopped.current) beginWaiting(); refresh(n => n+1); }} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>

@@ -58,6 +58,20 @@ try {
   const pane = page.locator(".mac-claude-frame"), surface = page.getByAltText(app + " 客机窗口");
   await page.waitForFunction(() => document.querySelector(".mac-claude-frame")?.getAttribute("aria-busy") === "false");
   const before = await pane.boundingBox();
+  if (chrome) {
+    async function assertTopAligned() {
+      const container = await pane.boundingBox(), image = await surface.boundingBox();
+      assert(image.height < container.height - 10, "exercise a guest window shorter than its viewport");
+      assert(Math.abs(image.y - container.y) < 1, "browser tabs must touch the viewport top without a blank strip");
+    }
+    await assertTopAligned();
+    await page.getByRole("button", {name:"隐藏 Desktop 工具栏", exact:true}).click();
+    await assertTopAligned();
+    await page.setViewportSize({width:1000,height:1000});
+    await assertTopAligned();
+    await page.setViewportSize({width:1280,height:850});
+    await page.getByRole("button", {name:"显示 Desktop 工具栏", exact:true}).click();
+  }
   holdFrames = true; failPointer = true;
   await surface.click({position:{x:100,y:100}});
   await page.waitForFunction(() => document.querySelector(".mac-claude-frame")?.getAttribute("aria-busy") === "true", null, {timeout:2000});
