@@ -84,6 +84,7 @@ type Server struct {
 	shutdown                                         func()
 	claudeAccounts                                   claudeAccountManager
 	tokenUsage                                       tokenUsageManager
+	accountNetworks                                  accountNetworks
 	favoritesMu                                      sync.Mutex
 	diagnosticMu                                     sync.Mutex
 	diagnosticRateMu                                 sync.Mutex

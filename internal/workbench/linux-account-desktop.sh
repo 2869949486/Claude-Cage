@@ -19,14 +19,16 @@ fi
 if systemctl is-active --quiet "$unit.service"; then exit 0; fi
 test -x /usr/bin/claude-desktop
 sudo systemctl reset-failed "$unit.service" 2>/dev/null || :
-# The network binding is owned by the guest administrator. A configured
-# namespace that disappears must prevent startup rather than change egress.
+# The controller creates node namespaces. Older administrator-managed
+# namespaces keep their Desktop-only binding until the account is changed.
 props=()
-if [[ $scope == dedicated ]]; then
-  test -e "/run/netns/$unit" || { echo '专属网络尚未就绪'; exit 1; }
-  props+=("--property=NetworkNamespacePath=/run/netns/$unit")
-  [[ -s /etc/netns/$unit/resolv.conf ]] || { echo '专属网络尚未就绪'; exit 1; }
-  props+=("--property=BindReadOnlyPaths=/etc/netns/$unit/resolv.conf:/etc/resolv.conf"
+if [[ $scope == dedicated || $scope == node ]]; then
+  namespace=$unit
+  if [[ $scope == node ]]; then namespace="net-$id"; fi
+  test -e "/run/netns/$namespace" || { echo '专属网络尚未就绪'; exit 1; }
+  props+=("--property=NetworkNamespacePath=/run/netns/$namespace")
+  [[ -s /etc/netns/$namespace/resolv.conf ]] || { echo '专属网络尚未就绪'; exit 1; }
+  props+=("--property=BindReadOnlyPaths=/etc/netns/$namespace/resolv.conf:/etc/resolv.conf"
           "--property=InaccessiblePaths=-/run/systemd/resolve/io.systemd.Resolve -/run/dbus/system_bus_socket -/run/nscd/socket")
 elif [[ $scope != shared ]]; then exit 2; fi
 program=$(mktemp "$base/session.XXXXXX")
@@ -103,6 +105,22 @@ cat > "$XDG_RUNTIME_DIR/windows.xml" <<'XML'
 <openbox_config xmlns="http://openbox.org/3.4/rc"><desktops><number>1</number></desktops><applications><application type="normal"><decor>no</decor><maximized>yes</maximized></application></applications></openbox_config>
 XML
 openbox --config-file "$XDG_RUNTIME_DIR/windows.xml" >/dev/null 2>&1 &
+# Electron draws its own GTK controls; Openbox decorations alone do not hide them.
+printf 'Gtk/DecorationLayout ":"\n' > "$XDG_RUNTIME_DIR/xsettings.conf"
+xsettingsd --config="$XDG_RUNTIME_DIR/xsettings.conf" &
+python3 - <<'PYSETTINGS'
+from Xlib import display
+import time
+d = display.Display()
+selection = d.intern_atom('_XSETTINGS_S0')
+for _ in range(60):
+    if d.get_selection_owner(selection):
+        break
+    time.sleep(.05)
+else:
+    raise SystemExit('Desktop display settings unavailable')
+d.close()
+PYSETTINGS
 mkfifo "$XDG_RUNTIME_DIR/unlock"
 gnome-keyring-daemon --unlock --components=secrets < "$XDG_RUNTIME_DIR/unlock" >/dev/null
 rm "$XDG_RUNTIME_DIR/unlock"
@@ -113,6 +131,16 @@ done
 gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets/aliases/default --method org.freedesktop.DBus.Properties.Get org.freedesktop.Secret.Collection Locked | grep -q false
 notify=$NOTIFY_SOCKET
 unset NOTIFY_SOCKET
+if [[ -d "/usr/local/lib/account-routes/${base##*/}" ]]; then
+  mkfifo "$XDG_RUNTIME_DIR/authorization"
+  (
+    exec 7<>"$XDG_RUNTIME_DIR/authorization"
+    while IFS= read -r url <&7; do
+      [[ $url == https://* && $url != *[[:space:]]* ]] || continue
+      /usr/bin/gio open "$url" 7>&- </dev/null >/dev/null 2>&1 || :
+    done
+  ) &
+fi
 cd "$HOME"
 claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret &
 app=$!

@@ -30,7 +30,8 @@ func claudeAuthorizationURL(raw string) bool {
 
 func (s *Server) terminalLoginLink(w http.ResponseWriter, r *http.Request) {
 	var input struct {
-		URL string `json:"url"`
+		URL  string `json:"url"`
+		Open bool   `json:"open,omitempty"`
 	}
 	if !readJSON(w, r, &input) {
 		return
@@ -58,6 +59,29 @@ func (s *Server) terminalLoginLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	a, err := s.accountForRoute(terminal.claudeAccountID)
+	if err != nil {
+		requestError(w, err)
+		return
+	}
+	if a.ProxyNodeID != "" {
+		if input.Open {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			defer cancel()
+			cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "/usr/local/lib/account-routes/"+a.ID+"/open --stdin")
+			cmd.Stdin = strings.NewReader(input.URL)
+			if err := cmd.Run(); err != nil {
+				http.Error(w, "账号授权浏览器未能打开，请重新打开该账号的 Desktop", 502)
+				return
+			}
+		}
+		jsonReply(w, map[string]any{"desktop": desktopEntry{ID: a.ID, Number: a.Number, Label: a.Label, Dedicated: true}})
+		return
+	}
+	if input.Open {
+		http.Error(w, "账号出口已更改，请重新打开授权链接", 409)
+		return
+	}
 	login := terminal.id
 	if terminal.loginGuestID != "" {
 		// Match the official CLI helper's private browser and cleanup key.

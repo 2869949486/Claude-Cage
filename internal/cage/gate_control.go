@@ -32,6 +32,7 @@ type gateRecord struct {
 }
 
 type gateCommand struct {
+	Node     string        `json:"node,omitempty"`
 	Action   string        `json:"action"`
 	Fault    bool          `json:"fault,omitempty"`
 	Reason   string        `json:"reason,omitempty"`
@@ -94,6 +95,7 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 		os.RemoveAll(dir)
 		return nil, err
 	}
+	nodes := nodeListeners{dir: dir, configPath: configPath, gate: gate, verify: verifyNodeExit}
 	server := &http.Server{ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8192}
 	// Keep watchdog reads and control transitions in one order, so a stale
 	// watchdog snapshot cannot close a newly synchronized checking session.
@@ -140,6 +142,8 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 				}
 			}
 			switch command.Action {
+			case "account-node":
+				operationError = nodes.prepare(command.Node)
 			case "proxy-revision":
 				operationError = gate.SyncProxyRevision(cfg)
 				if operationError == nil {
@@ -158,6 +162,7 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 					operationError = gate.SyncProxyRevision(cfg)
 					if operationError == nil {
 						operationError = cfg.RecordRunningAt(instanceDir)
+						nodes.refresh()
 					}
 				}
 				if operationError == nil {
@@ -195,7 +200,13 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 	ctx, cancel := context.WithCancel(context.Background())
 	var once sync.Once
 	stop := func() {
-		once.Do(func() { cancel(); gate.Close("网络控制服务已停止"); _ = server.Close(); _ = os.RemoveAll(dir) })
+		once.Do(func() {
+			cancel()
+			nodes.close()
+			gate.Close("网络控制服务已停止")
+			_ = server.Close()
+			_ = os.RemoveAll(dir)
+		})
 	}
 	go func() { _ = server.Serve(listener); stop() }()
 	go func() {

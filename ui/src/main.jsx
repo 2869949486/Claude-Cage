@@ -1564,7 +1564,7 @@ function App() {
                     const nativeGuest = ["macos", "windows-11"].includes(status.guest_system);
                     if (nativeGuest && !await confirm({ title: "更新环境组件？", body: "更新会重新连接浏览器和显示组件，请先保存工作。设备身份、公钥和个人数据保留。", confirm: "更新组件" })) return;
                     await action(nativeGuest ? "/environment/update" : "/tailscale/install", {});
-                  }} /> : <ClaudeAccountsPanel desktopNetwork={status.account_desktops_supported} store={claudeProfiles} tabs={tabs} onConfirm={confirm}
+                  }} /> : <ClaudeAccountsPanel proxySources={proxy?.sources || []} desktopNetwork={status.account_desktops_supported} store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
                   login={(id) => createTerminal(workspace, "claude-login", id)} />}
               </div>
@@ -1648,7 +1648,13 @@ function App() {
                     <div className="pane-body">
                       <TerminalView
                         session={{ ...tab, id: tab.sessionId }}
-                        onLoginTab={({ id }) => showBrowserResult({ id, kind: "web", login: true, incognito: true, title: "账号授权" })}
+                        onLoginTab={async result => {
+                          if (result.desktop) {
+                            if (await accountDesktops.act(result.desktop, "start", true)) {
+                              await api(`/terminals/${tab.sessionId}/login-link`, { url: result.url, open: true });
+                            }
+                          } else showBrowserResult({ id: result.id, kind: "web", login: true, incognito: true, title: "账号授权" });
+                        }}
                         onControls={(control) =>
                           control
                             ? terminalControls.current.set(tab.id, control)

@@ -375,6 +375,12 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 			return nil, err
 		}
 	}
+	if selection.ID != "" {
+		script, err = s.routeAccountCommand(s.lifetimeContext(), selection.ID, script)
+		if err != nil {
+			return nil, err
+		}
+	}
 	cmd := s.sshCommand(s.lifetimeContext(), "-tt", s.sshTarget(), "--", script)
 	if input.requestContext != nil {
 		s.account.mu.Lock()
@@ -438,13 +444,28 @@ func (s *Server) readClaudeGuestUsage(ctx context.Context, id, subject string) (
 	if s.windowsGuest != nil {
 		return s.readWindowsClaudeAccount(ctx, "usage", id, subject)
 	}
-	return s.readClaudeGuestReport(ctx, id, claudeGuestReportCommand(id, subject))
+	return s.readClaudeReportForSubject(ctx, id, subject, claudeGuestReportCommand(id, subject))
+}
+func (s *Server) readClaudeGuestReport(ctx context.Context, id, command string) (claudeGuestSnapshot, error) {
+	return s.readClaudeReportForSubject(ctx, id, "", command)
 }
 
-func (s *Server) readClaudeGuestReport(ctx context.Context, id, command string) (claudeGuestSnapshot, error) {
+func (s *Server) readClaudeReportForSubject(ctx context.Context, id, subject, command string) (claudeGuestSnapshot, error) {
 	var snapshot claudeGuestSnapshot
 	if !validClaudeGuestID(id) {
 		return snapshot, errors.New("Claude 账号 ID 无效")
+	}
+	a, err := s.boundGuestAccount(id, subject)
+	if err != nil {
+		return snapshot, err
+	}
+	if a != nil {
+		if id == "default" && subject == "" {
+			// Discover the mutable default identity locally before sending traffic.
+			command = wrapAccountNamespace("unshare -nm", command)
+		} else if command, err = s.routeSelected(ctx, *a, command); err != nil {
+			return snapshot, err
+		}
 	}
 	data, err := s.guest(ctx, command)
 	if err != nil || json.Unmarshal(data, &snapshot) != nil {

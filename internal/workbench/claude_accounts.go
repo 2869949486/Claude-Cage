@@ -21,6 +21,7 @@ import (
 // A profile ID selects a guest CLI configuration directory. Only public status
 // fields enter this registry; the official CLI owns authentication in the VM.
 type claudeAccount struct {
+	ProxyNodeID             string       `json:"proxy_node_id,omitempty"`
 	DesktopDedicatedNetwork bool         `json:"desktop_dedicated_network,omitempty"`
 	Number                  uint32       `json:"number"`
 	ID                      string       `json:"id"`
@@ -140,7 +141,7 @@ func (s *Server) loadClaudeAccounts() (claudeAccountList, error) {
 		if a.Source == "" {
 			a.Source = "managed"
 		}
-		if !validClaudeID(a.ID) || ids[a.ID] || a.Source != "managed" && a.Source != "default" || a.Source == "default" && (a.Email == "" || a.ProfileID != "") || a.ProfileID != "" && !validClaudeID(a.ProfileID) || len(a.HandoffGroup) > 64 {
+		if a.ProxyNodeID != "" && !validClaudeID(a.ProxyNodeID) || !validClaudeID(a.ID) || ids[a.ID] || a.Source != "managed" && a.Source != "default" || a.Source == "default" && (a.Email == "" || a.ProfileID != "") || a.ProfileID != "" && !validClaudeID(a.ProfileID) || len(a.HandoffGroup) > 64 {
 			return list, errors.New("Claude 账号文件含无效或重复的记录，请从备份恢复")
 		}
 		ids[a.ID] = true
@@ -232,6 +233,9 @@ func (list *claudeAccountList) change(input claudeAccountInput) error {
 		a.Label = label
 	}
 	if input.DesktopDedicatedNetwork != nil {
+		if input.ProxyNodeID != nil || a.ProxyNodeID != "" {
+			return errors.New("请从账号出口选择代理节点或跟随环境出口")
+		}
 		a.DesktopDedicatedNetwork = *input.DesktopDedicatedNetwork
 	}
 	if input.Enabled != nil {

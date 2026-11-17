@@ -56,7 +56,7 @@ func sharedCLILauncher(launcher string) bool {
 	return err == nil
 }
 
-func (s *Server) mobileRunner(prefix []string) cliconversation.Runner {
+func (s *Server) mobileRunner(prefix []string, accountID string) cliconversation.Runner {
 	return cliconversation.Runner{SupervisedStdin: true, Command: func(ctx context.Context, workspace string, args []string) (*exec.Cmd, error) {
 		directories, err := s.projectAdditionalDirectories(workspace)
 		if err != nil {
@@ -73,6 +73,12 @@ func (s *Server) mobileRunner(prefix []string) cliconversation.Runner {
 			login, "cage-mobile-cli", guestPath(workspace)}
 		argv = append(argv, mobileIdentityCommand(prefix, args)...)
 		command := "exec " + shellescape.QuoteCommand(argv)
+		if accountID != "" {
+			command, err = s.routeAccountCommand(ctx, accountID, command)
+			if err != nil {
+				return nil, err
+			}
+		}
 		return s.sshCommand(ctx, "-T", s.sshTarget(), "--", command), nil
 	}}
 }
@@ -133,7 +139,7 @@ func (s *Server) prepareMobileLaunch(record *mobileRecord) (claudeSelection, str
 		}
 	}
 	prefix, err := mobileLaunchArgs(launcher, selection)
-	return selection, launcher, s.mobileRunner(prefix), err
+	return selection, launcher, s.mobileRunner(prefix, selection.ID), err
 }
 
 func findMobileTurn(record *mobileRecord, id string) *mobileTurn {

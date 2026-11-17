@@ -49,17 +49,18 @@ export function useAccountDesktops(onShow, onHide, notify, confirm) {
       }
       if (job.error || job.canceled) throw new Error(job.error || "操作已取消");
       if (action === "start") {
-        setPanes((old) =>
-          beside && old.length && old[0].id !== account.id
-            ? [old[0], account]
-            : [account],
-        );
+        setPanes((old) => {
+          if (!beside || !old.length) return [account];
+          if (old.some((pane) => pane.id === account.id)) return old;
+          return [old[0], account];
+        });
         onShow();
       } else {
         setPanes((old) => old.filter((a) => a.id !== account.id));
         if (panes.length === 1 && panes[0].id === account.id) onHide();
       }
       await refresh();
+      return true;
     } catch (e) {
       notify(e.message);
     } finally {
