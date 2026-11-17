@@ -14,9 +14,13 @@ private let bundleID = "com.anthropic.claudefordesktop"
 struct Failure: Error {
     let code: Int32
     let message: String
-    init(_ code: Int32, _ message: String) {
+    // Tells the guest's own diagnostics which check failed. Callers and the
+    // host still receive only the message.
+    let detail: String?
+    init(_ code: Int32, _ message: String, detail: String? = nil) {
         self.code = code
         self.message = message
+        self.detail = detail
     }
 }
 

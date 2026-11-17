@@ -247,7 +247,9 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
             event.setIntegerValueField(.mouseEventWindowUnderMousePointerThatCanHandleThisEvent, value: Int64(window.windowID))
             event.setIntegerValueField(.mouseEventClickState, value: 1)
             if input.surface == "browser" {
-                guard try MacChromeWindow.shared.ownsPoint(point, pid: pid, window: window.windowID) else { throw Failure(7, "window_changed") }
+                if let detail = try MacChromeWindow.shared.pointFailure(point, pid: pid, window: window.windowID) {
+                    throw Failure(7, "window_changed", detail: detail)
+                }
                 event.post(tap: .cghidEventTap)
             } else { event.postToPid(pid) }
         }
@@ -502,8 +504,9 @@ private func respondConnection(_ fd: Int32, inputSession: MacWindowInputSession,
             } else { reply = try await handle(request, inputSession: inputSession, video: video) }
         }
         catch {
-            let reason = (error as? Failure)?.message.components(separatedBy: ":").first ?? "window_unavailable"
-            GuestDiagnostic.record("window", reason)
+            let failure = error as? Failure
+            let reason = failure?.message.components(separatedBy: ":").first ?? "window_unavailable"
+            GuestDiagnostic.record("window", failure?.detail.map { reason + "_" + $0 } ?? reason)
             reply = ["error": reason]
         }
         if request.binary == true && (request.action == "frame" || request.action == "browser-frame") {

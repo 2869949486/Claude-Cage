@@ -252,14 +252,16 @@ final class MacChromeWindow {
         }
     }
 
-    func ownsPoint(_ point: CGPoint, pid: pid_t, window: CGWindowID) throws -> Bool {
+    // Nil when the window is the one under the point; otherwise which check
+    // said it is not, for the guest's diagnostics.
+    func pointFailure(_ point: CGPoint, pid: pid_t, window: CGWindowID) throws -> String? {
         try consoleUser()
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, owns(pid) else { return false }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, owns(pid) else { return "point_not_frontmost" }
         var element: AXUIElement?
         guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &element) == .success,
-              let element else { return false }
+              let element else { return "point_hit_unavailable" }
         var owner: pid_t = 0
-        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return false }
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return "point_other_process" }
         // AX hit testing disregards transparent system overlays but includes
         // focused Chrome controls; prevent a stale frame hitting another
         // top-level window of the same Chrome process.
@@ -270,7 +272,7 @@ final class MacChromeWindow {
                   let rect = CGRect(dictionaryRepresentation: box) else { return false }
             return rect.contains(point)
         }
-        return foremost?[kCGWindowNumber as String] as? CGWindowID == window
+        return foremost?[kCGWindowNumber as String] as? CGWindowID == window ? nil : "point_other_window"
     }
 
     func window() async throws -> SCWindow {
