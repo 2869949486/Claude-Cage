@@ -161,16 +161,24 @@ def private_directory(path):
         path.mkdir(mode=0o700)
     if os.name == "nt":
         executable = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-        # Windows PowerShell runs on .NET Framework. Persist only the changed
-        # DACL through DirectoryInfo instead of requesting owner/SACL writes.
+        # Persist just the changed sections. A user-owned directory needs a
+        # DACL update, which does not require WRITE_OWNER or SACL access.
         script = """
 $ErrorActionPreference = 'Stop'
-$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$identity = [Security.Principal.WindowsIdentity]::GetCurrent()
+$sid = $identity.User
 $directory = [IO.DirectoryInfo]::new($env:MAINTENANCE_DIRECTORY)
 if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Invalid recovery directory.' }
 $sections = [Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner
 $acl = $directory.GetAccessControl($sections)
-if ($acl.GetOwner([Security.Principal.SecurityIdentifier]) -ne $sid) { throw 'Recovery directory is not owned by the current user.' }
+$owner = $acl.GetOwner([Security.Principal.SecurityIdentifier])
+if ($owner -ne $sid) {
+    # Elevated Windows processes can create directories owned by Administrators.
+    $admins = [Security.Principal.SecurityIdentifier]::new('S-1-5-32-544')
+    $principal = [Security.Principal.WindowsPrincipal]::new($identity)
+    if ($owner -ne $admins -or -not $principal.IsInRole($admins)) { throw 'Recovery directory has an unexpected owner.' }
+    $acl.SetOwner($sid)
+}
 $acl.SetAccessRuleProtection($true, $false)
 foreach ($rule in $acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
     $acl.RemoveAccessRuleSpecific($rule)
