@@ -8,6 +8,7 @@ import {
 } from "lucide-react";
 import RFB from "../.generated/novnc/core/rfb.js";
 import { api } from "./api";
+import { AccountIconNumber } from "./agent-icon";
 import { runtimeSocketURL } from "./client-context.mjs";
 
 const title = (a) => `#${String(a.number).padStart(2, "0")} ${a.label}`;
@@ -99,6 +100,7 @@ export function DesktopList({ model, disabled, selected, onDefault }) {
       {expanded && (
         <div className="account-desktop-list">
           <button className="sidebar-link" disabled={disabled} onClick={onDefault}>
+            <Monitor size={20} strokeWidth={1.75} aria-hidden="true" />
             默认 Desktop
           </button>
           {catalog?.supported &&
@@ -106,13 +108,17 @@ export function DesktopList({ model, disabled, selected, onDefault }) {
               <div className="account-desktop-row" key={a.id}>
                 <button
                   title={title(a) + (a.running ? " · 运行中" : " · 未启动")}
+                  aria-label={title(a) + (pending === a.id ? " · 处理中" : a.running ? " · 运行中" : " · 未启动")}
                   aria-pressed={selected && panes.some((p) => p.id === a.id)}
                   className="sidebar-link"
                   disabled={Boolean(pending) || disabled}
                   onClick={() => model.act(a, "start")}
                 >
-                  {title(a)}
-                  {pending === a.id ? " …" : a.running ? " ●" : ""}
+                  <Monitor size={20} strokeWidth={1.75} aria-hidden="true">
+                    <AccountIconNumber number={a.number} y={10} />
+                  </Monitor>
+                  <span className="account-desktop-label">{a.label}</span>
+                  {pending === a.id || a.running ? <span aria-hidden="true">{pending === a.id ? "…" : "●"}</span> : null}
                 </button>
                 {panes.length > 0 && !panes.some((p) => p.id === a.id) && (
                   <button

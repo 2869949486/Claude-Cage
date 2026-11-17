@@ -141,10 +141,13 @@
   }
 }
 
+.account-desktop-nav {min-width:0;}
 .account-desktop-list {padding-inline-start:14px;}
 .account-desktop-row,.account-desktop-panes,.account-desktop-pane header {display:flex;}
 .account-desktop-row {align-items:center;}
-.account-desktop-row .sidebar-link {flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.account-desktop-row .sidebar-link {flex:1;min-width:0;}
+.account-desktop-list .sidebar-link > svg {flex:none;}
+.account-desktop-label {overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
 .account-desktop-panes {height:100%;min-width:0;}
 .account-desktop-pane {display:flex;flex:1;flex-direction:column;min-width:0;position:relative;}
 .account-desktop-pane + .account-desktop-pane {border-inline-start:1px solid var(--line);}
