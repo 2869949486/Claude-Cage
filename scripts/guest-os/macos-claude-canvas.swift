@@ -249,7 +249,52 @@ final class ClaudeCanvasSession {
         return last
     }
 
-    func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false) async throws -> [String:Any] {
+    // The captured surface goes to the hardware encoder as it is: no copy to
+    // a CGImage and no crop. The viewer leaves out the title bar rows. Returns
+    // nil when this connection has to fall back to still images.
+    private func captureVideo(_ video: MacWindowVideoEncoder, config: SCStreamConfiguration, filter: SCContentFilter, layout: ClaudeCanvas,
+                              geometry: String, after: String?, wait: Bool, keyframe: Bool) async throws -> [String:Any]? {
+        let (base, level) = MacWindowVideoEncoder.split(after)
+        let refining = level < MacWindowVideoEncoder.refinements
+        let captureStarted = Date()
+        let (buffer, sequence) = try await stream.latest(filter: filter, configuration: config, identity: geometry, after: base,
+                                                         wait: wait && !keyframe, seconds: refining ? 0.25 : 2)
+        let captureMs = Date().timeIntervalSince(captureStarted) * 1000
+        guard try liveBounds(layout.id, layout.pid) == layout.frame,
+              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        var next = sequence
+        if sequence == base && !keyframe {
+            guard refining else { return ["unchanged": true, "sequence": after ?? sequence, "geometry": geometry] }
+            next = MacWindowVideoEncoder.refined(sequence, level: level + 1)
+        }
+        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
+        let top = Int((layout.cropTop * CGFloat(height) / layout.frame.height).rounded())
+        guard top >= 0, top < height else { throw Failure(7, "window_changed") }
+        let encodeStarted = Date()
+        let frame: MacWindowVideoFrame
+        do { frame = try await video.encode(buffer, identity: geometry, forceKey: keyframe) }
+        catch {
+            video.fail()
+            GuestDiagnostic.record("window", "video_encoder_unavailable")
+            return nil
+        }
+        // The second ownership check covers the time spent encoding.
+        guard try liveBounds(layout.id, layout.pid) == layout.frame,
+              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        var reply: [String:Any] = ["window":layout.id,"pid":layout.pid,"mime":"video/avc","sequence":next,
+                "contentWidth":layout.content.width,"contentHeight":layout.content.height,
+                "pixelWidth":width,"pixelHeight":height-top,"cropTop":layout.cropTop,
+                "videoCropTop":top,"videoCorner":frame.corner,"key":frame.key,
+                "resizable":layout.resizable, "geometry":geometry,
+                "captureMs":captureMs.rounded(), "encodeMs":(Date().timeIntervalSince(encodeStarted) * 1000).rounded(),
+                "imageBytes":frame.data]
+        if let config = frame.config { reply["videoConfig"] = config.base64EncodedString() }
+        if let edge = frame.edge { reply["videoEdge"] = edge }
+        return reply
+    }
+
+    func capture(_ window: SCWindow, filter: SCContentFilter, layout: ClaudeCanvas, after: String? = nil, wait: Bool = false, binary: Bool = false, phoneJPEG: Bool = false,
+                 video: MacWindowVideoEncoder? = nil, keyframe: Bool = false) async throws -> [String:Any] {
         let config = SCStreamConfiguration()
         config.width = max(1, Int((layout.frame.width*layout.scale).rounded()))
         config.height = max(1, Int((layout.frame.height*layout.scale).rounded()))
@@ -257,6 +302,11 @@ final class ClaudeCanvasSession {
         config.ignoreShadowsSingleWindow = true; config.showsCursor = false
         if #available(macOS 14.2, *) { config.includeChildWindows = browser }
         let geometry = record(layout)
+        if let video, !video.failed, binary, !phoneJPEG,
+           let reply = try await captureVideo(video, config: config, filter: filter, layout: layout, geometry: geometry,
+                                              after: after, wait: wait, keyframe: keyframe) {
+            return reply
+        }
         // Timings let the host separate waiting for a new frame, encoding
         // in the guest and the transport. They contain no window content.
         let captureStarted = Date()

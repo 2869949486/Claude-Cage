@@ -93,7 +93,9 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
         return true
     }
 
-    func frame(filter: SCContentFilter, configuration: SCStreamConfiguration, identity: String, after: String?, wait: Bool = false) async throws -> (CGImage?, String) {
+    // The newest captured surface and its sequence. With `wait`, a caller that
+    // already holds that sequence waits up to `seconds` for a newer one.
+    func latest(filter: SCContentFilter, configuration: SCStreamConfiguration, identity: String, after: String?, wait: Bool = false, seconds: Double = 2) async throws -> (CVPixelBuffer, String) {
         expiry?.cancel()
         defer { renew() }
         if stream == nil || key != identity {
@@ -118,11 +120,15 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
         if wait, buffer != nil, after == sequence {
             // Revalidate window ownership and the console session at least every
             // two seconds even when ScreenCaptureKit reports no changed pixels.
-            try await waitForFrame(after: sequence, seconds: 2)
+            try await waitForFrame(after: sequence, seconds: seconds)
         }
         guard key == identity else { throw Failure(7, "window_changed") }
         guard let buffer else { await stop(); throw Failure(8, "capture_no_frame") }
-        let sequence = self.sequence
+        return (buffer, sequence)
+    }
+
+    func frame(filter: SCContentFilter, configuration: SCStreamConfiguration, identity: String, after: String?, wait: Bool = false) async throws -> (CGImage?, String) {
+        let (buffer, sequence) = try await latest(filter: filter, configuration: configuration, identity: identity, after: after, wait: wait)
         if sequence == after { return (nil, sequence) }
         let image = CIImage(cvPixelBuffer: buffer)
         // Reading the surface back copies the whole frame. It runs off the main
