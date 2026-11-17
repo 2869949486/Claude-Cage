@@ -2,6 +2,46 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { createSettledValue, macWindowVideoConfiguration, macWindowVideoSupported } from "./macos-frame-connection.mjs";
 
+test("the first frame subscription survives either socket and codec readiness order", async t => {
+  for (const codecFirst of [true, false]) await t.test(codecFirst ? "codec ready before socket" : "socket ready before codec", async t => {
+    let socket, resolveCodec;
+    const sent = [];
+    class Socket extends EventTarget {
+      static OPEN = 1;
+      readyState = 0;
+      constructor() { super(); socket = this; }
+      send(value) { assert.equal(this.readyState, Socket.OPEN); sent.push(JSON.parse(value)); }
+      close() { this.readyState = 3; }
+      open() { this.readyState = Socket.OPEN; this.dispatchEvent(new Event("open")); }
+    }
+    const replacements = {
+      WebSocket: Socket,
+      window: { devicePixelRatio: 2 },
+      location: { protocol: "http:", host: "localhost" },
+      VideoDecoder: class { static isConfigSupported() { return new Promise(resolve => { resolveCodec = resolve; }); } },
+      EncodedVideoChunk: class {},
+    };
+    for (const [name, value] of Object.entries(replacements)) {
+      const previous = Object.getOwnPropertyDescriptor(globalThis, name);
+      Object.defineProperty(globalThis, name, { configurable: true, writable: true, value });
+      t.after(() => previous ? Object.defineProperty(globalThis, name, previous) : delete globalThis[name]);
+    }
+    const { createMacFrameConnection } = await import(`./macos-frame-connection.mjs?subscription=${codecFirst}`);
+    const connection = createMacFrameConnection(() => {}, error => assert.fail(error), "/macos-browser");
+    t.after(() => connection.close());
+    connection.resize({ width: 960, height: 540 });
+    if (!codecFirst) socket.open();
+    resolveCodec({ supported: codecFirst });
+    // Drain the support probe and its subscription callback.
+    await new Promise(resolve => setImmediate(resolve));
+    if (codecFirst) {
+      assert.deepEqual(sent, []);
+      socket.open();
+    }
+    assert.deepEqual(sent, [{ width: 960, height: 540, scale: 2, revision: 1, video: codecFirst }]);
+  });
+});
+
 test("the decoder is configured from the encoder's own record", () => {
   const record = Uint8Array.from([1, 0x64, 0x00, 0x33, 0xff, 0xe1, 0, 1, 0x67, 1, 0, 1, 0x68]);
   const configuration = macWindowVideoConfiguration(Buffer.from(record).toString("base64"));
