@@ -44,7 +44,7 @@ private func liveBounds(_ id: CGWindowID, _ pid: pid_t) throws -> CGRect {
 
 // AXIsProcessTrusted asks tccd, which re-validates this helper's signature.
 // Input and layout ask on every event; a one-second answer is current enough.
-private final class AccessibilityTrust: @unchecked Sendable {
+final class AccessibilityTrust: @unchecked Sendable {
     static let shared = AccessibilityTrust()
     private let lock = NSLock()
     private var checked = Date.distantPast, trusted = false
@@ -240,12 +240,22 @@ final class ClaudeCanvasSession {
         return token
     }
 
+    // Measuring the title bar asks the application a dozen questions. Its
+    // height belongs to a geometry, so one answer serves that geometry's
+    // input for a second. Each delivery still checks the live bounds here and
+    // the focused window in checkedMacInputWindow.
+    private var inputMeasured: (token: String, time: TimeInterval)?
+
     func inputGeometry(_ requested: String, window: SCWindow) throws -> ClaudeCanvas {
         guard let last, token == requested, last.id == window.windowID, last.pid == window.owningApplication?.processID,
-              try liveBounds(last.id, last.pid) == last.frame,
-              let ax = owningAXWindow(last.pid, last.frame), cropHeight(ax,last.frame) == last.cropTop else {
+              try liveBounds(last.id, last.pid) == last.frame else { throw Failure(7, "window_changed") }
+        let now = ProcessInfo.processInfo.systemUptime
+        if let known = inputMeasured, known.token == requested, now - known.time < 1 { return last }
+        guard let ax = owningAXWindow(last.pid, last.frame), cropHeight(ax,last.frame) == last.cropTop else {
+            inputMeasured = nil
             throw Failure(7, "window_changed")
         }
+        inputMeasured = (requested, now)
         return last
     }
 

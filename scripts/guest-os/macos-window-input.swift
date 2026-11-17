@@ -16,7 +16,7 @@ func checkedMacInputWindow(_ input: Request, window: SCWindow) throws -> MacInpu
     func unavailable(_ reason: String) -> Failure {
         Failure(7, project ? "project_" + reason : "window_changed")
     }
-    guard AXIsProcessTrusted() else { throw Failure(9, "accessibility_permission") }
+    guard AccessibilityTrust.shared.current else { throw Failure(9, "accessibility_permission") }
     guard let pid = window.owningApplication?.processID, input.pid == pid, input.window == window.windowID else {
         throw unavailable("window_identity_changed")
     }

@@ -83,13 +83,18 @@ final class MacChromeWindow {
         guard let requirement else { return [] }
         return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter { running in
             guard !running.isTerminated, running.bundleURL?.standardizedFileURL == app.standardizedFileURL else { return false }
-            let args = arguments(running.processIdentifier)
-            guard args.contains("--user-data-dir=" + directory.path),
-                  !args.contains(where: { $0 == "--headless" || $0.hasPrefix("--headless=") || $0 == "--remote-debugging-pipe" }) else { return false }
-            var code: SecCode?
-            let attrs = [kSecGuestAttributePid: running.processIdentifier] as CFDictionary
-            return SecCodeCopyGuestWithAttributes(nil, attrs, [], &code) == errSecSuccess &&
-                code.map { SecCodeCheckValidity($0, [], requirement) == errSecSuccess } == true
+            let pid = running.processIdentifier
+            // A process keeps its arguments, so the profile it was started
+            // with is part of what was verified.
+            return VerifiedProcesses.shared.check(pid, scope: directory.path) {
+                let args = arguments(pid)
+                guard args.contains("--user-data-dir=" + directory.path),
+                      !args.contains(where: { $0 == "--headless" || $0.hasPrefix("--headless=") || $0 == "--remote-debugging-pipe" }) else { return false }
+                var code: SecCode?
+                let attrs = [kSecGuestAttributePid: pid] as CFDictionary
+                return SecCodeCopyGuestWithAttributes(nil, attrs, [], &code) == errSecSuccess &&
+                    code.map { SecCodeCheckValidity($0, [], requirement) == errSecSuccess } == true
+            }
         }
     }
 
