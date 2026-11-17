@@ -7,7 +7,7 @@ const token = "ab".repeat(12);
 const post = (route, input) => ({ method: "POST", path: route, input });
 const get = (route, input) => ({ method: "GET", path: route, input });
 
-function fixture() {
+function fixture({ settingsInputs } = {}) {
   let login = false, key = "first", surface = "browser";
   const calls = [];
   const dispatch = nativeBrowserDispatch({
@@ -25,7 +25,7 @@ function fixture() {
       }
       return { surface };
     },
-    settingsInputs: async () => key,
+    settingsInputs: settingsInputs || (async () => key),
   });
   return { calls, dispatch, setKey: value => { key = value; }, setSurface: value => { surface = value; } };
 }
@@ -66,6 +66,49 @@ test("background recheck requires the last page sample and detects changed input
   f.setKey("different process");
   await assert.rejects(f.dispatch(recheck));
   assert.equal(f.calls.filter(c => c.action === "launch").length, 1);
+});
+
+test("fresh Chrome waits for delayed configuration files after receiving the real page report", async () => {
+  const readyAt = Date.now() + 3400;
+  const f = fixture({ settingsInputs: async () => {
+    if (Date.now() < readyAt) throw Object.assign(new Error("not written yet"), { code: "ENOENT" });
+    return "persisted profile";
+  } });
+  const result = await f.dispatch(post("/audit", { timezone: "UTC", network: true }));
+  assert.equal(result.network.status, 200);
+  assert.deepEqual(await f.dispatch(post("/audit-recheck", { timezone: "UTC", language: "fr" })), { unchanged: true });
+  assert.equal(f.calls.filter(c => c.action === "launch").length, 1, "waiting for profile files must not open more tabs");
+});
+
+test("profile initialization wait stops with its caller and does not hide permission failures", async () => {
+  let reads = 0;
+  const f = fixture({ settingsInputs: async () => {
+    reads++;
+    throw Object.assign(new Error("not written yet"), { code: "ENOENT" });
+  } });
+  const controller = new AbortController();
+  const waiting = f.dispatch(post("/audit", { timezone: "UTC", network: true }), { signal: controller.signal });
+  while (reads < 2) await new Promise(resolve => setTimeout(resolve, 5));
+  controller.abort();
+  await assert.rejects(waiting, { name: "AbortError" });
+  const denied = fixture({ settingsInputs: async () => { throw Object.assign(new Error("permission denied"), { code: "EACCES" }); } });
+  await assert.rejects(denied.dispatch(post("/audit", { timezone: "UTC", network: true })), { code: "EACCES" });
+  assert.equal(denied.calls.filter(c => c.action === "launch").length, 0);
+});
+
+test("missing profile files expire with a useful error and never authorize a partial observation", async t => {
+  let now = Date.now(), reads = 0;
+  t.mock.method(Date, "now", () => now);
+  const f = fixture({ settingsInputs: async () => {
+    if (++reads === 2) now += 21000;
+    throw Object.assign(new Error("private profile path"), { code: "ENOENT" });
+  } });
+  await assert.rejects(f.dispatch(post("/audit", { timezone: "UTC", network: true })), error => {
+    assert.equal(error.code, "browser_profile_not_ready");
+    assert.ok(!error.message.includes("private profile path"));
+    return true;
+  });
+  await assert.rejects(f.dispatch(post("/audit-recheck", { timezone: "UTC", language: "fr" })), { code: "browser_recheck_needed" });
 });
 
 test("loopback callback accepts only the issued authority and path once", async () => {
