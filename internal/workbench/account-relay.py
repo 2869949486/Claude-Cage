@@ -4,11 +4,14 @@ import asyncio
 import os
 import socket
 import struct
+import ipaddress
 import sys
 
 UPSTREAM = sys.argv[1]
+LOGIN_SOCKET = sys.argv[2]
 MAX_DNS = 65535
 slots = asyncio.Semaphore(96)
+browser_slots = asyncio.Semaphore(48)
 
 
 async def upstream(header, payload=b""):
@@ -32,6 +35,70 @@ async def copy(source, destination):
     destination.write_eof()
 
 
+async def pipe_pair(reader, writer, incoming, remote):
+    tasks = [
+        asyncio.create_task(copy(reader, remote)),
+        asyncio.create_task(copy(incoming, writer)),
+    ]
+    try:
+        await asyncio.gather(*tasks)
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+async def browser_peer(reader, writer):
+    version, count = await reader.readexactly(2)
+    if version != 5 or 0 not in await reader.readexactly(count):
+        raise ValueError("unsupported SOCKS authentication")
+    writer.write(b"\x05\x00")
+    await writer.drain()
+    version, command, reserved, kind = await reader.readexactly(4)
+    if (version, command, reserved) != (5, 1, 0):
+        raise ValueError("expected SOCKS CONNECT")
+    if kind == 3:
+        size = (await reader.readexactly(1))[0]
+        host = (await reader.readexactly(size)).decode("ascii")
+    elif kind == 1:
+        host = socket.inet_ntoa(await reader.readexactly(4))
+    else:
+        raise ValueError("unsupported SOCKS address")
+    port = int.from_bytes(await reader.readexactly(2), "big")
+    if not port or port in (53, 15301):
+        raise ValueError("reserved port")
+    if host.rstrip(".").lower() == "localhost":
+        host = "127.0.0.1"
+    else:
+        addresses = await asyncio.get_running_loop().getaddrinfo(
+            host, port, family=socket.AF_INET, type=socket.SOCK_STREAM
+        )
+        host = addresses[0][4][0]
+    if ipaddress.ip_address(host).is_loopback and (host != "127.0.0.1" or port < 1024):
+        raise ValueError("invalid callback")
+    return await asyncio.open_connection(host, port, family=socket.AF_INET)
+
+
+async def browser_connect(reader, writer):
+    # Chromium sends names over SOCKS5; DNS and the localhost callback both
+    # use this account's namespace. Proxied public TCP also enters tcp().
+    remote = None
+    try:
+        if browser_slots.locked():
+            return
+        async with browser_slots:
+            incoming, remote = await asyncio.wait_for(browser_peer(reader, writer), 10)
+            writer.write(b"\x05\x00\x00\x01" + bytes(6))
+            await writer.drain()
+            await pipe_pair(reader, writer, incoming, remote)
+    except (OSError, ValueError, asyncio.IncompleteReadError, asyncio.TimeoutError):
+        pass
+    finally:
+        if remote:
+            remote.close()
+        writer.close()
+
+
 async def tcp(reader, writer):
     remote = None
     try:
@@ -46,16 +113,7 @@ async def tcp(reader, writer):
             incoming, remote, _ = await upstream(
                 f"CONNECT {dest} HTTP/1.1\r\nHost: {dest}\r\n\r\n".encode()
             )
-            tasks = [
-                asyncio.create_task(copy(reader, remote)),
-                asyncio.create_task(copy(incoming, writer)),
-            ]
-            try:
-                await asyncio.gather(*tasks)
-            finally:
-                for task in tasks:
-                    task.cancel()
-                await asyncio.gather(*tasks, return_exceptions=True)
+            await pipe_pair(reader, writer, incoming, remote)
     except (OSError, ValueError, asyncio.IncompleteReadError, asyncio.TimeoutError):
         pass
     finally:
@@ -116,9 +174,11 @@ async def main():
     loop = asyncio.get_running_loop()
     await loop.create_datagram_endpoint(UDP, local_addr=("127.0.0.1", 53))
     servers = [
+        await asyncio.start_unix_server(browser_connect, LOGIN_SOCKET),
         await asyncio.start_server(dns_tcp, "127.0.0.1", 53),
         await asyncio.start_server(tcp, "127.0.0.1", 15301),
     ]
+    os.chmod(LOGIN_SOCKET, 0o660)
     ended = asyncio.Event()
 
     def controller():

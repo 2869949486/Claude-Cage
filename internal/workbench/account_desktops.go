@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strings"
+
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -18,44 +18,17 @@ import (
 var linuxAccountDesktop string
 
 type desktopEntry struct {
-	ID        string `json:"id"`
-	Number    uint32 `json:"number"`
-	Label     string `json:"label"`
-	Running   bool   `json:"running"`
-	Dedicated bool   `json:"dedicated"`
+	Generation int    `json:"generation,omitempty"`
+	AccountID  string `json:"account_id,omitempty"`
+	ID         string `json:"id"`
+	Number     uint32 `json:"number"`
+	Label      string `json:"label"`
+	Running    bool   `json:"running"`
+	Dedicated  bool   `json:"dedicated"`
 }
 
 func (s *Server) accountDesktopsSupported() bool {
 	return s.macosGuest == nil && s.windowsGuest == nil && !containerenv.Configured(s.profile)
-}
-
-func (s *Server) accountDesktopList(w http.ResponseWriter, r *http.Request) {
-	s.claudeAccounts.mu.Lock()
-	list, err := s.loadClaudeAccounts()
-	s.claudeAccounts.mu.Unlock()
-	if err != nil {
-		requestError(w, err)
-		return
-	}
-	supported := s.accountDesktopsSupported()
-	units := map[string]bool{}
-	if supported && len(list.Accounts) > 0 && s.vmRunning() {
-		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
-		defer cancel()
-		output, err := s.guest(ctx, "set -o pipefail; systemctl list-units --state=active --type=service --no-pager --no-legend --plain 'desktop-*.service' | awk '{print $1}'")
-		if err != nil {
-			http.Error(w, "无法读取 Desktop 运行状态", 502)
-			return
-		}
-		for _, unit := range strings.Fields(string(output)) {
-			units[unit] = true
-		}
-	}
-	entries := make([]desktopEntry, 0, len(list.Accounts))
-	for _, a := range list.Accounts {
-		entries = append(entries, desktopEntry{a.ID, a.Number, a.Label, units["desktop-"+a.ID+".service"], a.DesktopDedicatedNetwork || a.ProxyNodeID != ""})
-	}
-	jsonReply(w, map[string]any{"supported": supported, "accounts": entries})
 }
 
 func (s *Server) accountDesktop(w http.ResponseWriter, r *http.Request) {
@@ -85,8 +58,7 @@ func (s *Server) accountDesktop(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
-	account := list.find(id)
-	if account == nil {
+	if list.desktopOwner(id) == nil && list.PendingDesktop != id && (list.find(id) == nil || list.DesktopRedirects[id] != "") {
 		http.NotFound(w, r)
 		return
 	}
@@ -112,19 +84,35 @@ func (s *Server) accountDesktop(w http.ResponseWriter, r *http.Request) {
 		// its dedicated-network selection can change between admission and execution.
 		s.claudeAccounts.mu.Lock()
 		current, err := s.loadClaudeAccounts()
+		if err != nil {
+			s.claudeAccounts.mu.Unlock()
+			return err
+		}
+		selected := current.desktopOwner(id)
+		// Older callers can launch an existing account by its registry ID.
+		if selected == nil && current.PendingDesktop != id && current.DesktopRedirects[id] == "" {
+			if a := current.find(id); a != nil && a.DesktopInstanceID == "" && action == "start" {
+				a.DesktopInstanceID = id
+				err = s.saveClaudeAccounts(current)
+				selected = a
+			}
+		}
+		var owner claudeAccount
+		if selected != nil {
+			owner = *selected
+		}
 		s.claudeAccounts.mu.Unlock()
 		if err != nil {
 			return err
 		}
-		selected := current.find(id)
-		if selected == nil {
-			return errors.New("账号已移除，请刷新 Desktop 列表")
+		if selected == nil && current.PendingDesktop != id {
+			return errors.New("Desktop 归属已变化，请刷新列表")
 		}
-		return s.changeAccountDesktop(s.operationContext(), *selected, action)
+		return s.changeAccountDesktop(s.operationContext(), id, owner, action)
 	})
 }
 
-func (s *Server) changeAccountDesktop(parent context.Context, account claudeAccount, action string) error {
+func (s *Server) changeAccountDesktop(parent context.Context, instance string, account claudeAccount, action string) error {
 	var err error
 	scope := "stop"
 	var key []byte
@@ -137,7 +125,7 @@ func (s *Server) changeAccountDesktop(parent context.Context, account claudeAcco
 			if err = s.ensureAccountNetwork(parent, account.ID, account.ProxyNodeID); err != nil {
 				return err
 			}
-			scope = "node"
+			scope = "node-" + account.ID
 		}
 		key, err = s.account.desktopKey()
 		if err != nil {
@@ -147,7 +135,11 @@ func (s *Server) changeAccountDesktop(parent context.Context, account claudeAcco
 	}
 	ctx, cancel := context.WithTimeout(parent, 100*time.Second)
 	defer cancel()
-	command := fmt.Sprintf("exec /bin/bash -c %s -- %s %s %s", shellescape.Quote(linuxAccountDesktop), account.ID, account.guestID(), scope)
+	code := account.guestID()
+	if code == "" {
+		code = "default"
+	}
+	command := fmt.Sprintf("exec /bin/bash -c %s -- %s %s %s", shellescape.Quote(linuxAccountDesktop), instance, code, scope)
 	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
 	cmd.Stdin = bytes.NewReader(key)
 	output, err := cmd.CombinedOutput()
@@ -157,6 +149,9 @@ func (s *Server) changeAccountDesktop(parent context.Context, account claudeAcco
 			msg = "此账号的专属网络尚未就绪"
 		}
 		return errors.New(msg)
+	}
+	if action == "start" {
+		s.watchDesktopLogins()
 	}
 	return nil
 }

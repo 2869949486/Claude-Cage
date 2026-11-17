@@ -9,7 +9,7 @@ private let requirement = #"anchor apple generic and identifier "com.anthropic.c
 
 struct Request: Decodable {
     var action: String
-    var surface, url, login: String?
+    var surface, url, login, login_profile: String?
     var window: UInt32?
     var pid: Int32?
     var x, y, delta: Double?
@@ -261,6 +261,8 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
 @MainActor
 func launchClaudeWindow() async throws {
     try verifiedInstall()
+    // Reopening an existing signed application retains its original process.
+    try? await MacDesktopIdentity.start(appURL)
     let configuration = NSWorkspace.OpenConfiguration()
     configuration.activates = true
     let application = try await NSWorkspace.shared.openApplication(at: appURL, configuration: configuration)
@@ -343,10 +345,13 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession) async
     case "status":
         if browser { return MacChromeWindow.shared.status }
         let installed = FileManager.default.fileExists(atPath: appURL.path)
-        let running = ((try? claudePIDs())?.isEmpty == false)
+        let owners = (try? claudePIDs()) ?? []
+        let running = !owners.isEmpty
         var screen = CGPreflightScreenCaptureAccess()
         if #available(macOS 15.2, *) { screen = screen || ClaudePicker.shared.selection != nil }
-        return ["version": (Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "", "installed": installed, "running": running, "screen": screen, "input": AXIsProcessTrusted(), "input_protocol": 1, "persistent": true, "push_frames": true]
+        var reply: [String: Any] = ["version": (Bundle(url: appURL)?.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "", "installed": installed, "running": running, "screen": screen, "input": AXIsProcessTrusted(), "input_protocol": 1, "persistent": true, "push_frames": true]
+        if let account = MacDesktopIdentity.current(for: owners) { reply["desktop_identity"] = account }
+        return reply
     case "finish-login":
         guard browser, let token = input.login else { throw Failure(8, "invalid_login") }
         MacChromeWindow.shared.finish(token)

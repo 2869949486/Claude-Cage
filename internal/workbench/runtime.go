@@ -179,7 +179,10 @@ func (s *Server) attach() error {
 	} else if !s.vmRunning() {
 		return errors.New("环境尚未启动")
 	}
-	b, err := s.guest(ctx, guestConnectionSnapshot)
+	s.mu.Lock()
+	reuseLogin := s.preferences.ReuseClaudeLogin
+	s.mu.Unlock()
+	b, err := s.guest(ctx, linuxLoginPreferences(reuseLogin)+"\n"+guestConnectionSnapshot)
 	if err != nil {
 		return errors.New("环境尚未准备好")
 	}
@@ -626,6 +629,17 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 			return err
 		}
 	}
+	loginPrefsCommitted := false
+	if !changed && oldPrefs.ReuseClaudeLogin != v.Preferences.ReuseClaudeLogin && s.vmRunning() {
+		if err := s.syncLoginPreferences(s.operationContext(), v.Preferences.ReuseClaudeLogin); err != nil {
+			return err
+		}
+		defer func() {
+			if !loginPrefsCommitted {
+				_ = s.syncLoginPreferences(s.operationContext(), oldPrefs.ReuseClaudeLogin)
+			}
+		}()
+	}
 	if v.Config.RequireManagedProxy(s.profile) == nil {
 		err = s.saveExitPolicyConfig(v.Config)
 	} else {
@@ -638,6 +652,7 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 		_ = writePrivate(s.configPath, old)
 		return err
 	}
+	loginPrefsCommitted = true
 	s.mu.Lock()
 	s.preferences = v.Preferences
 	token, ready := s.credentials.Token, s.ready

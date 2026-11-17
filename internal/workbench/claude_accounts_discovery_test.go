@@ -51,15 +51,15 @@ func TestClaudeDefaultDiscoveryJoinAndLiveIdentity(t *testing.T) {
 			t.Fatalf("join got %d, want %d (%s)", w.Code, status, w.Body)
 		}
 	}
-	if v := panel(); v.DetectionStatus != "ready" || v.Detected == nil || v.Detected.Email != a.Email || len(v.Accounts) != 0 {
+	if v := panel(); v.DetectionStatus != "ready" || len(v.Accounts) != 1 || v.Accounts[0].Email != a.Email || v.Accounts[0].Enabled {
 		t.Fatal(v)
 	}
 	_ = panel()
 	if probes != 1 {
 		t.Fatal("panel did not cache initial probe", probes)
 	}
-	if _, err := os.Stat(filepath.Join(s.profile, "claude-accounts.json")); !os.IsNotExist(err) {
-		t.Fatal("discovery enrolled or wrote an identity")
+	if _, err := os.Stat(filepath.Join(s.profile, "claude-accounts.json")); err != nil {
+		t.Fatal("discovered identity was not archived")
 	}
 	current = b
 	join(a, 409)
@@ -73,7 +73,7 @@ func TestClaudeDefaultDiscoveryJoinAndLiveIdentity(t *testing.T) {
 	if _, err = s.selectClaudeAccount("", false, "/p"); err == nil {
 		t.Fatal("selected a default identity that was no longer present")
 	}
-	if v := panel(); v.Detected == nil || v.Detected.Identity != b.subject() || len(v.Accounts) != 1 || v.Accounts[0].Status != "changed" {
+	if v := panel(); len(v.Accounts) != 2 || v.Accounts[1].Email != b.Email || v.Accounts[1].Enabled || v.Accounts[0].Status != "changed" {
 		t.Fatal(v)
 	}
 	join(b, 200)
@@ -163,7 +163,7 @@ func TestClaudeOneStepLoginSurvivesLockAndRestart(t *testing.T) {
 		return current, nil
 	}
 	v, _, err := restarted.claudePanelView(context.Background())
-	if err != nil || len(v.Accounts) != 1 || v.Accounts[0].ID != login.ID || v.Accounts[0].Label != current.Email || !v.Accounts[0].Enabled || v.Accounts[0].Status != "ready" || v.Accounts[0].Source != "managed" {
+	if err != nil || len(v.Accounts) != 1 || v.Accounts[0].ID != login.ID || v.Accounts[0].Label != current.Email || v.Accounts[0].Enabled || v.Accounts[0].Status != "ready" || v.Accounts[0].Source != "managed" {
 		t.Fatalf("successful login was not recovered: %+v %v", v, err)
 	}
 	list, _ = restarted.loadClaudeAccounts()

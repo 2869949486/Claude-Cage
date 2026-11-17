@@ -1749,6 +1749,17 @@ svg {
   margin: 3px 0;
   box-shadow: none;
 }
+.terminal-create-form {
+  display: grid;
+  width: min(100%, 272px);
+  gap: 10px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--paper);
+}
+.terminal-create-form > label:first-child {display:grid;gap:4px;}
+.terminal-create-form > small {color:var(--muted);}
 .sidebar-project > .terminal-create-menu,
 .chrome > .terminal-create-menu { margin-inline-start: auto; }
 .welcome-shortcuts + .terminal-create-menu { margin-inline: auto; }

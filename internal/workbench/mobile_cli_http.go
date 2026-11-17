@@ -107,7 +107,7 @@ func (s *Server) mobileOpenTerminal(w http.ResponseWriter, r *http.Request) {
 					var result struct {
 						OK bool `json:"ok"`
 					}
-					resume := map[string]any{"cli_id": record.CLIID, "connection": record.Connection, "action": "resume"}
+					resume := resumeChannelRequest(record)
 					if err := s.windowsConversationInput(record, resume); err != nil {
 						http.Error(w, err.Error(), http.StatusConflict)
 						return

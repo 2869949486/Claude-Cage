@@ -120,6 +120,9 @@ func (s *Server) macOSWindowRPC(w http.ResponseWriter, r *http.Request, input ma
 		http.Error(w, err.Error(), code)
 		return
 	}
+	if input.Action == "status" {
+		s.archiveNativeDesktop(reply)
+	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Content-Type", "application/json")
 	_, _ = w.Write(reply)

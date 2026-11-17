@@ -13,7 +13,9 @@ mkdir -p "$base"
 exec 9>"$base/launch.lock"
 flock -w 55 9
 if [[ $scope == stop ]]; then
-  if systemctl is-active --quiet "$unit.service"; then sudo systemctl stop "$unit.service"; fi
+  if systemctl is-active --quiet "$unit.service"; then
+    sudo systemctl stop "$unit.service" 2>/dev/null || ! systemctl is-active --quiet "$unit.service"
+  fi
   exit 0
 fi
 if systemctl is-active --quiet "$unit.service"; then exit 0; fi
@@ -22,9 +24,9 @@ sudo systemctl reset-failed "$unit.service" 2>/dev/null || :
 # The controller creates node namespaces. Older administrator-managed
 # namespaces keep their Desktop-only binding until the account is changed.
 props=()
-if [[ $scope == dedicated || $scope == node ]]; then
+if [[ $scope == dedicated || $scope == node-* ]]; then
   namespace=$unit
-  if [[ $scope == node ]]; then namespace="net-$id"; fi
+  if [[ $scope == node-* ]]; then route=${scope#node-}; [[ $route =~ ^[0-9a-f]{24}$ ]]; namespace="net-$route"; fi
   test -e "/run/netns/$namespace" || { echo '专属网络尚未就绪'; exit 1; }
   props+=("--property=NetworkNamespacePath=/run/netns/$namespace")
   [[ -s /etc/netns/$namespace/resolv.conf ]] || { echo '专属网络尚未就绪'; exit 1; }
@@ -57,7 +59,6 @@ mkdir -p "$HOME" "$base/data" "$HOME/.local/share/applications" "$HOME/.config"
 python3 - "$base" <<'PY'
 from pathlib import Path
 import sys
-from shutil import which
 from configparser import ConfigParser
 base=Path(sys.argv[1])
 apps=Path.home()/'.local/share/applications'
@@ -65,7 +66,6 @@ def arg(path):
     return '"'+str(path).replace('\\','\\\\').replace('"','\\"').replace('$','\\$').replace('`','\\`').replace('%','%%')+'"'
 # Claude registers this desktop ID again at startup. A per-profile entry
 # with the same ID keeps that registration pointed at the original process.
-browser=which('chromium') or which('google-chrome-stable') or '/usr/bin/chromium'
 # The portal builds its chooser from the MIME cache, even when the default
 # handler in mimeapps.list is already correct. Minimal guests lack the updater.
 cache = ConfigParser(interpolation=None)
@@ -75,7 +75,7 @@ if 'MIME Cache' not in cache:
     cache.add_section('MIME Cache')
 for name,mimes,line in [
  ('com.anthropic.Claude',['claude'],'/usr/bin/claude-desktop '+arg('--user-data-dir='+str(base/'data'))+' %u'),
- ('web',['http','https'],browser+' %u')]:
+ ('web',['http','https'],'/usr/bin/python3 -I /usr/local/lib/desktop-auth-browser.py %u')]:
     (apps/(name+'.desktop')).write_text('[Desktop Entry]\nType=Application\nName='+name+'\nExec='+line+'\nMimeType='+''.join('x-scheme-handler/'+m+';' for m in mimes)+'\n')
     for mime in mimes:
         cache['MIME Cache']['x-scheme-handler/'+mime]=name+'.desktop;'
@@ -131,19 +131,13 @@ done
 gdbus call --session --dest org.freedesktop.secrets --object-path /org/freedesktop/secrets/aliases/default --method org.freedesktop.DBus.Properties.Get org.freedesktop.Secret.Collection Locked | grep -q false
 notify=$NOTIFY_SOCKET
 unset NOTIFY_SOCKET
-if [[ -d "/usr/local/lib/account-routes/${base##*/}" ]]; then
-  mkfifo "$XDG_RUNTIME_DIR/authorization"
-  (
-    exec 7<>"$XDG_RUNTIME_DIR/authorization"
-    while IFS= read -r url <&7; do
-      [[ $url == https://* && $url != *[[:space:]]* ]] || continue
-      /usr/bin/gio open "$url" 7>&- </dev/null >/dev/null 2>&1 || :
-    done
-  ) &
-fi
 cd "$HOME"
-claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret &
+# Desktop emits the active identity from its native account provider after
+# the renderer confirms the login. Keep the filtered stream in the unit's
+# private, ephemeral runtime directory; no callback or cookie is inspected.
+DESKTOP_LOG_LEVEL=debug CLAUDE_ENABLE_LOGGING=1 DEBUG='*current-account*' claude-desktop "--user-data-dir=$base/data" --password-store=gnome-libsecret > >(/usr/bin/python3 -I /usr/local/lib/desktop-identity.py "$XDG_RUNTIME_DIR/account.json") &
 app=$!
+printf '%s\n' "$app" > "$XDG_RUNTIME_DIR/app-pid"
 for _ in {1..250}; do
   kill -0 "$app"
   if xprop -root _NET_CLIENT_LIST | grep -q '0x[1-9a-f]'; then NOTIFY_SOCKET="$notify" systemd-notify --ready; wait "$app"; exit $?; fi
@@ -155,6 +149,7 @@ user=$(id -un)
 sudo systemd-run --quiet --no-block --collect --unit="$unit" --service-type=notify \
   --property="User=$user" --property="RuntimeDirectory=$unit" --property=RuntimeDirectoryMode=0700 \
   --property=NotifyAccess=all --property=TimeoutStartSec=45 --property=TimeoutStopSec=8 \
+  --property="ExecStop=/bin/bash /usr/local/lib/desktop-finish.sh $runtime $unit.service" \
   --property=KillMode=control-group --property=PrivateTmp=yes "${props[@]}" \
   /usr/bin/dbus-run-session -- /bin/bash "$program" "$base" "$code"
 ok=

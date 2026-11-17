@@ -42,6 +42,9 @@ type controlFile struct {
 	Controller ControllerIdentity `json:"controller"`
 }
 type Server struct {
+	shellLoginWatch                                  shellLoginWatchState
+	desktopCatalogRevision                           atomic.Uint64
+	desktopLoginWatch                                desktopWatchState
 	desktopViews                                     displayViewDemand
 	desktopDisplayUpdate                             func(bool) error
 	browserViews                                     displayViewDemand
@@ -477,7 +480,8 @@ func (s *Server) handler() http.Handler {
 		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale || s.windowsGuest != nil, "pixel_wheel": s.macosGuest == nil && s.windowsGuest == nil})
 	})
 	mux.HandleFunc("GET /api/vnc", s.vnc)
-	mux.HandleFunc("GET /api/desktop-instances", s.accountDesktopList)
+	mux.HandleFunc("GET /api/desktop-instances", s.desktopCatalog)
+	mux.HandleFunc("POST /api/desktop-instances", s.newAccountDesktop)
 	mux.HandleFunc("GET /api/desktop-instances/{id}/{action}", s.accountDesktop)
 	mux.HandleFunc("POST /api/desktop-instances/{id}/{action}", s.accountDesktop)
 	mux.HandleFunc("GET /api/claude-desktop", s.claudeDesktopStatus)
@@ -707,6 +711,7 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 	}
 	view := map[string]any{
 		"account_desktops_supported": s.accountDesktopsSupported(),
+		"desktop_catalog_revision":   s.desktopCatalogRevision.Load(),
 		"projects":                   projects, "project_groups": groups, "ready": s.ready, "vm_running": running,
 		"workspace": s.workspaceLocked(), "environment_directory": s.environmentDir(),
 		"environment_identity_directory": cage.EnvironmentIdentityDir(s.profile),
@@ -757,6 +762,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.MobileRelay = s.preferences.MobileRelay
 	input.BalancedDisplay = s.preferences.BalancedDisplay
 	input.ProjectFileCache = s.preferences.ProjectFileCache
+	input.ReuseClaudeLogin = s.preferences.ReuseClaudeLogin
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	s.mu.Unlock()

@@ -59,27 +59,9 @@ func (s *Server) terminalLoginLink(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	a, err := s.accountForRoute(terminal.claudeAccountID)
+	a, err := s.accountForRoute(terminal.accountID())
 	if err != nil {
 		requestError(w, err)
-		return
-	}
-	if a.ProxyNodeID != "" {
-		if input.Open {
-			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-			defer cancel()
-			cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "/usr/local/lib/account-routes/"+a.ID+"/open --stdin")
-			cmd.Stdin = strings.NewReader(input.URL)
-			if err := cmd.Run(); err != nil {
-				http.Error(w, "账号授权浏览器未能打开，请重新打开该账号的 Desktop", 502)
-				return
-			}
-		}
-		jsonReply(w, map[string]any{"desktop": desktopEntry{ID: a.ID, Number: a.Number, Label: a.Label, Dedicated: true}})
-		return
-	}
-	if input.Open {
-		http.Error(w, "账号出口已更改，请重新打开授权链接", 409)
 		return
 	}
 	login := terminal.id
@@ -89,7 +71,21 @@ func (s *Server) terminalLoginLink(w http.ResponseWriter, r *http.Request) {
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
-	payload, _ := json.Marshal(map[string]string{"login": login, "url": input.URL})
+	s.mu.Lock()
+	reuse := s.preferences.ReuseClaudeLogin
+	s.mu.Unlock()
+	open := map[string]any{"login": login, "url": input.URL, "private": !reuse}
+	if a.Source != "" {
+		open["account"] = a.ID
+	}
+	if a.ProxyNodeID != "" {
+		if err := s.ensureAccountNetwork(ctx, a.ID, a.ProxyNodeID); err != nil {
+			requestError(w, err)
+			return
+		}
+		open["route"] = a.ID
+	}
+	payload, _ := json.Marshal(open)
 	data, err := s.guestAPI(ctx, token, "POST", "/login-open", payload)
 	if terminal.loginGuestID == "" {
 		terminal.loginLinkCleanup.Do(func() {
@@ -116,6 +112,9 @@ func (s *Server) terminalLoginLink(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Cage 浏览器未能打开授权页，请检查浏览器连接并重试", 502)
 		return
 	}
+	terminal.mu.Lock()
+	terminal.loginRequested = time.Now()
+	terminal.mu.Unlock()
 	w.Header().Set("Cache-Control", "no-store")
-	jsonReply(w, tab)
+	jsonReply(w, map[string]any{"id": tab.ID, "incognito": !reuse})
 }

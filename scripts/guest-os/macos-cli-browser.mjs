@@ -21,9 +21,9 @@ export async function installMacOSCLIBrowser(data, dispatch) {
     });
     socket.on("end", async () => {
       try {
-        const { action, login, url } = JSON.parse(input);
+        const { action, login, url, account } = JSON.parse(input);
         if (!["login-open", "login-finish"].includes(action) || !/^[0-9a-f]{24}$/.test(login)) throw new Error();
-        const result = await dispatch({ method: "POST", path: "/" + action, input: { login, url } });
+        const result = await dispatch({ method: "POST", path: "/" + action, input: { login, url, account } });
         socket.end(result?.error ? "ERR" : "OK");
       } catch { socket.end("ERR"); }
     });

@@ -21,6 +21,9 @@ import (
 // A profile ID selects a guest CLI configuration directory. Only public status
 // fields enter this registry; the official CLI owns authentication in the VM.
 type claudeAccount struct {
+	DesktopInstanceID       string       `json:"desktop_instance_id,omitempty"`
+	DesktopStatus           string       `json:"desktop_status,omitempty"`
+	CodeUnlinked            bool         `json:"code_unlinked,omitempty"`
 	ProxyNodeID             string       `json:"proxy_node_id,omitempty"`
 	DesktopDedicatedNetwork bool         `json:"desktop_dedicated_network,omitempty"`
 	Number                  uint32       `json:"number"`
@@ -64,10 +67,13 @@ type claudeGuestSnapshot struct {
 }
 
 type claudeAccountList struct {
-	LastNumber   uint32           `json:"last_number,omitempty"`
-	Accounts     []claudeAccount  `json:"accounts"`
-	PendingLogin string           `json:"pending_login,omitempty"`
-	Scheduling   claudeScheduling `json:"scheduling"`
+	PendingDesktop   string            `json:"pending_desktop,omitempty"`
+	DesktopRedirects map[string]string `json:"desktop_redirects,omitempty"`
+	PendingProxyNode string            `json:"pending_proxy_node,omitempty"`
+	LastNumber       uint32            `json:"last_number,omitempty"`
+	Accounts         []claudeAccount   `json:"accounts"`
+	PendingLogin     string            `json:"pending_login,omitempty"`
+	Scheduling       claudeScheduling  `json:"scheduling"`
 }
 
 type claudeScheduling struct {
@@ -94,7 +100,6 @@ type claudeAccountManager struct {
 	usageActive    map[string]*claudeUsageCall
 	panelRunning   bool
 	panelUntil     time.Time
-	detectedUsage  map[string]*claudeAccount
 	defaultGate    chan struct{}
 	loginNotice    string
 	defaultChecked time.Time
@@ -155,6 +160,9 @@ func (s *Server) loadClaudeAccounts() (claudeAccountList, error) {
 	if list.PendingLogin != "" && (!validClaudeID(list.PendingLogin) || ids[list.PendingLogin] || profiles[list.PendingLogin]) {
 		return list, errors.New("Claude 登录记录损坏，请恢复备份")
 	}
+	if err := list.validateDesktopBindings(); err != nil {
+		return list, err
+	}
 	// Assign legacy records in their saved order before a caller can reorder them.
 	err = list.assignNumbers()
 	return list, err
@@ -191,6 +199,7 @@ func (s *Server) saveClaudeAccounts(list claudeAccountList) error {
 	if err := writePrivate(filepath.Join(s.profile, "claude-accounts.json"), list); err != nil {
 		return errors.New("Claude 账号设置未保存，请检查配置目录权限和磁盘空间")
 	}
+	s.desktopCatalogRevision.Add(1)
 	return nil
 }
 
@@ -370,9 +379,6 @@ type claudeSelection struct{ ID, GuestID, Subject string }
 
 func (s *Server) selectClaudeAccount(requestedID string, login bool, workspace string) (claudeSelection, error) {
 	var empty claudeSelection
-	if !login && requestedID != "" && requestedID != "auto" {
-		return empty, errors.New("Claude 终端会自动分配账号")
-	}
 	m := &s.claudeAccounts
 	m.mu.Lock()
 	list, err := s.loadClaudeAccounts()
@@ -410,6 +416,15 @@ func (s *Server) selectClaudeAccount(requestedID string, login bool, workspace s
 			guestID = a.guestID()
 		}
 		return claudeSelection{ID: requestedID, GuestID: guestID}, nil
+	}
+	if requestedID != "" && requestedID != "auto" {
+		a := list.find(requestedID)
+		if a == nil || a.Status != "ready" || a.Email == "" {
+			return empty, errors.New("所选 Claude 账号需要重新登录")
+		}
+		// Participation controls automatic scheduling only. The official runner
+		// checks this subject again in the launch directory, including defaults.
+		return claudeSelection{ID: a.ID, GuestID: a.guestID(), Subject: claudeIdentityHash(a.Email, a.Organization)}, nil
 	}
 	if len(list.Accounts) == 0 {
 		return empty, nil
