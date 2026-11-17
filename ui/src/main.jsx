@@ -35,7 +35,6 @@ import { MacOSAppWindow } from "./macos-claude-window";
 import { ProjectRecovery } from "./project-recovery";
 import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
-import { TokenUsagePanel } from "./token-usage.jsx";
 import { AccountProvider, AccountGate, useAccount } from "./account";
 import { BrowserHeader, BrowserTabRail, TerminalHeader, ExpandSidebar, ExpandPane } from "./pane-headers";
 import { useDownloadNotifications, useDesktopFiles } from "./browser-downloads";
@@ -1452,8 +1451,6 @@ function App() {
           <WorkspaceSidebar
             onClaudeAccounts={() => setManagementPage("claude-accounts")}
             claudeAccountsOpen={managementPage === "claude-accounts"}
-            onTokenUsage={() => setManagementPage("token-usage")}
-            tokenUsageOpen={managementPage === "token-usage"}
             tailscaleOpen={managementPage === "tailscale"}
             updateAction={<AppUpdateButton updates={appUpdates} />}
             workspace={selectedProject || status.workspace}
@@ -1545,10 +1542,10 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "token-usage" ? "Token 用量" : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
-                {managementPage === "token-usage" ? <TokenUsagePanel onConfirm={confirm}/> : managementPage === "tailscale" ? <TailscalePanel status={status}
+                {managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}
                   onOpenLogin={async (value) => {
                     const tab = await openBrowserPage(value.auth_url, false);

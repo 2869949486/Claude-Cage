@@ -29,22 +29,25 @@ const {browser,page,errors}=await createWorkbench({beforeNavigate:async page=>{
   });
 }});
 try {
-  await page.getByRole("button",{name:"Token 用量",exact:true}).click();
-  const main=page.getByRole("main",{name:"Token 用量",exact:true});
+  assert.equal(await page.getByRole("button",{name:"Token 用量",exact:true}).count(),0);
+  await page.getByRole("button",{name:/^账户菜单，/}).click();
+  await page.getByRole("menuitem",{name:"设置",exact:true}).click();
+  const main=page.getByRole("region",{name:"Claude Code 本地用量",exact:true});
   await main.getByRole("heading",{name:"2026 年活动"}).waitFor();
   await main.getByRole("button",{name:"刷新统计",exact:true}).waitFor();
   assert.equal(await main.locator("button.token-cell").count(),365);
   await main.getByRole("button",{name:"2026-11-16，尚未到来"}).count().then(count=>assert.equal(count,0));
   const totals=main.locator(".token-totals");
-  const totalsY=(await totals.boundingBox()).y;
+  const totalsOffset=async()=>(await totals.boundingBox()).y-(await main.boundingBox()).y;
+  const totalsY=await totalsOffset();
   const model=main.getByRole("combobox",{name:"筛选模型",exact:true});
   await model.click();
-  assert.ok((await totals.boundingBox()).y>totalsY+30,"inline list must push totals down");
+  assert.ok(await totalsOffset()>totalsY+30,"inline list must push totals down");
   assert.equal(await main.getByRole("listbox").evaluate(el=>getComputedStyle(el).position),"relative");
   await page.keyboard.press("End");
   await page.keyboard.press("Enter");
   assert.equal(await model.getAttribute("aria-expanded"),"false");
-  assert.ok(Math.abs((await totals.boundingBox()).y-totalsY)<=1,"closing list restores layout");
+  assert.ok(Math.abs(await totalsOffset()-totalsY)<=1,"closing list restores layout");
   await model.click();
   await main.getByRole("option",{name:"全部模型",exact:true}).click();
   const origin=main.getByRole("combobox",{name:"筛选运行入口",exact:true});
@@ -67,13 +70,13 @@ try {
     await main.getByRole("button",{name:label,exact:true}).click();
     await main.getByRole("group",{name:curve,exact:true}).waitFor();
   }
-  await page.locator(".management-content").evaluate(el=>{el.scrollTop=0;});
-  if(output)await main.screenshot({path:output+"/desktop.png",animations:"disabled"});
+  if(output) {
+    await page.locator(".settings-content").evaluate(el=>el.scrollTop=0);
+    await page.screenshot({path:output+"/desktop.png",animations:"disabled"});
+  }
   if(output)await main.locator(".token-trend").screenshot({path:output+"/curve.png",animations:"disabled"});
   if(output)await main.locator(".token-breakdown").screenshot({path:output+"/clients.png",animations:"disabled"});
   await page.setViewportSize({width:375,height:812});
-  await page.getByRole("button",{name:"收起侧栏",exact:true}).click();
-  await page.locator(".management-content").evaluate(el=>{el.scrollTop=0;});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   assert.ok(await main.locator(".token-curve-scroll").evaluate(el=>el.scrollWidth>el.clientWidth));
   assert.ok(await main.getByRole("table",{name:"运行入口用量"}).evaluate(el=>el.getBoundingClientRect().width<=innerWidth));
@@ -81,18 +84,19 @@ try {
   if(output)await main.locator(".token-breakdown").screenshot({path:output+"/clients-narrow.png",animations:"disabled"});
   await page.setViewportSize({width:1280,height:850});
   await page.evaluate(()=>document.documentElement.style.zoom="2");
-  await page.locator(".management-content").evaluate(el=>{el.scrollTop=0;});
+  await page.locator(".settings-content").evaluate(el=>{el.scrollTop=0;});
   assert.equal(await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth),false);
   if(output)await page.screenshot({path:output+"/zoom-200.png",animations:"disabled"});
   await page.evaluate(()=>document.documentElement.style.zoom="");
-  await page.getByRole("button",{name:"展开侧栏",exact:true}).click();
   await main.locator(".token-settings summary").click();
   const enable=main.getByRole("checkbox",{name:"启用本地统计",exact:true});
   await enable.click();
   await main.getByText("统计已暂停，已保存的计数继续保留。",{exact:true}).waitFor();
   assert.equal(await main.getByRole("button",{name:"刷新统计",exact:true}).isDisabled(),true);
-  await page.getByRole("button",{name:"工作台",exact:true}).click();
-  await page.getByRole("button",{name:"Token 用量",exact:true}).click();
+  await page.getByRole("button",{name:"返回工作台",exact:true}).click();
+  assert.equal(await page.getByRole("button",{name:"Token 用量",exact:true}).count(),0);
+  await page.getByRole("button",{name:/^账户菜单，/}).click();
+  await page.getByRole("menuitem",{name:"设置",exact:true}).click();
   await main.getByText("统计已暂停，已保存的计数继续保留。",{exact:true}).waitFor();
   await main.locator(".token-settings summary").click();
   assert.equal(await enable.isChecked(),false);
