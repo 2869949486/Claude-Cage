@@ -130,8 +130,8 @@ macOS 和已签名 Windows 版本支持通过所选代理更新；Windows 未签
 本项目仍在快速迭代中，欢迎加入交流群提意见，欢迎社区大佬一起维护
 
 <p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ 群 · 710792821" width="240" /></a>
-  <br />QQ 群 · 710792821
+  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ 群 · 273237690" width="240" /></a>
+  <br />QQ 群 · 273237690
 </p>
 
 <p align="center">

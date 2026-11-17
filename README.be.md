@@ -118,8 +118,8 @@ macOS і падпісаныя версіі Windows абнаўляюцца пра
 Праект імкліва развіваецца. Далучайцеся да групы супольнасці, каб падзяліцца водгукамі; вітаюцца супрацоўнікі супольнасці.
 
 <p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a>
-  <br />QQ group · 710792821
+  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 273237690" width="240" /></a>
+  <br />QQ group · 273237690
 </p>
 
 <p align="center">

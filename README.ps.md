@@ -118,8 +118,8 @@ macOS او لاسلیک شوې Windows نسخې د ټاکلي پراکسي له 
 پروژه په چټکۍ سره وده کوي. د نظر شریکولو لپاره د ټولنې ګروپ کې ګډون وکړئ؛ د ټولنې ساتونکي ښه راغلاست.
 
 <p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a>
-  <br />QQ group · 710792821
+  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 273237690" width="240" /></a>
+  <br />QQ group · 273237690
 </p>
 
 <p align="center">
