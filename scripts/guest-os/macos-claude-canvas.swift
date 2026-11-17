@@ -204,25 +204,30 @@ final class ClaudeCanvasSession {
             crop = cropHeight(ax, bounds)
             if canSet(ax, kAXSizeAttribute) {
                 let display = CGDisplayBounds(CGMainDisplayID())
-                let wanted = CGSize(width: min(CGFloat(width), display.width),
-                                    height: min(CGFloat(height) + crop, display.height))
+                let screen = NSScreen.screens.first {
+                    ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == CGMainDisplayID()
+                }
+                let available = screen.map { macWindowAvailableBounds(display: display, screen: $0.frame, visible: $0.visibleFrame) } ?? display
+                let target = macWindowTargetFrame(bounds, size: CGSize(width: CGFloat(width), height: CGFloat(height) + crop), available: available)
+                let wanted = target.size
                 let close = abs(bounds.width - wanted.width) < 2 && abs(bounds.height - wanted.height) < 2
                 let recent = requested.map { $0.id == window.windowID && $0.pid == pid && $0.size == wanted &&
                     $0.observed == bounds.size && Date().timeIntervalSince($0.time) < 3 } ?? false
                 if !close && !recent {
+                    // Move first: macOS otherwise limits the new size to the
+                    // space remaining below or beside the current position.
+                    var origin = target.origin
+                    if origin != bounds.origin, canSet(ax, kAXPositionAttribute),
+                       let point = AXValueCreate(.cgPoint, &origin),
+                       AXUIElementSetAttributeValue(ax, kAXPositionAttribute as CFString, point) == .success {
+                        try await Task.sleep(nanoseconds: 70_000_000)
+                        bounds = try liveBounds(window.windowID, pid)
+                    }
                     var size = wanted
                     if let value = AXValueCreate(.cgSize, &size),
                        AXUIElementSetAttributeValue(ax, kAXSizeAttribute as CFString, value) == .success {
                         try await Task.sleep(nanoseconds: 70_000_000)
                         bounds = try liveBounds(window.windowID, pid)
-                        // Position only an enlarged guest window that would extend off its display.
-                        var origin = CGPoint(x: max(display.minX, min(bounds.minX, display.maxX-bounds.width)),
-                                             y: max(display.minY, min(bounds.minY, display.maxY-bounds.height)))
-                        if origin != bounds.origin, canSet(ax, kAXPositionAttribute),
-                           let point = AXValueCreate(.cgPoint, &origin) {
-                            _ = AXUIElementSetAttributeValue(ax, kAXPositionAttribute as CFString, point)
-                            bounds = try liveBounds(window.windowID, pid)
-                        }
                     }
                     requested = (window.windowID, pid, wanted, bounds.size, Date())
                 }

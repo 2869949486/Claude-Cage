@@ -96,6 +96,8 @@ jobs:
           trap 'rm -rf "$check"' EXIT
           xcrun swiftc -parse-as-library -O scripts/guest-os/macos-chrome-window-selection.swift scripts/guest-os/tests/macos-chrome-window-selection-test.swift -o "$check/test"
           "$check/test"
+          xcrun swiftc -parse-as-library -O scripts/guest-os/macos-window-layout.swift scripts/guest-os/tests/macos-window-layout-test.swift -o "$check/layout-test"
+          "$check/layout-test"
           xcrun swiftc -parse-as-library -O scripts/guest-os/macos-maintenance-compositor.swift scripts/guest-os/tests/macos-maintenance-compositor-test.swift -o "$check/maintenance-test"
           "$check/maintenance-test"
           xcrun swiftc -parse-as-library -O scripts/guest-os/macos-window-socket.swift scripts/guest-os/tests/macos-window-socket-test.swift -o "$check/socket-test"
