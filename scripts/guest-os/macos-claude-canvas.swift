@@ -252,13 +252,15 @@ final class ClaudeCanvasSession {
     private var inputMeasured: (token: String, time: TimeInterval)?
 
     func inputGeometry(_ requested: String, window: SCWindow) throws -> ClaudeCanvas {
-        guard let last, token == requested, last.id == window.windowID, last.pid == window.owningApplication?.processID,
-              try liveBounds(last.id, last.pid) == last.frame else { throw Failure(7, "window_changed") }
+        guard let last, token == requested, last.id == window.windowID, last.pid == window.owningApplication?.processID else {
+            throw Failure(7, "window_changed", detail: "geometry_replaced")
+        }
+        guard try liveBounds(last.id, last.pid) == last.frame else { throw Failure(7, "window_changed", detail: "bounds_moved") }
         let now = ProcessInfo.processInfo.systemUptime
         if let known = inputMeasured, known.token == requested, now - known.time < 1 { return last }
         guard let ax = owningAXWindow(last.pid, last.frame), cropHeight(ax,last.frame) == last.cropTop else {
             inputMeasured = nil
-            throw Failure(7, "window_changed")
+            throw Failure(7, "window_changed", detail: "title_bar_changed")
         }
         inputMeasured = (requested, now)
         return last

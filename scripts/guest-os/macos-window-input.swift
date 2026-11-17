@@ -14,7 +14,7 @@ struct MacInputWindow {
 func checkedMacInputWindow(_ input: Request, window: SCWindow) throws -> MacInputWindow {
     let project = input.action == "project-click"
     func unavailable(_ reason: String) -> Failure {
-        Failure(7, project ? "project_" + reason : "window_changed")
+        project ? Failure(7, "project_" + reason) : Failure(7, "window_changed", detail: reason)
     }
     guard AccessibilityTrust.shared.current else { throw Failure(9, "accessibility_permission") }
     guard let pid = window.owningApplication?.processID, input.pid == pid, input.window == window.windowID else {
@@ -85,6 +85,7 @@ final class MacWindowInputSession {
     private var focusedTarget = ""
     private var focusContext = ""
     private var composition: (id: String, context: String, sequence: Int, updated: Date)?
+    private var hoverChecked: (pid: pid_t, window: CGWindowID, time: TimeInterval)?
 
     static func requirePointerOwner(_ session: MacWindowInputSession?) throws {
         if let owner = pointerOwner, owner != session?.id { throw Failure(8, "input_owned_by_another_view") }
@@ -135,8 +136,21 @@ final class MacWindowInputSession {
               let x = input.x, let y = input.y, x.isFinite, y.isFinite, (0..<1).contains(x), (0..<1).contains(y) else { throw Failure(8, "invalid_input") }
         let crop = canvas?.cropTop ?? 0
         let point = CGPoint(x: target.origin.x + target.extent.width * x, y: target.origin.y + crop + (target.extent.height - crop) * y)
-        if input.surface == "browser", try !MacChromeWindow.shared.ownsPoint(point, pid: target.pid, window: window.windowID) {
-            throw Failure(7, "window_changed")
+        if input.surface == "browser" {
+            // Asking which window is under the point costs an accessibility
+            // hit test and a window list. A pointer that only hovers moves
+            // the cursor and holds nothing, so one answer serves its moves
+            // for a quarter second. Presses, releases and drags always ask.
+            let now = ProcessInfo.processInfo.systemUptime
+            let hovering = phase == "move" && buttons.isEmpty && press == nil
+            let recent = hovering && hoverChecked.map { $0.pid == target.pid && $0.window == window.windowID && now - $0.time < 0.25 } == true
+            if !recent {
+                hoverChecked = nil
+                if let detail = try MacChromeWindow.shared.pointFailure(point, pid: target.pid, window: window.windowID) {
+                    throw Failure(7, "window_changed", detail: detail)
+                }
+                hoverChecked = (target.pid, window.windowID, now)
+            }
         }
         let button = phase == "move" ? buttons.keys.sorted().first : input.button
         let types: [NSEvent.EventType]
@@ -214,7 +228,7 @@ final class MacWindowInputSession {
                 event.postToPid(target.0)
             }
         }
-        keys.removeAll(); pressedCodes.removeAll(); buttons.removeAll(); press = nil; composition = nil
+        keys.removeAll(); pressedCodes.removeAll(); buttons.removeAll(); press = nil; composition = nil; hoverChecked = nil
         if Self.pointerOwner == id { Self.pointerOwner = nil }
     }
 
