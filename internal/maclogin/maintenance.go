@@ -34,6 +34,10 @@ var maintenanceBundleID = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9.-]{0,127}$`
 func (w maintenanceWindow) probeMessage() string {
 	var message string
 	switch w.Error {
+	case "component_update_required":
+		return "客机维护组件缺失或校验未通过，请在环境设置中修复组件"
+	case "maintenance_probe_unavailable":
+		return "暂时未能确认系统设置的状态，正在重新连接，请稍候"
 	case "requires_gui_login":
 		return "请先登录并解锁虚拟 Mac 的客机账户"
 	case "maintenance_window_unavailable":

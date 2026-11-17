@@ -57,33 +57,46 @@ func (s *loginSession) maintenanceProbe(open bool) (maintenanceWindow, error) {
 	if err != nil {
 		return result, err
 	}
-	pipe, err := cmd.StdoutPipe()
-	if err != nil || cmd.Start() != nil {
-		result.Error = "component_update_required"
-		return result, errors.New("客机维护组件尚未连接，请更新环境组件后重试")
-	}
-	data, readErr := io.ReadAll(io.LimitReader(pipe, 8193))
-	if readErr != nil || len(data) > 8192 {
-		cancel()
-	}
-	if err = cmd.Wait(); err != nil {
-		var exit *exec.ExitError
-		if errors.As(err, &exit) && exit.ExitCode() == 73 {
-			result.Error = "requires_gui_login"
-			return result, errors.New("请先登录并解锁虚拟 Mac 的客机账户")
-		}
-		result.Error = "component_update_required"
-		return result, errors.New("客机维护组件需要更新，请在环境设置中更新组件")
-	}
-	if readErr != nil || len(data) > 8192 || json.Unmarshal(data, &result) != nil {
-		result.Error = "component_update_required"
-		return result, errors.New("客机维护组件需要更新，请在环境设置中更新组件")
-	}
-	if result.Error != "" {
-		return result, errors.New(result.probeMessage())
+	result, err = runMaintenanceProbe(ctx, cmd)
+	if err != nil {
+		return result, err
 	}
 	if !open && !result.valid(user) {
 		return result, errors.New("客机授权窗口身份无法确认，请重新打开维护画面")
+	}
+	return result, nil
+}
+
+func runMaintenanceProbe(ctx context.Context, cmd *exec.Cmd) (maintenanceWindow, error) {
+	var result maintenanceWindow
+	pipe, err := cmd.StdoutPipe()
+	if err != nil || cmd.Start() != nil {
+		result.Error = "maintenance_probe_unavailable"
+		return result, errors.New(result.probeMessage())
+	}
+	data, readErr := io.ReadAll(io.LimitReader(pipe, 8193))
+	if readErr != nil || len(data) > 8192 {
+		_ = cmd.Process.Kill()
+	}
+	if err = cmd.Wait(); err != nil {
+		var exit *exec.ExitError
+		result.Error = "maintenance_probe_unavailable"
+		if ctx.Err() == nil && errors.As(err, &exit) {
+			switch exit.ExitCode() {
+			case 72, 127:
+				result.Error = "component_update_required"
+			case 73:
+				result.Error = "requires_gui_login"
+			}
+		}
+		return result, errors.New(result.probeMessage())
+	}
+	if readErr != nil || len(data) > 8192 || json.Unmarshal(data, &result) != nil {
+		result = maintenanceWindow{Error: "maintenance_probe_unavailable"}
+		return result, errors.New(result.probeMessage())
+	}
+	if result.Error != "" {
+		return result, errors.New(result.probeMessage())
 	}
 	return result, nil
 }
@@ -137,6 +150,12 @@ func (s *loginSession) handleMaintenance(in request) (result reply) {
 	}
 	surface, err := s.maintenanceProbe(false)
 	if err != nil || s.screenID != "maintenance-"+surface.Session {
+		if err != nil && surface.Error == "maintenance_probe_unavailable" {
+			// Keep the view during a transient SSH/probe failure, but invalidate
+			// input until a new frame has a freshly verified destination.
+			s.maintenanceFrame = ""
+			return maintenanceFailure(surface, err, false)
+		}
 		s.close()
 		if err == nil {
 			err = errors.New("客机登录会话已变化，请重新打开维护画面")
@@ -151,6 +170,10 @@ func (s *loginSession) handleMaintenance(in request) (result reply) {
 		}
 		after, err := s.maintenanceProbe(false)
 		if err != nil {
+			if after.Error == "maintenance_probe_unavailable" {
+				s.maintenanceFrame = ""
+				return maintenanceFailure(after, err, false)
+			}
 			s.close()
 			return maintenanceFailure(after, err, true)
 		}

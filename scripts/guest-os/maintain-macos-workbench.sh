@@ -87,6 +87,16 @@ for app in "$kit"/*.app "$kit"/project/*.app; do
         previous_team=$(codesign -dv "$target" 2>&1 | sed -n 's/^TeamIdentifier=//p' || true)
         next_team=$(codesign -dv "$app" 2>&1 | sed -n 's/^TeamIdentifier=//p')
         [[ -z $previous_team || $previous_team == not\ set || $previous_team == "$next_team" ]] || exit 1
+        if [[ $identifier == dev.cage.GuestClaudeWindow ]] && codesign --verify --strict "$target" >/dev/null 2>&1; then
+            # TCC follows the installed app's designated requirement. A new
+            # ad-hoc hash, or a different signer, must not silently replace an
+            # already authorized window helper during a routine update.
+            previous_requirement=$(codesign -d -r- "$target" 2>&1 | sed -n 's/^designated => //p')
+            if [[ -z $previous_requirement ]] || ! codesign --verify --strict -R "=$previous_requirement" "$app" >/dev/null 2>&1; then
+                echo '客机窗口组件的签名身份已变化，更新会使已有的窗口录制和辅助功能授权失效。请使用与已安装组件相同的稳定签名重新构建。原组件已保留。' >&2
+                exit 1
+            fi
+        fi
     fi
     index=${#apps[@]}
     ditto "$app" "$backup/new-app-$index"
