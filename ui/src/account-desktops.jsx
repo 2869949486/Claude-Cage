@@ -13,6 +13,16 @@ import { runtimeSocketURL } from "./client-context.mjs";
 
 const title = (a) => `#${String(a.number).padStart(2, "0")} ${a.label}`;
 const entry = (id) => "/desktop-instances/" + id;
+
+function DesktopAccountLabel({ account }) {
+  return <>
+    <Monitor size={20} strokeWidth={1.75} aria-hidden="true">
+      <AccountIconNumber number={account.number} y={10} />
+    </Monitor>
+    <span className="account-desktop-label">{account.label}</span>
+  </>;
+}
+
 export function useAccountDesktops(onShow, onHide, notify, confirm) {
   const [expanded, setExpanded] = useState(false);
   const [catalog, setCatalog] = useState(null);
@@ -114,10 +124,7 @@ export function DesktopList({ model, disabled, selected, onDefault }) {
                   disabled={Boolean(pending) || disabled}
                   onClick={() => model.act(a, "start")}
                 >
-                  <Monitor size={20} strokeWidth={1.75} aria-hidden="true">
-                    <AccountIconNumber number={a.number} y={10} />
-                  </Monitor>
-                  <span className="account-desktop-label">{a.label}</span>
+                  <DesktopAccountLabel account={a} />
                   {pending === a.id || a.running ? <span aria-hidden="true">{pending === a.id ? "…" : "●"}</span> : null}
                 </button>
                 {panes.length > 0 && !panes.some((p) => p.id === a.id) && (
@@ -185,7 +192,9 @@ function DesktopPane({ account, visible, close, busy }) {
   return (
     <section className="account-desktop-pane" aria-label={title(account)}>
       <header>
-        <strong>{title(account)}</strong>
+        <strong className="account-desktop-title" title={title(account)}>
+          <DesktopAccountLabel account={account} />
+        </strong>
         <button disabled={busy} onClick={close}>
           关闭实例
         </button>
