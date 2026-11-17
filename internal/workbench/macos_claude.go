@@ -59,6 +59,8 @@ type macOSWindowRequest struct {
 	Refresh    bool               `json:"refresh,omitempty"`
 	Wait       bool               `json:"wait,omitempty"`
 	Binary     bool               `json:"binary,omitempty"`
+	Video      bool               `json:"video,omitempty"`
+	Keyframe   bool               `json:"keyframe,omitempty"`
 	ID         string             `json:"id,omitempty"`
 	IDs        []string           `json:"ids,omitempty"`
 	Kind       string             `json:"kind,omitempty"`
