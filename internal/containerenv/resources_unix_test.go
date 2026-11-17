@@ -20,7 +20,7 @@ func fakeEngine(t *testing.T, pidsLimit int64, updateFails bool) (*Runtime, stri
 	config := fixtureConfig()
 	config.Engine, config.Socket, config.Executable = "podman", "", filepath.Join(dir, "podman")
 	r := newRuntime(t.TempDir(), config)
-	inspect := fmt.Sprintf(`[{"Id":"c1","Config":{"Labels":{%q:%q}},"HostConfig":{"PidsLimit":%d}}]`, profileLabel, r.identity, pidsLimit)
+	inspect := fmt.Sprintf(`[{"Id":"c1","Config":{"Labels":{%q:%q}},"HostConfig":{"PidsLimit":%d,"NanoCpus":%d,"Memory":%d}}]`, profileLabel, r.identity, pidsLimit, int64(config.CPUs)*1e9, config.MemoryBytes)
 	update := "exit 0"
 	if updateFails {
 		update = "echo 'update rejected' >&2; exit 1"
@@ -42,7 +42,7 @@ func TestFailedResourceUpdateRefusesStart(t *testing.T) {
 		t.Fatalf("update failure was not reported as a refused start: %v", err)
 	}
 	log, _ := os.ReadFile(calls)
-	if !strings.Contains(string(log), fmt.Sprintf("update --pids-limit %d c1", PIDLimit)) {
+	if !strings.Contains(string(log), fmt.Sprintf("update --pids-limit %d --cpus 2 --memory %d --memory-swap %d c1", PIDLimit, 4<<30, 8<<30)) {
 		t.Fatalf("engine calls:\n%s", log)
 	}
 }

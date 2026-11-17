@@ -29,10 +29,11 @@ func (r *Runtime) verifyResources(ctx context.Context, containerID string) (reso
 	return r.verifyHostResources(ctx, containerID)
 }
 
-// Create writes --pids-limit into the container scope once, while the parent
-// slice is re-applied on every start. Without this update an existing
-// container keeps its create-time value, which holds it below the slice. A
-// failed update refuses the start instead of running with an unverified limit.
+// Create writes --pids-limit, --cpus and --memory into the container scope
+// once, while the parent slice is re-applied from the configuration on every
+// start. Without this update an existing container keeps its create-time
+// values, and the lowest limit on the path applies. A failed update refuses
+// the start instead of running with limits Cage did not verify.
 func (r *Runtime) updateResources(ctx context.Context, containerID string) error {
 	container, err := r.inspectContainer(ctx)
 	if err != nil {
@@ -41,7 +42,7 @@ func (r *Runtime) updateResources(ctx context.Context, containerID string) error
 	if container == nil || container.ID != containerID {
 		return errors.New("容器身份已变化，请重新启动环境")
 	}
-	args := resourceUpdate(container)
+	args := resourceUpdate(container, r.config)
 	if args == nil {
 		return nil
 	}
@@ -53,11 +54,16 @@ func (r *Runtime) updateResources(ctx context.Context, containerID string) error
 
 // resourceUpdate returns the engine arguments that bring a container's
 // create-time limits to the current values, or nil when they already match.
-func resourceUpdate(container *engineContainer) []string {
-	if limit := container.HostConfig.PidsLimit; limit != nil && *limit == PIDLimit {
+func resourceUpdate(container *engineContainer, configuration Config) []string {
+	host := container.HostConfig
+	if host.PidsLimit != nil && *host.PidsLimit == PIDLimit && host.NanoCpus == int64(configuration.CPUs)*1e9 && host.Memory == configuration.MemoryBytes {
 		return nil
 	}
-	return []string{"update", "--pids-limit", strconv.Itoa(PIDLimit), container.ID}
+	// Create passes --memory alone, so the engine sets memory plus swap to
+	// twice the memory. Keep that ratio; raising --memory past the old total
+	// without --memory-swap is refused by the engine.
+	return []string{"update", "--pids-limit", strconv.Itoa(PIDLimit), "--cpus", strconv.Itoa(configuration.CPUs),
+		"--memory", strconv.FormatInt(configuration.MemoryBytes, 10), "--memory-swap", strconv.FormatInt(2*configuration.MemoryBytes, 10), container.ID}
 }
 
 // The slice is the hard ceiling: the guest cannot see it. The container scope
@@ -74,9 +80,8 @@ func parseResourceEvidence(slice cgroupLimits, scope *cgroupLimits, mountinfo st
 		return resourceEvidence{}, err
 	}
 	if scope != nil {
-		pids, err := strconv.ParseInt(scope.pids, 10, 64)
-		if err != nil || pids != PIDLimit {
-			return resourceEvidence{}, errors.New("容器自身的进程数限额与配置不一致；请停止环境后重新启动，Cage 会更新已有容器")
+		if _, err := parseLimits(*scope, configuration); err != nil {
+			return resourceEvidence{}, errors.New("容器自身的 CPU、内存或进程数限额与配置不一致；请停止环境后重新启动，Cage 会更新已有容器")
 		}
 	}
 	cgroup2 := false

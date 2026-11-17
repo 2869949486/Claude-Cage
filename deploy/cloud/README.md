@@ -89,7 +89,7 @@ _output/bin/cage container-install-script services |
   "$cage_engine" exec --interactive --user cage --workdir /home/cage "$CAGE_BUILD_CONTAINER" zsh -l
 ```
 
-第一步仅选择 Python、Node、Chromium、Claude Code 和 code-server，复用 `ToolInstallPrelude` 与 `agent-vm.setup.sh`；第二步复用 `GuestSetup`。服务安装需要容器内 systemd 正在运行，不能把第二步直接塞进普通 `Dockerfile RUN`。容器模式跳过 zram；Chromium 沙箱保持开启。基础层将容器内 systemd 的 `DefaultTasksMax` 设为 `infinity`，单个服务不再受默认百分比派生的小限额约束。运行工作环境由宿主父 slice 实施 16384 个进程／线程的硬上限；容器创建时把同一数值写入容器 scope，已有容器在启动前更新到当前数值，更新失败时拒绝启动；独立镜像构建仍使用 2 CPU、4 GiB 内存、512 个进程／线程的预算。初始化浏览器资料的 `StartScript` 留到工作环境首次启动，不能在基础镜像内预建浏览器密码或控制凭据。
+第一步仅选择 Python、Node、Chromium、Claude Code 和 code-server，复用 `ToolInstallPrelude` 与 `agent-vm.setup.sh`；第二步复用 `GuestSetup`。服务安装需要容器内 systemd 正在运行，不能把第二步直接塞进普通 `Dockerfile RUN`。容器模式跳过 zram；Chromium 沙箱保持开启。基础层将容器内 systemd 的 `DefaultTasksMax` 设为 `infinity`，单个服务不再受默认百分比派生的小限额约束。运行工作环境由宿主父 slice 实施 16384 个进程／线程的硬上限；容器创建时把同一数值和配置中的 CPU、内存写入容器 scope，已有容器在启动前把这三项更新到当前数值，更新失败时拒绝启动；独立镜像构建仍使用 2 CPU、4 GiB 内存、512 个进程／线程的预算。初始化浏览器资料的 `StartScript` 留到工作环境首次启动，不能在基础镜像内预建浏览器密码或控制凭据。
 
 在 rootless Docker 中，systemd 的启动入口为：
 

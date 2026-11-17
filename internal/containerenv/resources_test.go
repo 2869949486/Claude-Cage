@@ -38,37 +38,50 @@ func TestKernelResourceEvidenceRejectsIgnoredOrDifferentLimits(t *testing.T) {
 	}
 }
 
-// A container keeps the PID limit it was created with while the slice is
-// re-applied on every start, so only the scope check can see the stale value.
-func TestContainerScopeKeepingCreateTimePIDLimitIsRejected(t *testing.T) {
+// A container keeps the limits it was created with while the slice is
+// re-applied on every start, so only the scope check can see stale values.
+func TestContainerScopeKeepingCreateTimeLimitsIsRejected(t *testing.T) {
 	if _, err := parseResourceEvidence(fixtureLimits(), nil, cgroupMount, fixtureConfig()); err != nil {
 		t.Fatalf("slice-only evidence before a container exists: %v", err)
 	}
-	for _, pids := range []string{"1024", strconv.Itoa(PIDLimit * 2), "max", ""} {
+	for _, change := range []func(*cgroupLimits){
+		func(l *cgroupLimits) { l.pids = "1024" },
+		func(l *cgroupLimits) { l.pids = strconv.Itoa(PIDLimit * 2) },
+		func(l *cgroupLimits) { l.pids = "max" },
+		func(l *cgroupLimits) { l.cpu = "100000 100000" },
+		func(l *cgroupLimits) { l.memory = "2147483648" },
+		func(l *cgroupLimits) { l.memory = "max" },
+	} {
 		scope := fixtureLimits()
-		scope.pids = pids
+		change(&scope)
 		if _, err := parseResourceEvidence(fixtureLimits(), &scope, cgroupMount, fixtureConfig()); err == nil {
-			t.Fatalf("accepted container scope pids.max %q", pids)
+			t.Fatalf("accepted container scope limits %+v", scope)
 		}
 	}
 }
 
-func TestResourceUpdateTouchesOnlyStaleContainers(t *testing.T) {
+func currentContainer() *engineContainer {
 	container := &engineContainer{ID: "c1"}
-	want := []string{"update", "--pids-limit", strconv.Itoa(PIDLimit), "c1"}
-	for _, limit := range []int64{0, 1024, PIDLimit * 2} {
-		container.HostConfig.PidsLimit = &limit
-		if got := resourceUpdate(container); !slices.Equal(got, want) {
-			t.Fatalf("PidsLimit %d: got %q", limit, got)
-		}
-	}
-	container.HostConfig.PidsLimit = nil
-	if got := resourceUpdate(container); !slices.Equal(got, want) {
-		t.Fatalf("missing PidsLimit: got %q", got)
-	}
-	current := int64(PIDLimit)
-	container.HostConfig.PidsLimit = &current
-	if got := resourceUpdate(container); got != nil {
+	limit := int64(PIDLimit)
+	container.HostConfig.PidsLimit, container.HostConfig.NanoCpus, container.HostConfig.Memory = &limit, 2e9, 4<<30
+	return container
+}
+
+func TestResourceUpdateTouchesOnlyStaleContainers(t *testing.T) {
+	if got := resourceUpdate(currentContainer(), fixtureConfig()); got != nil {
 		t.Fatalf("current container: got %q", got)
+	}
+	want := []string{"update", "--pids-limit", strconv.Itoa(PIDLimit), "--cpus", "2", "--memory", "4294967296", "--memory-swap", "8589934592", "c1"}
+	for name, change := range map[string]func(*engineContainer){
+		"old PID limit":     func(c *engineContainer) { old := int64(1024); c.HostConfig.PidsLimit = &old },
+		"missing PID limit": func(c *engineContainer) { c.HostConfig.PidsLimit = nil },
+		"old CPUs":          func(c *engineContainer) { c.HostConfig.NanoCpus = 1e9 },
+		"old memory":        func(c *engineContainer) { c.HostConfig.Memory = 2 << 30 },
+	} {
+		container := currentContainer()
+		change(container)
+		if got := resourceUpdate(container, fixtureConfig()); !slices.Equal(got, want) {
+			t.Fatalf("%s: got %q", name, got)
+		}
 	}
 }
