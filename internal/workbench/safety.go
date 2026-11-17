@@ -126,6 +126,8 @@ func (s *Server) publishGate(state cage.GateStatus) {
 			s.safety.Error = ""
 			s.safety.monitorError = ""
 			s.exitProbeError = ""
+			s.proxyNetworkLost = false
+			s.proxyNetworkRetry = time.Time{}
 		}
 	}
 }

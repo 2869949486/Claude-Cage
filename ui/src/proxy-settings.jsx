@@ -88,13 +88,19 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
     mutating = useRef(false),
     loading = useRef(false),
     latest = useRef(null),
+    appliedFailure = useRef(null),
     measuring = useRef(false),
     portDirty = useRef(false);
   const reload = async () => {
+    const failure = appliedFailure.current;
     const value = await api("/proxy");
     if (alive.current) {
       setProxy(value);
       if (!portDirty.current) setPort(String(value.port));
+      if (failure && appliedFailure.current === failure && value.network_open) {
+        setError((current) => current === failure.message ? "" : current);
+        appliedFailure.current = null;
+      }
     }
     return value;
   };
@@ -164,6 +170,7 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
   const mutate = async (action, input = {}) => {
     if (mutating.current) return false;
     mutating.current = true;
+    appliedFailure.current = null;
     setError("");
     setNotice("");
     setPending(action);
@@ -179,7 +186,12 @@ export function ProxySettings({ status, onApplied, onConfirm, onDirty, initializ
       portDirty.current = false;
       const updated = await reload();
       await onApplied();
-      if (current.error) throw new Error(current.error);
+      if (current.error) {
+        if (current.settings_saved) {
+          appliedFailure.current = { message: current.error };
+        }
+        throw new Error(current.error);
+      }
       if (alive.current) {
         setForm(null);
         setManual(emptyManual);

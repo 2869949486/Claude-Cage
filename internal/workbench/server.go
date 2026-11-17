@@ -129,6 +129,7 @@ type Server struct {
 	safetyOp                                         sync.Mutex
 	networkPaused                                    bool
 	proxyNetworkLost                                 bool
+	proxyNetworkRetry                                time.Time
 	checkCancel                                      context.CancelFunc
 	lifeContext                                      context.Context
 	lifeCancel                                       context.CancelFunc
