@@ -1,4 +1,5 @@
 import React, { useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
+import { LoaderCircle, Monitor } from "lucide-react";
 import { DesktopToolbar, useDesktopZoom } from "./claude-desktop";
 import { MacOSLogin } from "./macos-login";
 import { api, native, nativeAvailable } from "./api";
@@ -59,6 +60,19 @@ function matchWindowBackground(img, pane, canvasRef) {
   pane.style.backgroundColor = uniform && pixels[3] === 255 ? `rgb(${pixels[0]}, ${pixels[1]}, ${pixels[2]})` : "";
 }
 
+// Electron may create a completely blank window before its renderer is ready.
+// Check only initial Claude frames, locally; Chrome can legitimately show a
+// blank page, and later application frames must remain under the user's control.
+function hasWindowContent(img, canvasRef) {
+  const canvas = canvasRef.current ??= document.createElement("canvas");
+  canvas.width = canvas.height = 32;
+  const ctx = canvas.getContext("2d", { willReadFrequently:true });
+  if (!ctx) return true;
+  ctx.drawImage(img, 0, 0, 32, 32);
+  const pixels = ctx.getImageData(0, 0, 32, 32).data;
+  return pixels.some((value, i) => i % 4 !== 3 && Math.abs(value - pixels[i % 4]) > 12);
+}
+
 export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard = "mac", remoteRef, sidebarCollapsed, onExpand, onConfirm, uploads = [], onStatus = () => {}, onFallback = () => {} }) {
   const appName = browser ? "Google Chrome" : "Claude Desktop";
   const base = browser ? "/macos-browser" : "/macos/claude";
@@ -75,6 +89,51 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   const [transferring, setTransferring] = useState(false);
   const [revision, refresh] = useState(0);
   const [image, setImage] = useState(null);
+  const [phase, setPhase] = useState("connecting");
+  const [slow, setSlow] = useState(false);
+  const [waitingSince, setWaitingSince] = useState(Date.now);
+  const waiting = useRef(waitingSince);
+  const decoded = useRef(false);
+  const stopped = useRef(false);
+  function beginWaiting(nextPhase = "connecting") {
+    waiting.current = Date.now();
+    setWaitingSince(waiting.current);
+    decoded.current = false;
+    frame.current = null;
+    setImage(null);
+    setSlow(false);
+    setPhase(nextPhase);
+    setError("");
+  }
+  function windowFailure(reason, message) {
+    if (stopped.current) { setPhase("stopped"); return; }
+    const transient = ["not_running", "no_visible_window", "window_changed"].includes(reason);
+    if (decoded.current && transient) { beginWaiting("waiting-window"); return; }
+    decoded.current = false;
+    // LaunchServices can finish before Electron creates its first window.
+    // Keep the same bounded wait across frame reconnects instead of flashing
+    // a retry error every time the guest reports this intermediate state.
+    if (transient && waiting.current !== null && Date.now() - waiting.current < 60000) {
+      setPhase("waiting-window");
+      return;
+    }
+    waiting.current = null;
+    setWaitingSince(null);
+    setPhase("failed");
+    setError(message);
+  }
+  useEffect(() => {
+    if (!screenVisible || waitingSince === null) return;
+    const slowTimer = setTimeout(() => setSlow(true), Math.max(0, waitingSince + 10000 - Date.now()));
+    const timeout = setTimeout(() => {
+      if (waiting.current !== waitingSince) return;
+      waiting.current = null;
+      setWaitingSince(null);
+      setPhase("failed");
+      setError(`${appName} 的窗口画面尚未就绪。可以重新连接；若仍无画面，请查看客机登录界面。`);
+    }, Math.max(0, waitingSince + 60000 - Date.now()));
+    return () => { clearTimeout(slowTimer); clearTimeout(timeout); };
+  }, [screenVisible, waitingSince, appName]);
   const frame = useRef(null);
   const surface = useRef(null);
   const controls = useRef(null);
@@ -82,6 +141,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   current.current = { screenVisible, keyboard, input: state?.input, onStatus, onFallback };
   const pane = useRef(null);
   const backgroundSample = useRef(null);
+  const startupSample = useRef(null);
   const viewport = useRef(null);
   useLayoutEffect(() => {
     const element = pane.current;
@@ -112,7 +172,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     let current, nextStatus = 0, after = "", captureSize = "", checkFrame = true;
     const live = () => generation.current === epoch;
     function receiveFrame(next) {
-      if (!live()) return;
+      if (!live() || stopped.current) return;
       if (frame.current?.window !== next.window || frame.current?.pid !== next.pid || frame.current?.geometry !== next.geometry) frame.current = null;
       setImage({
         src: next.src || `data:${next.mime === "image/jpeg" ? "image/jpeg" : "image/png"};base64,${next.image}`,
@@ -120,7 +180,6 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
         geometry: next.geometry, width: next.contentWidth, height: next.contentHeight,
         acknowledge: next.acknowledge,
       });
-      setError("");
     }
     async function poll() {
       let delay = 2200;
@@ -141,7 +200,10 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
         // Electron window can still be captured but cannot receive targeted input.
         if (current.installed && !launched.current) {
           launched.current = true;
+          if (waiting.current !== null) setPhase("starting");
           await request("launch");
+          if (!live()) return;
+          if (waiting.current !== null) setPhase("waiting-window");
           nextStatus = 0;
           delay = 100;
           return;
@@ -155,7 +217,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
                 nextStatus = 0;
                 frame.current = null;
                 setImage(null);
-                setError(messages[reason] || "未能读取虚拟 Mac 的窗口画面，请重新连接。");
+                windowFailure(reason, messages[reason] || "未能读取虚拟 Mac 的窗口画面，请重新连接。");
               }, base);
             }
             frameConnection.current.resize(viewport.current);
@@ -173,15 +235,21 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
           if (next.unchanged) return;
           after = next.sequence || "";
           receiveFrame(next);
-        } else { frameConnection.current?.close(); frameConnection.current = null; frame.current = null; setImage(null); }
-        setError("");
+        } else {
+          const closed = !current.running && decoded.current;
+          frameConnection.current?.close(); frameConnection.current = null; frame.current = null; setImage(null); decoded.current = false;
+          if (!current.installed || !current.screen || stopped.current || closed) {
+            waiting.current = null; setWaitingSince(null);
+            setPhase(!current.installed ? "uninstalled" : stopped.current || closed ? "stopped" : "permission");
+          }
+        }
       } catch (e) {
         if (!live()) return;
         connection.current?.close(); connection.current = null;
         setInputChannel(null);
         frameConnection.current?.close(); frameConnection.current = null;
         current = null; after = "";
-        if (live()) { frame.current = null; setImage(null); setError(e.message); }
+        if (live()) { frame.current = null; setImage(null); windowFailure(e.code, e.message); }
       } finally { if (live()) timer = setTimeout(poll, delay); }
     }
     poll();
@@ -194,8 +262,21 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   }, [screenVisible, revision, base]);
 
   async function action(name) {
-    try { if (name === "stop") launched.current = true; await request(name); setError(""); refresh((n) => n + 1); }
-    catch (e) { setError(e.message); }
+    try {
+      if (name === "stop") {
+        stopped.current = true; launched.current = true;
+        waiting.current = null; setWaitingSince(null); setPhase("stopping");
+        frameConnection.current?.close(); frameConnection.current = null;
+        frame.current = null; setImage(null); decoded.current = false;
+      } else if (name === "launch") {
+        stopped.current = false; launched.current = true;
+        beginWaiting("starting");
+      }
+      await request(name);
+      if (name === "launch" && waiting.current !== null) setPhase("waiting-window");
+      setError(""); refresh((n) => n + 1);
+    }
+    catch (e) { stopped.current = false; windowFailure(e.code, e.message); }
   }
   useImperativeHandle(remoteRef, () => ({
     focus: () => controls.current?.transport.focus(),
@@ -287,36 +368,56 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
     } catch (error) { fileFailure(error); }
   }
   if (!visible) return null;
+  const loading = ["connecting", "starting", "waiting-window", "stopping"].includes(phase);
   return <section className="claude-desktop-view mac-claude" aria-label={"虚拟 Mac 中的 " + appName}>
     {(browser || !nativeAvailable()) && <BrowserUploads requests={uploads} onStatus={onStatus} />}
-    <DesktopToolbar title={appName} desktop={state} platform="macOS" zoom={zoom} setZoom={setZoom} onConfirm={onConfirm}
-      onStop={browser ? undefined : () => action("stop")} refresh={() => refresh(n => n+1)} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
+    <DesktopToolbar title={appName} desktop={state} platform="macOS" zoom={zoom} setZoom={setZoom} onConfirm={onConfirm} busy={loading}
+      onStop={browser ? undefined : () => action("stop")} refresh={() => { if (!stopped.current) beginWaiting(); refresh(n => n+1); }} sidebarCollapsed={sidebarCollapsed} onExpand={onExpand}>
       {browser && <BrowserFavorites ready={Boolean(state?.installed)} onOpen={onOpenPage} />}
       <MacOSLogin />
-      {!browser && <button disabled={!state?.input || !image || transferring} onClick={() => void chooseFiles()}>添加附件</button>}
+      {!browser && <button disabled={loading || phase === "failed" || !state?.input || !image || transferring} onClick={() => void chooseFiles()}>添加附件</button>}
       {!browser && <input ref={picker} type="file" multiple hidden aria-label="选择 Claude 附件" onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void receive({ files, kind: "paste" }, pickerTarget.current || undefined).catch(fileFailure); }} />}
-      {(!state?.running || error) && <button onClick={() => action("launch")} disabled={!state?.installed}>{state?.running ? "重新连接应用" : "打开应用"}</button>}
+      {!loading && (!state?.running || error) && <button onClick={() => action("launch")} disabled={!state?.installed}>{state?.running ? "重新连接应用" : "打开应用"}</button>}
       {state?.installed && !state.screen && <button onClick={() => action("request-screen")}>授权窗口画面</button>}
       {state?.installed && !state.input && <button onClick={() => action("request-input")}>授权键鼠</button>}
     </DesktopToolbar>
-    {error && <p role="alert">{error}</p>}
+    {error && image && phase !== "failed" && <p role="alert">{error}</p>}
     {fileError && <p role="alert">{fileError}</p>}
     {state && !state.installed && <p>此虚拟 Mac 尚未安装 {appName}。</p>}
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
     {state?.running && state.screen && !state.input && <p>{messages.accessibility_permission}</p>}
-    <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom }}>
+    <div ref={pane} className="mac-claude-frame" aria-busy={loading} style={{ "--desktop-zoom": zoom }}>
+      {loading && <div className="mac-app-placeholder" role="status" aria-live="polite">
+        <LoaderCircle className="mac-app-spinner" size={28} aria-hidden="true" />
+        <strong>{phase === "starting" ? `正在启动 ${appName}` : phase === "stopping" ? `正在关闭 ${appName}` : phase === "waiting-window" ? "正在连接窗口画面" : `正在连接 ${appName}`}</strong>
+        <p>{slow ? "首次打开可能需要更长时间，窗口出现后会自动显示，无需重复点击。" : "请稍候，准备好后会自动显示。"}</p>
+      </div>}
+      {(!image || phase === "failed") && !loading && <div className="mac-app-placeholder" role={phase === "failed" ? "alert" : undefined}>
+        <Monitor size={28} aria-hidden="true" />
+        <strong>{phase === "stopped" ? `${appName} 已关闭` : phase === "uninstalled" ? `尚未安装 ${appName}` : phase === "permission" ? "需要允许显示窗口" : "窗口画面暂不可用"}</strong>
+        <p>{phase === "stopped" ? "点击上方「打开应用」即可继续使用。" : error || "请按照上方提示完成设置。"}</p>
+      </div>}
       {image && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
         onLoad={e => {
           const img = e.currentTarget;
+          if (!browser && !decoded.current && !hasWindowContent(img, startupSample)) {
+            frame.current = null;
+            if (waiting.current !== null) setPhase("waiting-window");
+            // Release push backpressure so the first painted frame can arrive.
+            image.acknowledge?.();
+            return;
+          }
           const width = image.width || img.naturalWidth;
           const height = image.height || img.naturalHeight;
           img.style.setProperty("--frame-width", width + "px");
           img.style.setProperty("--frame-aspect", width / height);
           frame.current = { window: image.window, pid: image.pid, geometry: image.geometry, surface: browser ? "browser" : undefined };
           matchWindowBackground(img, pane.current, backgroundSample);
+          decoded.current = true;
+          waiting.current = null; setWaitingSince(null); setPhase("ready"); setError("");
           image.acknowledge?.();
         }}
-        onError={() => { frameConnection.current?.close(); frameConnection.current = null; frame.current = null; setImage(null); setError("窗口画面无法解码，请重新连接。"); }}
+        onError={() => { frameConnection.current?.close(); frameConnection.current = null; frame.current = null; setImage(null); windowFailure("decode_failed", "窗口画面无法解码，请重新连接。"); }}
         />}
     </div>
   </section>;
