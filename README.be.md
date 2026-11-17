@@ -117,15 +117,11 @@ macOS і падпісаныя версіі Windows абнаўляюцца пра
 
 Праект імкліва развіваецца. Далучайцеся да групы супольнасці, каб падзяліцца водгукамі; вітаюцца супрацоўнікі супольнасці.
 
-<p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a>
-  <br />QQ group · 710792821
-</p>
+| QQ group · 710792821 | WeChat |
+| :---: | :---: |
+| <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a> | <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a> |
 
-<p align="center">
-  <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a>
-  <br />WeChat
-</p>
+[Telegram](https://t.me/claude_cage)
 
 ## Паходжанне і ліцэнзаванне
 

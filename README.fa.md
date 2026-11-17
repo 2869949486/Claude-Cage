@@ -117,15 +117,11 @@ macOS و نسخه‌های امضاشدهٔ Windows از پراکسی انتخا
 
 این پروژه به سرعت در حال پیشرفت است. برای به اشتراک گذاشتن بازخورد به گروه جامعه بپیوندید. از نگهبانان جامعه استقبال می شود.
 
-<p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a>
-  <br />QQ group · 710792821
-</p>
+| QQ group · 710792821 | WeChat |
+| :---: | :---: |
+| <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a> | <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a> |
 
-<p align="center">
-  <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a>
-  <br />WeChat
-</p>
+[Telegram](https://t.me/claude_cage)
 
 ## مبدا و مجوز
 

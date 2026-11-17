@@ -117,15 +117,11 @@ macOS နှင့် လက်မှတ်ထိုးထားသော Window
 
 ပရောဂျက်က အရှိန်အဟုန်နဲ့ တိုးတက်နေတယ်။ တုံ့ပြန်ချက်မျှဝေရန် ကွန်မြူနတီအဖွဲ့သို့ ဝင်ရောက်ပါ။ ရပ်ရွာထိန်းသိမ်းသူ များကို ကြိုဆိုပါတယ်။
 
-<p align="center">
-  <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a>
-  <br />QQ group · 710792821
-</p>
+| QQ group · 710792821 | WeChat |
+| :---: | :---: |
+| <a href="assets/community-qq.png"><img src="assets/community-qq.png" alt="QQ group · 710792821" width="240" /></a> | <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a> |
 
-<p align="center">
-  <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a>
-  <br />WeChat
-</p>
+[Telegram](https://t.me/claude_cage)
 
 ## မူရင်းနှင့်လိုင်စင်
 
