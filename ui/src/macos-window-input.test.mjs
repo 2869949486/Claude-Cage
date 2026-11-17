@@ -144,6 +144,7 @@ test("a frame change rejects queued input and disposal releases only its connect
   await gate;
   await assert.rejects(drained, /输入窗口已变化/);
   assert.deepEqual(f.calls.map(call => call.action), ["input-reset"]);
+  assert.equal(f.errors[0]?.code,"window_changed","recovery must retain the structured error code");
   f.input.dispose();
   const count = f.calls.length;
   f.pointer("pointerdown");

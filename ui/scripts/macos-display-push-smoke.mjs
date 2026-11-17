@@ -94,6 +94,7 @@ try {
   await page.evaluate(() => { window.cageWindowVisible = true; window.dispatchEvent(new Event("cage-window-visibility")); });
   await until(() => subscriptions.length > hiddenSubscriptions);
   await page.waitForFunction(() => document.querySelector(".mac-claude-frame img")?.naturalWidth === 800);
+  assert.equal(actions.filter(action => action === "launch").length,2,"returning to the view must restore application focus");
   assert.deepEqual(errors, []);
   console.log("Binary push, decode acknowledgements, independent input, resize, blob cleanup, hide and resume passed.");
 } finally { await browser.close(); }
