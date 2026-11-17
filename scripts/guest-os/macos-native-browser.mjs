@@ -8,6 +8,7 @@ import path from "node:path";
 import { browserCallback, browserSettingsInputs, nativeBrowserDispatch, windowRequest } from "./macos-browser-window.mjs";
 import { createTailnetClient } from "./tailnet-client.mjs";
 import { relayMacOSBrowser, serveMacOSBrowser } from "./macos-browser-service.mjs";
+import { existsSync } from "node:fs";
 import { lstat, readFile } from "node:fs/promises";
 import { checkedBrowserProfile } from "./browser-protocol.mjs";
 
@@ -96,7 +97,7 @@ if (process.argv[2] !== "--service") {
     try { await writeFile(file, value, { flag: "wx", mode: 0o600 }); }
     catch (error) { if (error.code !== "EEXIST" || JSON.stringify(checkedBrowserProfile(JSON.parse(await readFile(file, "utf8")))) !== value) throw error; }
   };
-  const dispatch = nativeBrowserDispatch({ settingsInputs: info => browserSettingsInputs(info, path.join(data, "Browser")), window: (action, fields, signal) => windowRequest(socket, action, fields, signal), editor: openEditor, tailnet, profile });
+  const dispatch = nativeBrowserDispatch({ privateLogin: () => !existsSync(path.join(data,"reuse-claude-login")), settingsInputs: info => browserSettingsInputs(info, path.join(data, "Browser")), window: (action, fields, signal) => windowRequest(socket, action, fields, signal), editor: openEditor, tailnet, profile });
   const close = async () => {
     for (const { child } of editors.values()) child.kill();
     tailnet.close();

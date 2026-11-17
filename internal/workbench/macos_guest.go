@@ -121,6 +121,12 @@ func (s *Server) checkMacOSGuest(ctx context.Context) error {
 	if !s.macSetupPending() {
 		probe += ` && [[ " $(id -Gn) " != *" admin "* ]]`
 	}
+	s.mu.Lock()
+	syncLogin, reuse := !s.ready, s.preferences.ReuseClaudeLogin
+	s.mu.Unlock()
+	if syncLogin && !s.macSetupPending() {
+		probe += " && ( " + macLoginPreferences(reuse) + " )"
+	}
 	if _, err := s.guest(ctx, probe); err != nil {
 		return errors.New("无法以已绑定的普通用户连接到这台虚拟 Mac，请检查客机身份和 SSH 登录")
 	}

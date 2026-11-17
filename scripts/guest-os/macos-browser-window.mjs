@@ -136,7 +136,7 @@ export async function browserSettingsInputs(info, profile) {
     prefs.intl ?? null, local.intl ?? null]);
 }
 
-export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs, profile }) {
+export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs, profile, privateLogin = () => true }) {
   let homepage, observed, focusSequence = 0, sequence = 1;
   let lastEventStatus, sampledAt = 0;
   const capabilities = { nativeWindow: true, login: true, editor: true };
@@ -224,7 +224,11 @@ export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs,
       }
       const url = webURL(input.url);
       if (url.protocol !== "https:" || !officialLoginHosts.has(url.host)) throw failure("invalid_input", "仅可打开官方登录地址");
-      await window("launch", { login: input.login, url: url.href }, signal);
+      const isolated = input.private ?? privateLogin();
+      if (input.account && !/^[a-f0-9]{24}$/.test(input.account)) throw failure("invalid_input", "授权账号无效");
+      const binding = isolated || input.account ? {login: input.login} : {};
+      if (!isolated && input.account) binding.login_profile = input.account;
+      await window("launch", { ...binding, url: url.href }, signal);
       focusSequence = ++sequence;
       lastEventStatus = undefined;
       return { id: tabID };

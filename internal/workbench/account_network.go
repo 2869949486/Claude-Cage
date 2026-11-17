@@ -44,6 +44,12 @@ func (s *Server) boundGuestAccount(id, subject string) (*claudeAccount, error) {
 	if err != nil {
 		return nil, err
 	}
+	if id != "" && id == list.PendingLogin && list.PendingProxyNode != "" {
+		if !s.accountDesktopsSupported() {
+			return nil, errUnsupportedAccountNetwork
+		}
+		return &claudeAccount{ID: id, ProxyNodeID: list.PendingProxyNode}, nil
+	}
 	for i := range list.Accounts {
 		a := &list.Accounts[i]
 		if a.guestID() == id && a.ProxyNodeID != "" && (id != "default" || subject == "" || claudeIdentityHash(a.Email, a.Organization) == subject) {
@@ -89,7 +95,7 @@ func (s *Server) ensureAccountNetwork(ctx context.Context, id, node string) erro
 	ns := "net-" + id
 	remote := "/tmp/socket-" + randomToken()[:24]
 	cmdline := "set -eu; sudo /bin/bash -c " + shellescape.Quote(setupAccountNetwork) + " -- " + id +
-		"; exec sudo ip netns exec " + ns + " setpriv --reuid=\"$(id -u)\" --regid=\"$(id -g)\" --init-groups python3 -I -c " + shellescape.Quote(accountRelay) + " " + remote
+		"; exec sudo ip netns exec " + ns + " setpriv --reuid=\"$(id -u)\" --regid=\"$(id -g)\" --init-groups python3 -I -c " + shellescape.Quote(accountRelay) + " " + remote + " /run/account-routes/" + id + "/browser.sock"
 	life, cancel := context.WithCancel(s.lifetimeContext())
 	cmd := s.sshCommandWithForwarding(life, "-T", "-o", "ExitOnForwardFailure=yes", "-R", remote+":"+target, s.sshTarget(), "--", "/bin/bash -c "+shellescape.Quote(cmdline))
 	in, err := cmd.StdinPipe()
@@ -165,7 +171,7 @@ func (s *Server) accountForRoute(id string) (claudeAccount, error) {
 		if list.PendingLogin != id {
 			return claudeAccount{}, errors.New("账号记录已变化，请重新选择账号")
 		}
-		return claudeAccount{}, nil
+		return claudeAccount{ID: id, ProxyNodeID: list.PendingProxyNode}, nil
 	}
 	return *a, nil
 }
@@ -174,8 +180,14 @@ func (s *Server) accountForRoute(id string) (claudeAccount, error) {
 // preserving PTYs, supervision and the official CLI's complete process tree.
 func (s *Server) routeAccountCommand(ctx context.Context, id, command string) (string, error) {
 	a, err := s.accountForRoute(id)
-	if err != nil || a.ProxyNodeID == "" {
-		return command, err
+	if err != nil {
+		return "", err
+	}
+	if a.Source != "" {
+		command = "export CAGE_LOGIN_OWNER=" + a.ID + "; " + command
+	}
+	if a.ProxyNodeID == "" {
+		return command, nil
 	}
 	return s.routeSelected(ctx, a, command)
 }
@@ -197,6 +209,36 @@ for endpoint in /run/systemd/resolve/io.systemd.Resolve /run/nscd/socket /run/db
 done
 exec setpriv --reuid="$SUDO_UID" --regid="$SUDO_GID" --init-groups /bin/bash -c 'script=$ROUTE_COMMAND; unset ROUTE_COMMAND SUDO_COMMAND SUDO_UID SUDO_GID SUDO_USER; exec /bin/bash -c "$script"'`
 	return "exec env ROUTE_COMMAND=" + shellescape.Quote(command) + " sudo --preserve-env=ROUTE_COMMAND,HOME,USER,LOGNAME,TERM " + namespace + " /bin/bash -c " + shellescape.Quote(enter)
+}
+
+func (s *Server) setLoginDraftNode(id, node string) error {
+	m := &s.claudeAccounts
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	list, err := s.loadClaudeAccounts()
+	if err != nil {
+		return err
+	}
+	if id == "" || list.PendingLogin != id {
+		return errors.New("新增账号授权已结束，请刷新")
+	}
+	if node == list.PendingProxyNode {
+		return nil
+	}
+	if s.claudeLoginActive(id) {
+		return errors.New("已有授权正在进行，请先完成或取消")
+	}
+	if node != "" {
+		store, err := managedproxy.Load(s.profile)
+		if err != nil {
+			return err
+		}
+		if _, ok := store.Find(node); !validClaudeID(node) || !ok {
+			return errors.New("代理节点已移除，请刷新")
+		}
+	}
+	list.PendingProxyNode = node
+	return s.saveClaudeAccounts(list)
 }
 
 // The caller holds the operation and account locks, also used by terminal admission.
@@ -229,7 +271,15 @@ func (s *Server) setAccountNode(list *claudeAccountList, in claudeAccountInput) 
 	if s.vmRunning() {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
-		state, err := s.guest(ctx, fmt.Sprintf("systemctl show --property=ActiveState --value desktop-%s.service", a.ID))
+		id := a.DesktopInstanceID
+		if id == "" {
+			id = a.ID
+		} // Directories created by earlier workbenches.
+		unit := "desktop-" + id + ".service"
+		if id == "default" {
+			unit = "cage-claude-desktop.service"
+		}
+		state, err := s.guest(ctx, fmt.Sprintf("systemctl show --property=ActiveState --value %s", unit))
 		if err != nil {
 			return errors.New("无法确认账号 Desktop 状态，暂未更改出口")
 		}

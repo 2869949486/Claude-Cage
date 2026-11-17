@@ -134,7 +134,7 @@ func (s *Server) prepareMobileLaunch(record *mobileRecord) (claudeSelection, str
 		if account == nil || !account.Enabled || account.Status != "ready" || account.guestID() != selection.GuestID || claudeIdentityHash(account.Email, account.Organization) != selection.Subject {
 			return selection, "", empty, errors.New("原会话的 Claude 账号已停用或发生变化")
 		}
-		if _, err = s.terminals.existingClaudeLogin(selection.ID, false); err != nil {
+		if _, err = s.terminals.existingProfileLogin(selection, false); err != nil {
 			return selection, "", empty, err
 		}
 	}

@@ -204,7 +204,7 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 			}
 		}
 	}
-	if kind != "claude-login" {
+	if kind != "claude-login" && input.afterLogin == nil {
 		if err := s.terminals.canStart(); err != nil {
 			return nil, err
 		}
@@ -213,6 +213,9 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 		return nil, errors.New("Windows 原生共享会话支持 claude 或 ccs 配置名启动命令")
 	}
 	workspace := s.workspace()
+	if input.loginDraft != nil {
+		workspace = input.Workspace
+	}
 	var project *windowsProjectBinding
 	var err error
 	if s.windowsGuest.Remote() {
@@ -235,7 +238,9 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 	var conversation *mobileRecord
 	if kind != "shell" {
 		login := kind == "claude-login"
-		if record != nil && record.Terminal {
+		if input.loginDraft != nil {
+			selection = *input.loginDraft
+		} else if record != nil && record.Terminal {
 			selection = record.Account
 		} else {
 			selection, err = s.selectTerminalClaudeAccount(command, input.ClaudeAccountID, login, workspace)
@@ -243,23 +248,28 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 		if err != nil {
 			return nil, err
 		}
-		if selection.ID != "" {
+		if selection.ID != "" || input.loginDraft != nil {
 			if _, err := s.boundGuestAccount(selection.GuestID, selection.Subject); err != nil {
 				return nil, err
 			}
-			if !validClaudeID(selection.ID) || !validClaudeGuestID(selection.GuestID) || login && selection.GuestID == "default" {
+			if (input.loginDraft == nil && !validClaudeID(selection.ID)) || !validClaudeGuestID(selection.GuestID) || login && selection.GuestID == "default" {
 				return nil, errors.New("Claude 账号 ID 无效")
 			}
-			if login && s.mobileCLI.activeAccounts()[selection.ID] > 0 {
+			if login && selection.ID != "" && s.mobileCLI.activeAccounts()[selection.ID] > 0 {
 				return nil, errors.New("请先结束该账号正在执行的移动 CLI 轮次，再重新登录")
 			}
-			if existing, conflict := s.terminals.existingClaudeLogin(selection.ID, login); existing != nil || conflict != nil {
-				return existing, conflict
+			if selection.ID != "" {
+				if existing, conflict := s.terminals.existingProfileLogin(selection, login); existing != nil || conflict != nil {
+					if existing != nil && input.loginDraft != nil {
+						return nil, errors.New("请先完成此账号正在进行的登录")
+					}
+					return existing, conflict
+				}
 			}
 			if !login && selection.Subject == "" {
 				return nil, errors.New("Claude 账号状态已变化，请重试")
 			}
-			if login {
+			if login && input.loginDraft == nil {
 				finished = func() {
 					ctx, cancel := context.WithTimeout(s.lifetimeContext(), 12*time.Second)
 					defer cancel()
@@ -282,7 +292,7 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 			if len(parts) == 2 && parts[0] == "ccs" {
 				request["ccs_profile"] = parts[1]
 			}
-			payload, found, err := s.prepareTerminalConversation(workspace, selection, input.sharedID)
+			payload, found, err := s.prepareTerminalConversation(workspace, selection, input.sharedID, input.AutoHandoff)
 			if err != nil {
 				return nil, err
 			}
@@ -327,7 +337,7 @@ func (s *Server) createWindowsCLITerminal(input terminalRequest) (*terminalSessi
 			return nil, errMobileLocked
 		}
 	}
-	session, err := s.terminals.startSessionWithPTY(cmd, workspace, input.Kind, selection, finished, func() (terminalPTY, error) { return startWindowsGuestTerminalRequest(cmd, request) })
+	session, err := s.terminals.startReplacing(input.afterLogin, input.BackgroundLogin, cmd, workspace, input.Kind, selection, finished, func() (terminalPTY, error) { return startWindowsGuestTerminalRequest(cmd, request) })
 	if input.requestContext != nil {
 		s.account.mu.Unlock()
 	}

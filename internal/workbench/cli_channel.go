@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"al.essio.dev/pkg/shellescape"
@@ -27,20 +28,27 @@ var cliResumePrompt string
 //go:embed claude_account_resume.md
 var claudeAccountResumePrompt string
 
-var cliChannelEncoded = func() string {
+// Continuation instructions travel over the existing control RPC only when
+// resuming. They do not consume the Windows SSH command-line budget.
+func resumeChannelRequest(record *mobileRecord) map[string]any {
+	return map[string]any{"cli_id": record.CLIID, "connection": record.Connection, "action": "resume",
+		"resume_text": cliResumePrompt, "account_resume_text": claudeAccountResumePrompt}
+}
+
+var cliChannelEncoded = sync.OnceValue(func() string {
 	var helper strings.Builder
 	for _, line := range strings.Split(cliChannelHelper, "\n") {
 		if strings.TrimSpace(line) != "" && !strings.HasPrefix(strings.TrimSpace(line), "#") {
 			helper.WriteString(line + "\n")
 		}
 	}
-	bundle := []byte(strings.Join([]string{helper.String(), cliResumePrompt, claudeAccountResumePrompt}, "\x00"))
+	bundle := []byte(helper.String())
 	var compressed bytes.Buffer
 	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
 	_, _ = writer.Write(bundle)
 	_ = writer.Close()
 	return cliTransport85(compressed.Bytes())
-}()
+})
 
 // Python's RFC 1924 base85 alphabet has no single quote. It fits the compressed
 // helper within Windows' command limit without expanding shell quoting.
@@ -68,45 +76,45 @@ func cliTransport85(data []byte) string {
 }
 
 type terminalConversation struct {
-	NativeCCSUnverified bool         `json:"native_ccs_unverified"`
-	AccountFailure      string       `json:"account_failure"`
-	ResumePending       bool         `json:"resume_pending"`
-	NativeHistory       bool         `json:"native_history"`
-	CLIID               string       `json:"cli_id"`
-	Config              string       `json:"config"`
-	Connection          string       `json:"connection"`
-	Workspace           string       `json:"workspace"`
-	Title               string       `json:"title"`
-	UpdatedAt           float64      `json:"updated_at"`
-	Turns               []mobileTurn `json:"turns"`
-	CanSend             bool         `json:"can_send"`
-	ChannelReady        bool         `json:"channel_ready"`
-	HasHistory          bool         `json:"has_history"`
-	Running             bool         `json:"running"`
-	ClaudeDesktop       bool         `json:"claude_desktop"`
-	Active              bool         `json:"active"`
-	ConnectionNotice    string       `json:"connection_notice"`
-	HistoryTruncated    bool         `json:"history_truncated"`
+	LoginHint           codeLoginHint `json:"login_hint"`
+	NativeCCSUnverified bool          `json:"native_ccs_unverified"`
+	AccountFailure      string        `json:"account_failure"`
+	ResumePending       bool          `json:"resume_pending"`
+	NativeHistory       bool          `json:"native_history"`
+	CLIID               string        `json:"cli_id"`
+	Config              string        `json:"config"`
+	Connection          string        `json:"connection"`
+	Workspace           string        `json:"workspace"`
+	Title               string        `json:"title"`
+	UpdatedAt           float64       `json:"updated_at"`
+	Turns               []mobileTurn  `json:"turns"`
+	CanSend             bool          `json:"can_send"`
+	ChannelReady        bool          `json:"channel_ready"`
+	HasHistory          bool          `json:"has_history"`
+	Running             bool          `json:"running"`
+	ClaudeDesktop       bool          `json:"claude_desktop"`
+	Active              bool          `json:"active"`
+	ConnectionNotice    string        `json:"connection_notice"`
+	HistoryTruncated    bool          `json:"history_truncated"`
 }
 
 func cliChannelCommand(mode, argument string) string {
 	// Versioned helpers let an open terminal keep its original protocol while a
 	// rebuilt host begins new sessions. No account configuration is overwritten.
-	bootstrap := fmt.Sprintf(`import base64,gzip,os,pathlib,sys,tempfile
+	digest := sha256.Sum256([]byte(cliChannelHelper + cliResumePrompt + claudeAccountResumePrompt))
+	bootstrap := fmt.Sprintf(`import base64,os,pathlib,sys,tempfile
 d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
 d.mkdir(parents=True,exist_ok=True,mode=0o700)
 n="%x"
-a=gzip.decompress(base64.b85decode("%s")).decode().split("\0")
-for s,v in zip((".py",".resume.md",".account-resume.md"),a):
- p=d/(n+s)
- if not p.exists():
-  with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
-   f.write(v.encode())
-   t=f.name
-  os.replace(t,p)
 p=d/(n+".py")
+if not p.is_file():
+ import gzip
+ with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
+  f.write(gzip.decompress(base64.b85decode("%s")))
+  t=f.name
+ os.replace(t,p)
 os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
-`, sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt)), cliChannelEncoded)
+`, digest, cliChannelEncoded())
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
 }
 
@@ -272,6 +280,10 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 }
 
 func (s *Server) terminalConversationView(ctx context.Context, id string) (mobileSession, error) {
+	return s.readTerminalConversation(ctx, id, nil)
+}
+
+func (s *Server) readTerminalConversation(ctx context.Context, id string, observation *codeLoginObservation) (mobileSession, error) {
 	s.conversationMu.Lock()
 	defer s.conversationMu.Unlock()
 	m := &s.mobileCLI
@@ -281,8 +293,12 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 	if err != nil {
 		return mobileSession{}, err
 	}
+	sampledCLI, sampledConnection := record.CLIID, record.Connection
 	var current terminalConversation
 	input := map[string]any{"cli_id": record.CLIID, "config": record.GuestConfig, "connection": record.Connection, "account": record.Account.GuestID}
+	if observation != nil && record.Launcher == "claude" {
+		input["login_stamp"] = observation.stamp
+	}
 	if err := s.windowsConversationInput(record, input); err != nil {
 		return mobileSession{}, err
 	}
@@ -300,9 +316,13 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 		if record.Switch != nil && record.Switch.Phase == "starting" && !current.Running {
 			if owner := s.terminals.get(record.TerminalID); owner == nil || !owner.ownsConversation() {
 				m.mu.Lock()
-				record.Switch.Phase, record.Switch.Error = "prepared", "目标账号未建立会话，请重试交接"
-				record.changed()
-				err = writePrivate(mobileRecordPath(s.profile, id), record)
+				record, err = m.record(s.profile, id)
+				if err == nil && record.CLIID == sampledCLI && record.Connection == sampledConnection &&
+					record.Switch != nil && record.Switch.Phase == "starting" {
+					record.Switch.Phase, record.Switch.Error = "prepared", "目标账号未建立会话，请重试交接"
+					record.changed()
+					err = writePrivate(mobileRecordPath(s.profile, id), record)
+				}
 				m.mu.Unlock()
 				if err != nil {
 					return mobileSession{}, err
@@ -331,6 +351,10 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 	}
 	if record.Deleted {
 		return mobileSession{}, os.ErrNotExist
+	}
+	// A handoff can replace the underlying CLI while its previous view is in flight.
+	if record.CLIID != sampledCLI || record.Connection != sampledConnection {
+		return record.snapshot(), nil
 	}
 	before, _ := json.Marshal(record)
 	record.Turns = adoptedMobileTurns(record.LegacyTurns, current.Turns)
@@ -373,6 +397,10 @@ func (s *Server) terminalConversationView(ctx context.Context, id string) (mobil
 		if m.catalog != nil {
 			m.catalog[id] = record.summary()
 		}
+	}
+	if observation != nil {
+		observation.current = current.LoginHint
+		observation.connection = current.Connection
 	}
 	return record.snapshot(), nil
 }
@@ -456,7 +484,7 @@ func (s *Server) terminalConversationAction(ctx context.Context, id string, inpu
 	return s.terminalConversationView(ctx, id)
 }
 
-func (s *Server) prepareTerminalConversation(workspace string, selection claudeSelection, existing string) (string, *mobileRecord, error) {
+func (s *Server) prepareTerminalConversation(workspace string, selection claudeSelection, existing string, autoHandoff *bool) (string, *mobileRecord, error) {
 	directories, err := s.projectAdditionalDirectories(workspace)
 	if err != nil {
 		return "", nil, err
@@ -498,6 +526,12 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 	record.Terminal, record.Account, record.Launcher = true, selection, launcher
 	if record.SwitchPolicy == "" {
 		record.SwitchPolicy = list.Scheduling.SwitchPolicy
+		if existing == "" && autoHandoff != nil {
+			record.SwitchPolicy = "wait"
+			if *autoHandoff {
+				record.SwitchPolicy = "allow"
+			}
+		}
 		if a := list.find(selection.ID); a != nil {
 			record.AccountLabel = a.Label
 		}

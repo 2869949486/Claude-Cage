@@ -260,6 +260,15 @@ function App() {
     if (status?.ready && mixedBrowserId && mixedBrowserId !== browser.active)
       api("/browser/activate", { id: mixedBrowserId }).catch(error => setToast(error.message));
   }, [mixedBrowserId, status?.ready, browser.active]);
+  const accountLogin = useRef("");
+  const tabsBeforeLogin = useRef("");
+  const [enrollmentID, setEnrollmentID] = useState("");
+  const terminalAccounts = [...new Set(tabs.map(t=>t.claude_account_id).filter(Boolean))].sort().join(",");
+  useEffect(() => {
+    if (terminalAccounts && terminalAccounts.split(",").some(id => !claudeProfiles.accounts?.some(a => a.id === id))) {
+      void claudeProfiles.load();
+    }
+  }, [terminalAccounts, claudeProfiles.load]);
   const finishedLogins = tabs.filter((tab) => tab.terminalKind === "claude-login" && tab.closed).map((tab) => tab.id).sort().join(",");
   useEffect(() => {
     if (finishedLogins) claudeProfiles.load();
@@ -267,7 +276,7 @@ function App() {
   const notify = (text) => setToast(text);
   const accountDesktops = useAccountDesktops(
     () => {setManagementPage(""); setHome(false); setDesktopOpen(true);},
-    () => {setDesktopOpen(false); setHome(true);}, notify, (...args) => confirm(...args));
+    () => {setDesktopOpen(false); setHome(true);}, notify, (...args) => confirm(...args), desktopOpen && running && status?.account_desktops_supported && !managementPage, status?.desktop_catalog_revision);
   const viewingAccountDesktop = desktopOpen && accountDesktops.panes.length > 0;
   const audio = useAudioOutput(running && !viewingAccountDesktop && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
   useEffect(() => {
@@ -483,11 +492,12 @@ function App() {
       previous?.anchor === anchor ? null : { path, anchor },
     );
   };
-  const createTerminal = async (path, kind, loginAccountId) => {
+  const createTerminal = async (path, kind, accountId, autoHandoff) => {
     setTerminalChoice(null);
     const result = await api("/terminals", {
       workspace: path, kind,
-      ...(loginAccountId && { claude_account_id: loginAccountId }),
+      ...(accountId && { claude_account_id: accountId }),
+      ...(autoHandoff !== undefined && { auto_handoff: autoHandoff }),
     });
     showTerminal(result);
     sessionsChanged();
@@ -495,6 +505,18 @@ function App() {
         !claudeProfiles.accounts?.some((profile) => profile.id === result.claude_account_id)) {
       claudeProfiles.load();
     }
+  };
+  const authorizeAccount = async (id, proxyNode) => {
+    browserDismissed.current = false;
+    const result = await api("/terminals", {
+      kind: "claude-login", background_login: true,
+      ...(id ? { claude_account_id: id } : { login_proxy_node: proxyNode || "" }),
+    });
+    accountLogin.current = result.id;
+    setEnrollmentID(result.id);
+    const tab = browserSnapshot.current?.tabs?.find(t => t.id === browserSnapshot.current.active && t.login);
+    if (tab) showBrowserResult(tab);
+    return result.id;
   };
   const showTerminal = result => {
     setTailnetLogin(null);
@@ -560,9 +582,10 @@ function App() {
     newTerminal(contentWorkspace, event?.currentTarget?.tagName === "BUTTON"
       ? event.currentTarget : terminalTrigger.current);
   const terminalMenuAt = (location) => terminalChoice?.anchor?.dataset.terminalLocation === location && (
-    <TerminalMenu choice={terminalChoice} busy={busy}
+    <TerminalMenu choice={terminalChoice} busy={busy} profiles={claudeProfiles}
+      usesOfficialCLI={(settings?.claude_terminal_command?.trim() || "claude") === "claude"}
       onClose={() => setTerminalChoice(null)}
-      onSelect={(kind) => createTerminal(terminalChoice.path, kind).catch((e) => notify(e.message))} />
+      onSelect={(kind, accountId, autoHandoff) => createTerminal(terminalChoice.path, kind, accountId, autoHandoff).catch((e) => notify(e.message))} />
   );
   const openEditor = async (path = workspace) => {
     if (!browserAvailable || !editorAvailable) {
@@ -758,9 +781,20 @@ function App() {
           if (!live) return;
           browserSnapshot.current = b;
           setBrowser(b);
+          const enrollment = t.find(item => item.background_login);
+          if (enrollment) {
+            accountLogin.current = enrollment.id;
+            setEnrollmentID(enrollment.id);
+          } else if (accountLogin.current) {
+            accountLogin.current = "";
+            setEnrollmentID("");
+            void claudeProfiles.load();
+            if (tabsBeforeLogin.current === activeRef.current) setManagementPage("claude-accounts");
+            tabsBeforeLogin.current = "";
+          }
           const all = [
             ...b.tabs,
-            ...t.map((item) => ({
+            ...t.filter(item => !item.background_login).map((item) => ({
               ...item,
               id: "terminal:" + item.id,
               sessionId: item.id,
@@ -777,6 +811,7 @@ function App() {
               ...all.filter((item) => !previous.some((p) => p.id === item.id)),
             ];
           });
+          if (b.tabs.some(t => t.login && t.id === b.active) && !browserIds.current.has(b.active)) setManagementPage("");
           if (!browserDismissed.current && initialized.current && b.active && b.active !== activeRef.current && !browserIds.current.has(b.active)) {
             setDesktopOpen(false);
             setHome(false);
@@ -885,8 +920,12 @@ function App() {
           ...b.tabs.filter((t) => !previous.some((p) => p.id === t.id)),
         ];
       });
-      const focusLogin = b.focus && b.tabs.some(tab => tab.native_window && tab.login);
-      if (focusLogin) browserDismissed.current = false;
+      const focusLogin = b.focus && b.tabs.some(tab => tab.id === b.active && tab.login);
+      if (focusLogin) {
+        if (accountLogin.current) tabsBeforeLogin.current = b.active;
+        browserDismissed.current = false;
+        setManagementPage("");
+      }
       if (!browserDismissed.current && b.active && b.focus) {
         setDesktopOpen(false);
         setHome(false);
@@ -1564,9 +1603,9 @@ function App() {
                     const nativeGuest = ["macos", "windows-11"].includes(status.guest_system);
                     if (nativeGuest && !await confirm({ title: "更新环境组件？", body: "更新会重新连接浏览器和显示组件，请先保存工作。设备身份、公钥和个人数据保留。", confirm: "更新组件" })) return;
                     await action(nativeGuest ? "/environment/update" : "/tailscale/install", {});
-                  }} /> : <ClaudeAccountsPanel proxySources={proxy?.sources || []} desktopNetwork={status.account_desktops_supported} store={claudeProfiles} tabs={tabs} onConfirm={confirm}
+                  }} /> : <ClaudeAccountsPanel guestSystem={status.guest_system} proxySources={proxy?.sources || []} desktopNetwork={status.account_desktops_supported} store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
-                  login={(id) => createTerminal(workspace, "claude-login", id)} />}
+                  login={authorizeAccount} enrollmentID={enrollmentID} cancelLogin={() => api("/terminals/"+enrollmentID, undefined, "DELETE")} />}
               </div>
             </main>
           )}
@@ -1648,13 +1687,9 @@ function App() {
                     <div className="pane-body">
                       <TerminalView
                         session={{ ...tab, id: tab.sessionId }}
-                        onLoginTab={async result => {
-                          if (result.desktop) {
-                            if (await accountDesktops.act(result.desktop, "start", true)) {
-                              await api(`/terminals/${tab.sessionId}/login-link`, { url: result.url, open: true });
-                            }
-                          } else showBrowserResult({ id: result.id, kind: "web", login: true, incognito: true, title: "账号授权" });
-                        }}
+                        onLoginTab={result => showBrowserResult({
+                          id: result.id, kind: "web", login: true, incognito: result.incognito !== false, title: "账号授权",
+                        })}
                         onControls={(control) =>
                           control
                             ? terminalControls.current.set(tab.id, control)

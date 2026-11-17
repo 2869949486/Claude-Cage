@@ -17,7 +17,7 @@ const moduleURL = file => process.env.CAGE_BROWSER_TEST_MODULE_DIRECTORY ? pathT
 const { BrowserClipboard } = await import(moduleURL("browser-clipboard.mjs"));
 const { UploadManager } = await import(moduleURL("browser-uploads.mjs"));
 const { DownloadManager } = await import(moduleURL("browser-downloads.mjs"));
-const { browserCookies } = await import(moduleURL("browser-cookies.mjs"));
+const { browserCookies, AccountLoginCookies } = await import(moduleURL("browser-cookies.mjs"));
 const { BrowserExtensions } = await import(moduleURL("browser-extensions.mjs"));
 const { BrowserVault } = await import(moduleURL("browser-vault.mjs"));
 
@@ -85,7 +85,7 @@ async function fixture(t, configured = {}, overrides = {}) {
     platform: process.env.CAGE_BROWSER_TEST_PLATFORM,
     testing: true, headless: process.env.CAGE_BROWSER_TEST_HEADED !== "1", directory: path.join(root, "controller"), downloadDirectory: path.join(root, "saved"), executablePath,
     chromium: { launchPersistentContext: async (directory, options) => { launchOptions = options; return browserContext = await chromium.launchPersistentContext(directory, options); } },
-    modules: { BrowserClipboard, UploadManager, DownloadManager, browserCookies, BrowserVault, ...(process.env.CAGE_BROWSER_TEST_EXTENSIONS === "1" ? { BrowserExtensions } : {}) }, displayScale: 2,
+    modules: { BrowserClipboard, UploadManager, DownloadManager, browserCookies, AccountLoginCookies, BrowserVault, ...(process.env.CAGE_BROWSER_TEST_EXTENSIONS === "1" ? { BrowserExtensions } : {}) }, displayScale: 2,
     splitDirectory: process.env.CAGE_BROWSER_TEST_SPLIT_DIRECTORY,
     editor: async workspace => ({ url: `http://${workspace.slice(0, 16)}.cage-editor.localhost:${server.address().port}/editor-` + workspace }),
     ...overrides,
@@ -1158,4 +1158,29 @@ integration("a late native resize during startup retains the last valid image", 
   assert(stats.invalid_frames >= 2);
   assert.equal(stats.fallbacks, 0);
   assert.equal(stats.screenshots, 0);
+});
+
+integration("named regular authorization restores only that account after a browser restart", async t => {
+  const f = await fixture(t);
+  const address = "https://claude.com/cai/oauth/authorize?state=offline";
+  const a = "a".repeat(24), b = "b".repeat(24);
+  const observed = [];
+  async function visit(account, isolated) {
+    await f.call("health", {}, "GET");
+    f.context().browser().once("context", browser => {
+      void browser.route(address, async route => {
+        observed.push((await route.request().allHeaders()).cookie || "");
+        await route.fulfill({ body: "authorization", headers: { "Set-Cookie": "signed=" + account + "; Secure; SameSite=Lax; Path=/" } });
+      });
+    });
+    const reply = await f.call("login-open", { login: account, account, private: isolated, url: address });
+    assert.equal(reply.incognito, isolated);
+    await f.call("login-finish", { login: account });
+  }
+  await visit(a, false);
+  await f.restart();
+  await visit(b, false);
+  await visit(a, true);
+  await visit(a, false);
+  assert.deepEqual(observed, ["", "", "", "signed=" + a]);
 });

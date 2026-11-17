@@ -199,25 +199,36 @@ final class MacChromeWindow {
                 return
             }
             let id = UUID().uuidString
-            let directory = temporaryProfile(id)
+            let directory: URL
             let entry = loginRegistry.appendingPathComponent(id)
-            try fm.createDirectory(at: loginRegistry, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             let process: Process
-            do {
-                try Data().write(to: entry, options: .withoutOverwriting)
-                process = try start(["--user-data-dir=" + directory.path, "--no-first-run", "--no-default-browser-check", "--incognito", address])
-            } catch { removeTemporaryProfile(directory, entry: entry); throw error }
+            if let account = input.login_profile {
+                guard account.range(of: "^[a-f0-9]{24}$", options: .regularExpression) != nil else { throw Failure(8, "invalid_login") }
+                directory = profile.deletingLastPathComponent().appendingPathComponent("LoginProfiles").appendingPathComponent(account)
+                // The guest browser itself owns and encrypts this profile's cookies.
+                let launched = try start(Self.profileArguments(directory) + [address])
+                process = logins.values.first(where: { $0.directory == directory && $0.process.isRunning })?.process ?? launched
+            } else {
+                directory = temporaryProfile(id)
+                try fm.createDirectory(at: loginRegistry, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                do {
+                    try Data().write(to: entry, options: .withoutOverwriting)
+                    process = try start(["--user-data-dir=" + directory.path, "--no-first-run", "--no-default-browser-check", "--incognito", address])
+                } catch { removeTemporaryProfile(directory, entry: entry); throw error }
+            }
             let expiry = Task { @MainActor [weak self] in
                 do { try await Task.sleep(nanoseconds: 900_000_000_000) } catch { return }
                 self?.finish(login)
             }
             currentLogin = login
             logins[login] = Login(directory: directory, process: process, expiry: expiry)
-            process.terminationHandler = { [weak self] _ in
+            process.terminationHandler = { [weak self] ended in
                 Task { @MainActor in
-                    if self?.logins[login]?.directory == directory { self?.finish(login) }
-                    self?.removeTemporaryProfile(directory, entry: entry)
+                    if let self {
+                        for token in self.logins.keys.filter({ self.logins[$0]?.process === ended }) { self.finish(token) }
+                    }
+                    if input.login_profile == nil { self?.removeTemporaryProfile(directory, entry: entry) }
                 }
             }
             return
@@ -245,7 +256,7 @@ final class MacChromeWindow {
     func finish(_ token: String) {
         guard let login = logins.removeValue(forKey: token) else { return }
         login.expiry.cancel()
-        if login.process.isRunning { login.process.terminate() }
+        if login.process.isRunning && !logins.values.contains(where: { $0.process === login.process }) { login.process.terminate() }
         if currentLogin == token {
             currentLogin = logins.keys.sorted().first
             applications(activeDirectory).first?.activate()

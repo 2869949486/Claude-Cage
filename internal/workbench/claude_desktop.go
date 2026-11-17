@@ -160,8 +160,12 @@ func (s *Server) startClaudeDesktop() error {
 		return err
 	}
 	defer clear(key)
+	scope, err := s.defaultDesktopScope(s.operationContext())
+	if err != nil {
+		return err
+	}
 	script := `test "$(dpkg-query -W -f='${Status}' claude-desktop 2>/dev/null)" = 'install ok installed' || { echo '请先安装 Claude Desktop。'; exit 1; }
-` + cage.ClaudeDesktopProvisionScript()
+` + scope + cage.ClaudeDesktopProvisionScript()
 	if err = s.runDesktopScript(script, 20*time.Second); err != nil {
 		return err
 	}
@@ -173,6 +177,7 @@ func (s *Server) startClaudeDesktop() error {
 	if err = cmd.Run(); err != nil {
 		return executionFailure("打开 Claude Desktop", errors.Join(ctx.Err(), err), s.jobs.snapshot().Log)
 	}
+	s.watchDesktopLogins()
 	return nil
 }
 

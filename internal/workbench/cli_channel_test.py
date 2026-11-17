@@ -68,6 +68,16 @@ class ChannelTests(unittest.TestCase):
             result=channel.prepare_account_switch(request)
             self.assertEqual(Path(result["transcript"]).read_bytes(),original)
             self.assertEqual(channel.prepare_account_switch(request),result)
+        target_config = self.home / ".claude"
+        target_log = self.history(target, self.project, [{"type": "system"}])
+        channel.save(self.root / str(uuid.uuid4()) / "state.json", {
+            "cli_id": target, "config": str(target_config), "resume_transcript": result["transcript"],
+        })
+        pending = channel.view(target_config, target)
+        self.assertFalse(pending["native_history"])
+        self.assertEqual(pending["turns"][0]["prompt"], "perform task")
+        target_log.write_bytes(original)
+        self.assertTrue(channel.view(target_config, target)["native_history"])
         receipt=channel.read_json(Path(result["transcript"]).with_name("receipt.json"))
         self.assertEqual(receipt["requests"],{"accepted":"digest"})
         self.assertEqual(path.read_bytes(),original)

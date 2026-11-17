@@ -179,6 +179,9 @@ func (s *Server) accountAction(w http.ResponseWriter, r *http.Request) {
 		requestError(w, err)
 		return
 	}
+	if action == "unlock" || action == "device-unlock" || action == "recovery-reset" {
+		s.refreshShellLoginWatch()
+	}
 	if action == "lock" || action == "suspend" || action == "recovery-reset" {
 		s.clearBrowserVault(vaultLease)
 	}

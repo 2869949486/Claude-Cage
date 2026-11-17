@@ -91,3 +91,19 @@ func TestBoundAccountProbeUsesSubscriptionAndGuestCapability(t *testing.T) {
 		t.Fatal("native identity discovery used a bound default profile", err)
 	}
 }
+
+func TestPendingLoginProbeKeepsSelectedNodeBeforeEnrollment(t *testing.T) {
+	s := testServer(t)
+	id, node := strings.Repeat("a", 24), strings.Repeat("b", 24)
+	if err := s.saveClaudeAccounts(claudeAccountList{Accounts: []claudeAccount{}, PendingLogin: id, PendingProxyNode: node}); err != nil {
+		t.Fatal(err)
+	}
+	route, err := s.boundGuestAccount(id, "")
+	if err != nil || route == nil || route.ProxyNodeID != node || route.ID != id {
+		t.Fatal("login completion probe lost its draft route", route, err)
+	}
+	other, err := s.boundGuestAccount(strings.Repeat("c", 24), "")
+	if err != nil || other != nil {
+		t.Fatal("unrelated login took draft route", other, err)
+	}
+}

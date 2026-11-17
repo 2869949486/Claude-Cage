@@ -59,7 +59,7 @@ func (s *Server) mutateClaudeAccounts(w http.ResponseWriter, r *http.Request) {
 			requestError(w, viewErr)
 			return
 		}
-		s.startClaudePanelUsage(list, view.Detected)
+		s.startClaudePanelUsage(list)
 		m := &s.claudeAccounts
 		m.mu.Lock()
 		view.UsagePanelRunning = m.panelRunning
@@ -396,7 +396,8 @@ func (s *Server) runClaudeRefresh(parent context.Context, id, guestID string, ca
 			switch {
 			case reading.subject() != "":
 				if existing := list.bySubject(reading.subject()); existing != nil {
-					if existing.Source == "default" {
+					if existing.Source == "default" || existing.CodeUnlinked {
+						existing.CodeUnlinked = false
 						// Keep the identity and terminal labels stable while future
 						// sessions use this independently authenticated directory.
 						existing.Source, existing.ProfileID = "managed", id
@@ -422,22 +423,28 @@ func (s *Server) runClaudeRefresh(parent context.Context, id, guestID string, ca
 						}
 					}
 				} else {
-					list.Accounts = append(list.Accounts, claudeAccount{ID: id, Source: "managed", Label: reading.email(), Enabled: true})
+					list.Accounts = append(list.Accounts, claudeAccount{ID: id, Source: "managed", Label: reading.email(), ProxyNodeID: list.PendingProxyNode})
 					err = list.observe(id, reading, time.Now())
-					notice = "已将登录成功的 Claude 账号加入自动分配"
+					notice = "已保存 Claude 账号，可在创建实例时选择"
 				}
-				list.PendingLogin = ""
+				list.PendingLogin, list.PendingProxyNode = "", ""
 			case finished:
 				notice = "本次登录未完成，没有添加账号"
 				// A new attempt may already be entering this guest profile.
 				// Keep its ID unless terminal admission is certainly idle.
 				if s.op.TryLock() {
 					if !s.claudeLoginActive(id) {
-						list.PendingLogin = ""
+						list.PendingLogin, list.PendingProxyNode = "", ""
 					}
 					s.op.Unlock()
 				}
 			}
+		} else if a := list.find(id); a != nil && reading.subject() != "" && (a.CodeUnlinked || a.Email != "" && claudeIdentityHash(a.Email, a.Organization) != reading.subject()) {
+			_, err = s.archiveCodeReading(ctx, &list, guestID, reading)
+			if err == nil {
+				m.loginNotice = "已按 Claude 确认的身份归档"
+			}
+			return
 		} else {
 			err = list.observe(id, reading, time.Now())
 		}

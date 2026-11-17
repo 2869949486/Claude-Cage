@@ -21,20 +21,28 @@ if ! test -e "/run/netns/$ns"; then
 fi
 install -d -m 0755 "/etc/netns/$ns"
 printf 'nameserver 127.0.0.1\noptions attempts:1 timeout:4\n' >"/etc/netns/$ns/resolv.conf"
-# This helper is used as BROWSER by bound terminal sessions. It can only
-# reach the matching Desktop's display. Keep the authorization URL off sudo argv.
+# Let the workbench browser reach this namespace without exposing a guest TCP
+# listener. The browser controller's group is configured for custom guest users.
+group=$(stat -c %G /etc/claude-cage/browser-control.json)
+install -d -m 2750 -o "${SUDO_UID:?}" -g "$group" "/run/account-routes/$id"
+# Avoid host resolver services reached via Unix sockets.
+sed -E 's/^hosts:.*/hosts: files dns/' /etc/nsswitch.conf >"/etc/netns/$ns/nsswitch.conf"
 dir="/usr/local/lib/account-routes/$id"
 install -d -m 0755 "$dir"
 cat >"$dir/open" <<'OPEN'
 #!/bin/bash
-set -eu
+set -euo pipefail
 id=${0%/open}; id=${id##*/}
 [[ $id =~ ^[a-f0-9]{24}$ ]]
+args=(--route-id "$id")
+while [[ $# -ge 3 ]]; do
+  [[ $1 == --account-id || $1 == --login-id ]] && [[ $2 =~ ^[a-f0-9]{24}$ ]] || exit 2
+  args+=("$1" "$2"); shift 2
+done
+opener=(sudo nsenter --net=/proc/1/ns/net setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups /usr/local/bin/cage-open "${args[@]}")
+if [[ ${1:-} == --finish-login ]]; then exec "${opener[@]}" --finish-login; fi
 if [[ ${1:-} == --stdin ]]; then url=$(cat); else url=${1:-}; fi
 [[ $url == https://* && $url != *[[:space:]]* && ${#url} -le 8192 ]] || exit 2
-fifo="/run/desktop-$id/authorization"
-[[ -p $fifo ]] || { echo '请先打开该账号的 Desktop。' >&2; exit 1; }
-# Serialize writers for URLs longer than PIPE_BUF.
-printf '%s\n' "$url" | timeout 5 flock -w 4 "/run/desktop-$id" tee "$fifo" >/dev/null
+printf '%s' "$url" | "${opener[@]}" --stdin
 OPEN
 chmod 0755 "$dir/open"

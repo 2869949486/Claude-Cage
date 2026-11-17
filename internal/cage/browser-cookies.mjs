@@ -1,4 +1,6 @@
-import { createHash } from "node:crypto";
+import { join } from "node:path";
+import { link, mkdir, readFile, rename, unlink, writeFile } from "node:fs/promises";
+import { randomUUID, randomBytes, createCipheriv, createDecipheriv, createHash } from "node:crypto";
 
 const key = cookie => createHash("sha256").update(JSON.stringify([
   cookie.name, cookie.domain, cookie.path, cookie.partitionKey || null, Boolean(cookie.partitionKeyOpaque),
@@ -75,4 +77,54 @@ export async function browserCookies(cdp, session, tab, input) {
       partitionKeyOpaque: Boolean(cookie.partitionKeyOpaque), size: cookie.size,
     })),
   };
+}
+
+// The browser process keeps opted-in sign-in cookies in the guest user's
+// private profile. The account ID authenticates each encrypted record, so a
+// record moved to another account cannot be restored there.
+export class AccountLoginCookies {
+  constructor(directory) { this.directory = directory; }
+
+  async file(account) {
+    if (!/^[a-f0-9]{24}$/.test(account)) throw new Error("授权账号无效");
+    await mkdir(this.directory, {recursive: true, mode: 0o700});
+    return join(this.directory, account);
+  }
+
+  async key() {
+    const filename = join(this.directory, ".key");
+    try { return await readFile(filename); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    const key = randomBytes(32), temporary = filename + "." + randomUUID();
+    await writeFile(temporary, key, {flag: "wx", mode: 0o600});
+    try {
+      await link(temporary, filename);
+      return key;
+    } catch (error) {
+      if (error.code !== "EEXIST") throw error;
+      return readFile(filename);
+    } finally { await unlink(temporary); }
+  }
+
+  async load(account) {
+    const file = await this.file(account);
+    let envelope;
+    try { envelope = await readFile(file); }
+    catch (error) { if (error.code === "ENOENT") return []; throw error; }
+    const decipher = createDecipheriv("aes-256-gcm", await this.key(), envelope.subarray(0,12));
+    decipher.setAAD(Buffer.from(account)); decipher.setAuthTag(envelope.subarray(12,28));
+    return JSON.parse(Buffer.concat([decipher.update(envelope.subarray(28)),decipher.final()]).toString("utf8"));
+  }
+
+  async save(account, cookies) {
+    const file = await this.file(account);
+    const iv = randomBytes(12), cipher = createCipheriv("aes-256-gcm", await this.key(), iv);
+    cipher.setAAD(Buffer.from(account));
+    const body = Buffer.concat([cipher.update(JSON.stringify(cookies)), cipher.final()]);
+    const temporary = file + "." + randomUUID();
+    try {
+      await writeFile(temporary, Buffer.concat([iv,cipher.getAuthTag(),body]), {flag:"wx", mode:0o600});
+      await rename(temporary, file);
+    } finally { await unlink(temporary).catch(() => {}); }
+  }
 }
