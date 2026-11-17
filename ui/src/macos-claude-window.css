@@ -7,4 +7,6 @@
 .mac-app-placeholder strong { color: var(--ink); font-size: 16px; font-weight: 500; }
 .mac-app-placeholder p { max-width: 380px; margin: 0; line-height: 1.7; }
 .mac-app-spinner { animation: spin 1s linear infinite; }
+.mac-window-notice { position: absolute; top: 12px; left: 50%; transform: translateX(-50%); z-index: 2; display: flex; align-items: center; gap: 8px; max-width: calc(100% - 32px); padding: 10px 14px; border: 1px solid var(--line); border-radius: 8px; background: var(--paper); color: var(--ink); font-size: 13px; box-shadow: 0 2px 10px #0001; pointer-events: none; }
+.mac-window-notice svg { flex-shrink: 0; }
 @media (prefers-reduced-motion: reduce) { .mac-app-spinner { animation: none; } }
