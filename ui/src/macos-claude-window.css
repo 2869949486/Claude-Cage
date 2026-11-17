@@ -5,3 +5,8 @@
 .mac-claude-typing { position: absolute; width: 1px; height: 1px; bottom: 0; left: 0; opacity: 0; }
 .mac-claude-alerts { position: absolute; top: 8px; left: 0; right: 0; z-index: 2; display: flex; flex-direction: column; align-items: center; gap: 6px; pointer-events: none; }
 .mac-claude-alerts p { margin: 0 16px; padding: 6px 12px; border-radius: 8px; background: var(--paper); box-shadow: 0 2px 10px rgb(0 0 0 / 0.18); max-width: calc(100% - 32px); }
+.mac-app-placeholder { position: absolute; inset: 0; z-index: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 32px; text-align: center; background: var(--paper); color: var(--muted); }
+.mac-app-placeholder strong { color: var(--ink); font-size: 16px; font-weight: 500; }
+.mac-app-placeholder p { max-width: 380px; margin: 0; line-height: 1.7; }
+.mac-app-spinner { animation: spin 1s linear infinite; }
+@media (prefers-reduced-motion: reduce) { .mac-app-spinner { animation: none; } }

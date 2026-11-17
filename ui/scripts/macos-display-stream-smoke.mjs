@@ -13,6 +13,7 @@ const { page, browser, errors } = await createWorkbench({
       canvas.width = 800; canvas.height = 600;
       const context = canvas.getContext("2d");
       context.fillStyle = "#f7f5f1"; context.fillRect(0, 0, 800, 600);
+      context.fillStyle = "#202020"; context.font = "24px sans-serif"; context.fillText("Claude", 60, 100);
       return canvas.toDataURL().split(",")[1];
     });
     await page.route("**/api/macos/claude/window", route => {
@@ -44,7 +45,9 @@ try {
   await page.waitForFunction(() => document.querySelector(".mac-claude-frame img")?.naturalWidth === 800);
   await page.locator(".mac-claude-frame img").click();
   await page.locator(".mac-claude-typing").press("ArrowRight");
-  assert(actions.includes("click") && actions.includes("key"));
+  await page.waitForFunction(() => document.activeElement?.classList.contains("mac-claude-typing"));
+  for (let i=0; i<100 && !(actions.includes("pointer") && actions.includes("key")); i++) await new Promise(resolve=>setTimeout(resolve,20));
+  assert(actions.includes("pointer") && actions.includes("key"));
   await new Promise(resolve => setTimeout(resolve, 300));
   assert.equal(images, 1, "static frames must keep their existing decoded image");
   await page.evaluate(() => { window.cageWindowVisible = false; window.dispatchEvent(new Event("cage-window-visibility")); });

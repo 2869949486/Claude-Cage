@@ -22,6 +22,7 @@ const { page, browser, errors } = await createWorkbench({
       canvas.width = 800; canvas.height = 600;
       const context = canvas.getContext("2d");
       context.fillStyle = "#f7f5f1"; context.fillRect(0, 0, 800, 600);
+      context.fillStyle = "#202020"; context.font = "24px sans-serif"; context.fillText("Claude", 60, 100);
       return canvas.toDataURL().split(",")[1];
     }), "base64");
     await page.addInitScript(() => {
