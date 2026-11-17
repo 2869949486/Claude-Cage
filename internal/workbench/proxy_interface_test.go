@@ -13,12 +13,16 @@ import (
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
+	"github.com/sylvinus/agent-vm/internal/guestprofile"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
 )
 
 func interfaceMonitorServer(t *testing.T) (*Server, *cage.EgressGate) {
 	t.Helper()
 	s := testServer(t)
+	if _, err := guestprofile.Create(s.profile, guestprofile.Options{}); err != nil {
+		t.Fatal(err)
+	}
 	listener, err := net.Listen("tcp4", "127.0.0.1:0")
 	if err != nil {
 		t.Fatal(err)
@@ -113,5 +117,78 @@ func TestMissingPhysicalInterfaceClosesGateWithoutUnboundFallback(t *testing.T) 
 	data, _ := os.ReadFile(filepath.Join(s.profile, "proxy", "config.yaml"))
 	if !strings.Contains(string(data), "interface-name: en0") {
 		t.Fatal("missing uplink removed the existing binding")
+	}
+}
+
+func TestInterfaceRecoveryRetainsFailureForRetry(t *testing.T) {
+	s, gate := interfaceMonitorServer(t)
+	physical, validate := physicalProxyInterface, validateProxyCore
+	t.Cleanup(func() { physicalProxyInterface, validateProxyCore = physical, validate })
+	physicalProxyInterface = func(context.Context) (string, error) { return "en0", nil }
+	validateProxyCore = func(context.Context, string, managedproxy.Store) error {
+		return errors.New("代理配置验证失败")
+	}
+	s.proxyNetworkLost = true
+	s.safety.monitorError = "old interface unavailable"
+	s.monitorProxyInterface()
+	failed := awaitJobIdle(t, &s.jobs)
+	s.op.Lock()
+	if failed.Error == "" {
+		t.Fatal("rebind failure did not finish", failed)
+	}
+	s.mu.Lock()
+	if !s.proxyNetworkLost || !strings.Contains(s.safety.monitorError, "代理配置验证失败") || gate.Status().Mode != cage.GateClosed {
+		t.Fatal("failed rebind lost its pending state or retained a stale error", s.proxyNetworkLost, s.safety.monitorError)
+	}
+	s.mu.Unlock()
+	s.monitorProxyInterface()
+	if s.jobs.snapshot().ID != failed.ID {
+		t.Fatal("recovery retried without waiting")
+	}
+	s.mu.Lock()
+	s.proxyNetworkRetry = time.Now().Add(-time.Second)
+	s.mu.Unlock()
+	s.monitorProxyInterface()
+	s.op.Unlock()
+	retried := awaitJobIdle(t, &s.jobs)
+	if retried.ID == failed.ID || retried.Error == "" {
+		t.Fatal("same interface was not retried after the failure", retried)
+	}
+	s.op.Lock()
+	defer s.op.Unlock()
+	path := filepath.Join(s.instanceDir(), "cage-running.json")
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	s.proxyNetworkRetry = time.Time{}
+	s.monitorProxyInterface()
+	if s.jobs.snapshot().ID != retried.ID {
+		t.Fatal("stopped environment queued another rebind")
+	}
+}
+
+func TestInterfaceRecoveryClearsPendingOnlyAfterSuccessfulApply(t *testing.T) {
+	s, gate := interfaceMonitorServer(t)
+	physical, validate, start := physicalProxyInterface, validateProxyCore, startProxyCore
+	t.Cleanup(func() { physicalProxyInterface, validateProxyCore, startProxyCore = physical, validate, start })
+	physicalProxyInterface = func(context.Context) (string, error) { return "en0", nil }
+	validateProxyCore = func(context.Context, string, managedproxy.Store) error { return nil }
+	startProxyCore = func(context.Context, string, managedproxy.Store) error { return nil }
+	before := gate.Status()
+	s.networkPaused, s.proxyNetworkLost = true, true
+	s.safety.monitorError = "物理网卡暂时不可用"
+	s.monitorProxyInterface()
+	job := awaitJobIdle(t, &s.jobs)
+	s.op.Lock()
+	defer s.op.Unlock()
+	if job.Error != "" || s.proxyNetworkLost || !s.proxyNetworkRetry.IsZero() || s.safety.monitorError != "" {
+		t.Fatal("successful rebind left outage pending", job)
+	}
+	cfg, err := loadConfig(s.configPath)
+	if err != nil || gate.Status().Configuration != cfg.Fingerprint() || gate.Status().RunID != before.RunID || !s.vmRunning() {
+		t.Fatal("rebind did not preserve the running environment", err)
+	}
+	if !s.networkPaused || gate.Status().Mode != cage.GateClosed {
+		t.Fatal("rebind overrode the manual pause")
 	}
 }

@@ -126,6 +126,10 @@ cage agent call proxy.status
 
 链式代理使用 `proxy.route`，输入 `{"node_ids":["入口ID","最终出口ID"]}`，顺序为入口到出口。`proxy.select` 总是把路由替换为所选的单个节点：已有链会被清除，所选节点即使原本在链中也可以。节点无效、配置验证或核心启动失败时保留原路由；路由保存后的网络检查仍可能失败，应以 `proxy.status` 返回的当前路由为准。要保留或重建多跳链，请重新调用 `proxy.route`。更新订阅使用 `proxy.refresh` 和已有来源 `id`；`proxy.import` 每次创建来源，不能盲目重试。
 
+仅切换节点或代理链（包括跨国家切换）会保留运行中的环境和终端。旧网络连接和检查授权会被撤销，完整检查通过后才恢复联网。首次启用内置代理、修改代理端口或环境设置仍可能需要重启环境。
+
+若操作提示“代理节点已保存，外网尚未恢复”，先用 `proxy.status` 确认当前节点，再运行 `network.check`。检查会同步已保存且允许热切换的代理配置，不需要重开 App 或手动结束后台进程。若明确提示环境设置变化需要重启，先保存终端中的工作，执行 `environment.stop`，完成后再执行 `environment.start --wait 8m`；只退出重开 App 或重启工作台服务不能代替停止并启动环境。
+
 `proxy.import` 成功表示节点格式和核心配置通过校验。应用节点后，用 `settings.get` 读取完整设置，再将设置对象作为 `settings.probe` 的输入，通过所选代理发起真实 HTTPS 请求，核对返回的出口 IP 和位置。报告时分别说明导入校验、实际连通性与出口验证结果；主机上其他代理客户端可用或核心进程正在运行，都不能代替实际出口验证。客机启动后，仍需按下文核对 `network.check` 和当前网络授权，确认终端与浏览器等路径通过检查。
 
 VLESS + TCP + REALITY 节点若在语法校验通过后报 `REALITY authentication failed`，先对照原客户端与服务端参数，再按[网络指南的 REALITY 排查步骤](network.md#vless-reality-握手失败)检查 `reality-opts.support-x25519mlkem768`。按节点要求只调整这一项，重新导入、应用并重复相同的 HTTPS 与出口验证；不要批量改写所有 REALITY 节点、关闭证书校验或绕过出口规则。节点地址、UUID、公钥、short-id 和原始日志仍应留在私有排查材料中。
@@ -168,6 +172,8 @@ cage agent call network.check --wait 5m
 ```
 
 以 `status.ready`、`vm_running` 以及 `safety` 中当前配置对应的网络检查与授权共同判断可用性；`proxy.status.network_open` 可辅助检查外网是否已放行。网络暂停时保持用户的暂停意图，只有用户要求恢复联网才运行 `network.check`。完成首次引导使用 `initialization.set` 的 `{"action":"complete"}`，后台会再次核对环境与网络状态。
+
+换网络或睡眠唤醒后，后台会在需要时重新绑定物理网卡，并重新检查出口。恢复任务失败后保留待恢复状态，至少等待 15 秒再试；停止环境后不再排队恢复，手动暂停期间不会自动放行外网。最近一次保存的检查报告不能代替当前配置和当前运行实例的有效授权。
 
 打开项目使用 `project.open`：`{"workspace":"用户授权的绝对路径","add":true,"activate":true}`。它会让客机访问这个目录，改动会影响主机文件。返回 `approval` 表示等待系统授权；Agent 可以调用相同的 `/api/macos/project-approval` 查看、操作该窗口。Claude 的服务登录仍在 Cage 内的官方工具中完成；本接口不会导入主机 Claude 凭据。
 

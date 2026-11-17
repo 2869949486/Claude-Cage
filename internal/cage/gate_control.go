@@ -14,10 +14,12 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 	"time"
 	"unicode/utf8"
 
+	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/host"
 )
 
@@ -93,6 +95,9 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 		return nil, err
 	}
 	server := &http.Server{ReadHeaderTimeout: 3 * time.Second, ReadTimeout: 5 * time.Second, WriteTimeout: 5 * time.Second, IdleTimeout: 5 * time.Second, MaxHeaderBytes: 8192}
+	// Keep watchdog reads and control transitions in one order, so a stale
+	// watchdog snapshot cannot close a newly synchronized checking session.
+	var controlMu sync.Mutex
 	server.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		w.Header().Set("Content-Type", "application/json")
@@ -118,8 +123,12 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 				// Keep the wire/storage limit without splitting a UTF-8 character.
 				command.Reason = gateCloseReason(command.Reason)
 			}
+			controlMu.Lock()
+			defer controlMu.Unlock()
+			var cfg Config
 			if command.Action == "check" || command.Action == "grant" || command.Action == "renew" || command.Action == "proxy-revision" {
-				cfg, e := Load(configPath)
+				var e error
+				cfg, e = Load(configPath)
 				if e == nil {
 					e = cfg.RequireManagedProxy(filepath.Dir(configPath))
 				}
@@ -132,17 +141,30 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 			}
 			switch command.Action {
 			case "proxy-revision":
-				cfg, e := Load(configPath)
-				if e != nil {
-					operationError = e
+				operationError = gate.SyncProxyRevision(cfg)
+				if operationError == nil {
+					operationError = cfg.RecordRunningAt(instanceDir)
 				} else {
+					gate.Close("配置无法同步，请停止并重新启动环境后检测")
+				}
+			case "check":
+				// A controller may have saved and started a node before its gate
+				// synchronization failed. Adopt only changes supported by the same
+				// hot-switch contract before collecting a new report.
+				gate.mu.Lock()
+				configurationChanged := !reflect.DeepEqual(gate.config, cfg)
+				gate.mu.Unlock()
+				if configurationChanged {
 					operationError = gate.SyncProxyRevision(cfg)
 					if operationError == nil {
 						operationError = cfg.RecordRunningAt(instanceDir)
 					}
 				}
-			case "check":
-				operationError = gate.BeginCheck()
+				if operationError == nil {
+					operationError = gate.BeginCheck()
+				} else {
+					gate.Close("配置无法同步，请停止并重新启动环境后检测")
+				}
 			case "fault":
 				operationError = gate.SetFault(command.Fault)
 			case "grant":
@@ -184,13 +206,23 @@ func StartGateControl(configPath, instanceDir string, gate *EgressGate) (func(),
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
+				controlMu.Lock()
 				cfg, err := Load(configPath)
 				if err == nil {
 					err = cfg.RequireManagedProxy(filepath.Dir(configPath))
 				}
 				if err != nil || cfg.Fingerprint() != gate.Status().Configuration {
-					gate.Close("配置已变更或无法读取，请重启环境并重新检测")
+					const reason = "配置已变更或无法读取，请重新检测；环境设置变化时需停止并重新启动"
+					if state := gate.Status(); state.Mode != GateClosed || state.Reason != reason {
+						gate.Close(reason)
+						cause := "configuration_changed"
+						if err != nil {
+							cause = "configuration_unavailable"
+						}
+						_ = diagnostics.New(filepath.Dir(configPath)).Record("warn", "network-gate", "action=close cause="+cause+" recovery=network.check")
+					}
 				}
+				controlMu.Unlock()
 			}
 		}
 	}()

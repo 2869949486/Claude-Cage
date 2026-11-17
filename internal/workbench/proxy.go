@@ -3,6 +3,7 @@ package workbench
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -10,6 +11,7 @@ import (
 
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/managedproxy"
+	"github.com/sylvinus/agent-vm/internal/usererror"
 )
 
 var (
@@ -347,6 +349,8 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 		if returned != nil && !committed {
 			_ = previous.Save(s.profile)
 			_ = writePrivate(s.configPath, old)
+		} else if returned != nil && !errors.Is(returned, context.Canceled) {
+			returned = fmt.Errorf("代理节点已保存，外网尚未恢复；请重新检查联网条件：%w", usererror.Display("恢复联网", returned, "请重新检测；仍失败时导出诊断包。"))
 		}
 	}()
 	p.Revision = managedproxy.Token()
@@ -364,6 +368,7 @@ func (s *Server) applyProxy(p managedproxy.Store, old cage.Config, resumeVersion
 		return err
 	}
 	committed = true
+	s.jobs.execution().settingsSaved()
 	if resumeVersion != nil {
 		if err := s.resumeNetworkIntentAt(*resumeVersion); err != nil {
 			return err

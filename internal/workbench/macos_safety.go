@@ -303,7 +303,11 @@ func (s *Server) checkMacOSNetwork() error {
 			return err
 		}
 		if state.Configuration != cfg.Fingerprint() {
-			return errors.New("网络设置已保存，请重启 macOS 客机，登录后重新检测")
+			state, err = client.SyncProxyRevision(s.operationContext())
+			if err != nil {
+				return err
+			}
+			s.publishGate(state)
 		}
 	}
 	ctx := s.operationContext()
