@@ -75,6 +75,7 @@ export function createMacFrameConnection(onFrame, onError, base = "/macos/claude
     if (closed || video === null || !configuration || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ ...configuration, video }));
   };
+  socket.addEventListener("open", subscribe);
   const sizes = createSettledValue(next => {
     if (closed) return;
     configuration = { ...next, revision: ++revision };
