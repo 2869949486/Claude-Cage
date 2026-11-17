@@ -101,7 +101,9 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   }, [visible, zoom]);
   // A decoded video frame waits here until the canvas for its window exists.
   const pendingVideo = useRef(null);
-  const videoKey = value => value.geometry || `${value.pid}-${value.window}`;
+  // One element serves a window through its size changes, so resizing does
+  // not replace the picture or the input attached to it.
+  const videoKey = value => `${value.pid}-${value.window}`;
   function dropVideo() {
     pendingVideo.current?.video.close();
     pendingVideo.current = null;
@@ -314,7 +316,7 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       input.dispose(); transport.dispose();
       if (controls.current?.transport === transport) controls.current = null;
     };
-  }, [screenVisible, state?.input, state?.persistent, inputChannel, image?.geometry, image?.pid, image?.window, image?.video]);
+  }, [screenVisible, state?.input, state?.persistent, inputChannel, image?.pid, image?.window, image?.video]);
 
   function receive(content, lease, prepared) {
     const target = lease?.target || frame.current;
@@ -356,18 +358,22 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       <MacOSLogin />
       {!browser && <button disabled={!state?.input || !image || transferring} onClick={() => void chooseFiles()}>添加附件</button>}
       {!browser && <input ref={picker} type="file" multiple hidden aria-label="选择 Claude 附件" onChange={event => { const files = Array.from(event.target.files || []); event.target.value = ""; if (files.length) void receive({ files, kind: "paste" }, pickerTarget.current || undefined).catch(fileFailure); }} />}
-      {(!state?.running || error) && <button onClick={() => action("launch")} disabled={!state?.installed}>{state?.running ? "重新连接应用" : "打开应用"}</button>}
+      {(!state?.running || (error && !image)) && <button onClick={() => action("launch")} disabled={!state?.installed}>{state?.running ? "重新连接应用" : "打开应用"}</button>}
       {state?.installed && !state.screen && <button onClick={() => action("request-screen")}>授权窗口画面</button>}
       {state?.installed && !state.input && <button onClick={() => action("request-input")}>授权键鼠</button>}
     </DesktopToolbar>
-    {error && <p role="alert">{error}</p>}
-    {fileError && <p role="alert">{fileError}</p>}
     {state && !state.installed && <p>此虚拟 Mac 尚未安装 {appName}。</p>}
     {state?.running && !state.screen && <p>{messages.screen_recording_permission}</p>}
     {state?.running && state.screen && !state.input && <p>{messages.accessibility_permission}</p>}
     <div ref={pane} className="mac-claude-frame" style={{ "--desktop-zoom": zoom }}>
+      {/* Notices lie over the picture. In the flow above it they would
+          change its size, and the guest window would be resized to follow. */}
+      {(error || fileError) && <div className="mac-claude-alerts">
+        {error && <p role="alert">{error}</p>}
+        {fileError && <p role="alert">{fileError}</p>}
+      </div>}
       {image?.video && <canvas ref={surface} key={"video-" + videoKey(image)} data-frame={videoKey(image)} role="img" aria-label={appName + " 客机窗口"} />}
-      {image && !image.video && <img ref={surface} key={image.geometry || `${image.pid}-${image.window}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}
+      {image && !image.video && <img ref={surface} key={videoKey(image)} alt={appName + " 客机窗口"} src={image.src} draggable={false}
         onLoad={e => {
           const img = e.currentTarget;
           const width = image.width || img.naturalWidth;
