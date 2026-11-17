@@ -16,7 +16,6 @@ import {
   Server,
   SquareTerminal,
   UsersRound,
-  ChartNoAxesCombined,
 } from "lucide-react";
 import { EnvironmentShield } from "./environment-shield";
 import logo from "./logo.png";
@@ -75,8 +74,6 @@ export function WorkspaceSidebar({
   tailscaleOpen,
   onClaudeAccounts,
   claudeAccountsOpen,
-  onTokenUsage,
-  tokenUsageOpen,
   onClaudeWeb,
   onClaudeDesktop,
   desktopOpen,
@@ -152,10 +149,6 @@ export function WorkspaceSidebar({
         <button className={`sidebar-link ${claudeAccountsOpen ? "selected" : ""}`} onClick={onClaudeAccounts}
           aria-current={claudeAccountsOpen ? "page" : undefined}>
           <UsersRound size={17} />Claude 账号管理
-        </button>
-        <button className={`sidebar-link ${tokenUsageOpen ? "selected" : ""}`} onClick={onTokenUsage}
-          aria-current={tokenUsageOpen ? "page" : undefined}>
-          <ChartNoAxesCombined size={17} />Token 用量
         </button>
       </nav>
       <div className="sidebar-scroll">
