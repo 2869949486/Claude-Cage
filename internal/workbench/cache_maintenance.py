@@ -157,11 +157,29 @@ def private_directory(path):
         info = path.stat()
         if not path.is_dir() or os.name != "nt" and (info.st_uid != os.geteuid() or info.st_mode & 0o077):
             raise Refused("unavailable")
-        return
-    path.mkdir(mode=0o700)
+    else:
+        path.mkdir(mode=0o700)
     if os.name == "nt":
         executable = Path(os.environ.get("SystemRoot", r"C:\Windows")) / "System32/WindowsPowerShell/v1.0/powershell.exe"
-        script = "$ErrorActionPreference='Stop'; $sid=[Security.Principal.WindowsIdentity]::GetCurrent().User; $acl=New-Object Security.AccessControl.DirectorySecurity; $acl.SetAccessRuleProtection($true,$false); $acl.SetOwner($sid); foreach($id in @($sid,[Security.Principal.SecurityIdentifier]::new('S-1-5-18'))){$acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($id,'FullControl','ContainerInherit,ObjectInherit','None','Allow'))}; Set-Acl -LiteralPath $env:MAINTENANCE_DIRECTORY -AclObject $acl"
+        # Windows PowerShell runs on .NET Framework. Persist only the changed
+        # DACL through DirectoryInfo instead of requesting owner/SACL writes.
+        script = """
+$ErrorActionPreference = 'Stop'
+$sid = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$directory = [IO.DirectoryInfo]::new($env:MAINTENANCE_DIRECTORY)
+if ($directory.Attributes -band [IO.FileAttributes]::ReparsePoint) { throw 'Invalid recovery directory.' }
+$sections = [Security.AccessControl.AccessControlSections]::Access -bor [Security.AccessControl.AccessControlSections]::Owner
+$acl = $directory.GetAccessControl($sections)
+if ($acl.GetOwner([Security.Principal.SecurityIdentifier]) -ne $sid) { throw 'Recovery directory is not owned by the current user.' }
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($rule in $acl.GetAccessRules($true, $false, [Security.Principal.SecurityIdentifier])) {
+    $acl.RemoveAccessRuleSpecific($rule)
+}
+foreach ($id in @($sid, [Security.Principal.SecurityIdentifier]::new('S-1-5-18'))) {
+    $acl.AddAccessRule([Security.AccessControl.FileSystemAccessRule]::new($id, 'FullControl', 'ContainerInherit,ObjectInherit', 'None', 'Allow'))
+}
+$directory.SetAccessControl($acl)
+"""
         try:
             subprocess.run([str(executable), "-NoProfile", "-NonInteractive", "-Command", script], env={**os.environ, "MAINTENANCE_DIRECTORY": str(path), "PSModulePath": str(executable.parent / "Modules")},
                            stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, timeout=15, check=True)
