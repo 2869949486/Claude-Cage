@@ -188,13 +188,16 @@ export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs,
         catch (error) { if (error.code !== "ENOENT") throw error; }
       }
       const value = await auditBrowser(input, launch);
-      // A newly created Chrome profile can finish writing Local State and
-      // Preferences a few seconds after the first page finishes rendering.
+      // A real page can report before a new Chrome profile flushes Local State
+      // and Preferences. Wait for that snapshot without launching another tab;
+      // cancellation still stops the wait and no partial sample is authorized.
       let key;
-      for (let attempt = 0; attempt < 12; attempt++) {
+      const profileDeadline = Date.now() + 20000;
+      for (;;) {
         try { key = await settingsInputs(await status(signal)); break; }
         catch (error) {
-          if (error.code !== "ENOENT" || attempt === 11) throw error;
+          if (error.code !== "ENOENT") throw error;
+          if (Date.now() >= profileDeadline) throw failure("browser_profile_not_ready", "Chrome 的配置文件尚未就绪，请稍后重新检测，无需重新安装系统");
           await delay(250, undefined, { signal });
         }
       }
