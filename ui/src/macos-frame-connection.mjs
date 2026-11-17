@@ -24,11 +24,32 @@ export function macWindowVideoConfiguration(encoded) {
   return { codec, description, optimizeForLatency: true };
 }
 
+// A view being dragged to a new size reports dozens of sizes a second. Each
+// one sent makes the guest resize its window and start capture again, so the
+// first size goes at once and later ones only when the view has settled.
+export function createSettledValue(deliver, delay = 120, clock = globalThis) {
+  let sent, wanted, timer;
+  return {
+    set(key, value) {
+      if (key === wanted) return;
+      wanted = key;
+      clock.clearTimeout(timer);
+      if (sent === undefined) { sent = key; deliver(value); return; }
+      timer = clock.setTimeout(() => {
+        if (sent === key) return;
+        sent = key;
+        deliver(value);
+      }, delay);
+    },
+    cancel() { clock.clearTimeout(timer); },
+  };
+}
+
 export function createMacFrameConnection(onFrame, onError, base = "/macos/claude") {
   const socket = new WebSocket(runtimeSocketURL(base + "/frames"));
   socket.binaryType = "arraybuffer";
   const urls = new Set();
-  let configuration, size = "", revision = 0, latestURL = "", closed = false;
+  let configuration, revision = 0, latestURL = "", closed = false;
   let video = null, decoder = null, described = "", awaiting = null, watchdog = 0, stamp = 0, surround = {};
   const stopVideo = () => {
     clearTimeout(watchdog);
@@ -38,6 +59,7 @@ export function createMacFrameConnection(onFrame, onError, base = "/macos/claude
   };
   const close = () => {
     closed = true;
+    sizes.cancel();
     stopVideo();
     socket.close();
     for (const url of urls) URL.revokeObjectURL(url);
@@ -53,6 +75,11 @@ export function createMacFrameConnection(onFrame, onError, base = "/macos/claude
     if (closed || video === null || !configuration || socket.readyState !== WebSocket.OPEN) return;
     socket.send(JSON.stringify({ ...configuration, video }));
   };
+  const sizes = createSettledValue(next => {
+    if (closed) return;
+    configuration = { ...next, revision: ++revision };
+    subscribe();
+  });
   macWindowVideoSupported().then(supported => { video = supported; subscribe(); });
   // The page keeps working on still images after a decoder failure.
   const videoFailed = () => {
@@ -125,11 +152,7 @@ export function createMacFrameConnection(onFrame, onError, base = "/macos/claude
     resize(viewport) {
       if (closed || !viewport) return;
       const next = { ...viewport, scale: Math.max(1, Math.min(2, window.devicePixelRatio || 1)) };
-      const key = JSON.stringify(next);
-      if (key === size) return;
-      size = key;
-      configuration = { ...next, revision: ++revision };
-      subscribe();
+      sizes.set(JSON.stringify(next), next);
     },
     close,
   };
