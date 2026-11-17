@@ -1,4 +1,5 @@
 const identity = frame => frame && `${frame.pid}:${frame.window}:${frame.geometry || ""}`;
+const passing = new Set(["window_changed", "no_visible_window", "not_running"]);
 const modifiers = keys => ({
   shift: keys.has("ShiftLeft") || keys.has("ShiftRight"),
   control: keys.has("ControlLeft") || keys.has("ControlRight"),
@@ -78,10 +79,18 @@ export function createMacWindowInput({ element, frame, active, request, onError,
     if (move) { move.fields = fields; return; }
     const entry = { fields };
     move = entry;
-    report(run(() => {
+    // Nothing is held while the pointer only hovers. A window that changes
+    // under it needs no warning and no reset; the next frame brings its target.
+    const hover = !drag && !event.buttons;
+    report(run(async () => {
       if (move === entry) move = undefined;
-      if (!valid(target)) throw new Error("输入窗口已变化，请重新操作");
-      return request("pointer", { ...target, ...entry.fields });
+      if (!valid(target)) {
+        if (hover) return;
+        throw new Error("输入窗口已变化，请重新操作");
+      }
+      if (!hover) return request("pointer", { ...target, ...entry.fields });
+      try { return await request("pointer", { ...target, ...entry.fields }); }
+      catch (error) { if (!passing.has(error.code)) throw error; }
     }));
   });
   on(element, "pointerup", event => {
