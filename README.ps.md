@@ -123,7 +123,7 @@ macOS او لاسلیک شوې Windows نسخې د ټاکلي پراکسي له 
 </p>
 
 <p align="center">
-  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="WeChat" width="240" /></a>
+  <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="WeChat" width="240" /></a>
   <br />WeChat
 </p>
 

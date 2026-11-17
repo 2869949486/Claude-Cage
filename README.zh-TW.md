@@ -123,7 +123,7 @@ macOS 和已簽章 Windows 版本支援透過所選代理更新；Windows 未簽
 </p>
 
 <p align="center">
-  <a href="assets/community-wechat.png"><img src="assets/community-wechat.png" alt="微信" width="240" /></a>
+  <a href="www/src/assets/community-wechat.png"><img src="www/src/assets/community-wechat.png" alt="微信" width="240" /></a>
   <br />微信
 </p>
 
