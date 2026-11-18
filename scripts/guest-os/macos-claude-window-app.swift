@@ -231,6 +231,7 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
             let horizontal = input.deltaX ?? scrollX
             guard let delta = input.delta, delta.isFinite, horizontal.isFinite,
                   (-maxScroll...maxScroll).contains(delta), (-maxScroll...maxScroll).contains(horizontal) else { throw Failure(8, "invalid_input") }
+            MacWindowMotion.shared.mark()
             events = [CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: horizontal == 0 ? 1 : 2, wheel1: Int32(-delta), wheel2: Int32(-horizontal), wheel3: 0)]
         } else {
             // Address the NSEvent to this window using its unflipped local
@@ -402,10 +403,13 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession, video
             // A window object from before AX resizing still describes the old
             // surface. Reacquire that exact window before the first new frame.
             var target = window, source = capture
-            if abs(window.frame.width - layout.frame.width) >= 1 || abs(window.frame.height - layout.frame.height) >= 1 {
+            // Input compares the focused window with this object's frame, so
+            // a window the layout only moved is reacquired as well.
+            if abs(window.frame.width - layout.frame.width) >= 1 || abs(window.frame.height - layout.frame.height) >= 1 ||
+               abs(window.frame.minX - layout.frame.minX) >= 1 || abs(window.frame.minY - layout.frame.minY) >= 1 {
                 let (fresh, selection) = try await targetWindow(fresh: true)
                 guard fresh.windowID == layout.id, fresh.owningApplication?.processID == layout.pid else {
-                    throw Failure(7, "window_changed")
+                    throw Failure(7, "window_changed", detail: "frame_window_replaced")
                 }
                 target = fresh
                 source = selection ?? SCContentFilter(desktopIndependentWindow: fresh)

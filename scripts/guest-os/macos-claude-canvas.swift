@@ -38,7 +38,7 @@ private func liveBounds(_ id: CGWindowID, _ pid: pid_t) throws -> CGRect {
     guard let info = windows?.first, info[kCGWindowOwnerPID as String] as? Int32 == pid,
           info[kCGWindowIsOnscreen as String] as? Bool == true,
           let box = info[kCGWindowBounds as String] as? NSDictionary,
-          let rect = CGRect(dictionaryRepresentation: box), !rect.isEmpty else { throw Failure(7, "window_changed") }
+          let rect = CGRect(dictionaryRepresentation: box), !rect.isEmpty else { throw Failure(7, "window_changed", detail: "window_gone") }
     return rect
 }
 
@@ -135,6 +135,13 @@ final class ClaudeCanvasSession {
     init(browser: Bool = false) {
         self.browser = browser
         self.stream = browser ? MacWindowStream() : .shared
+    }
+
+    // A frame is sent only while its window is still where the layout put it
+    // and still belongs to the verified application.
+    private func verifyFrame(_ layout: ClaudeCanvas) throws {
+        guard try liveBounds(layout.id, layout.pid) == layout.frame else { throw Failure(7, "window_changed", detail: "frame_bounds_moved") }
+        guard try owns(layout.pid) else { throw Failure(7, "window_changed", detail: "frame_owner_changed") }
     }
 
     private func owns(_ pid: pid_t) throws -> Bool {
@@ -256,9 +263,16 @@ final class ClaudeCanvasSession {
             throw Failure(7, "window_changed", detail: "geometry_replaced")
         }
         guard try liveBounds(last.id, last.pid) == last.frame else { throw Failure(7, "window_changed", detail: "bounds_moved") }
+        // A browser window has no title bar to leave out, and
+        // checkedMacInputWindow compares the focused window right after this.
+        if browser { return last }
         let now = ProcessInfo.processInfo.systemUptime
         if let known = inputMeasured, known.token == requested, now - known.time < 1 { return last }
-        guard let ax = owningAXWindow(last.pid, last.frame), cropHeight(ax,last.frame) == last.cropTop else {
+        guard let ax = owningAXWindow(last.pid, last.frame) else {
+            inputMeasured = nil
+            throw Failure(7, "window_changed", detail: "focus_elsewhere")
+        }
+        guard cropHeight(ax,last.frame) == last.cropTop else {
             inputMeasured = nil
             throw Failure(7, "window_changed", detail: "title_bar_changed")
         }
@@ -273,31 +287,37 @@ final class ClaudeCanvasSession {
                               geometry: String, after: String?, wait: Bool, keyframe: Bool) async throws -> [String:Any]? {
         let (base, level) = MacWindowVideoEncoder.split(after)
         let refining = level < MacWindowVideoEncoder.refinements
+        let motion = MacWindowMotion.shared
         let captureStarted = Date()
+        // A viewer holding a half density picture is owed the full one as soon
+        // as the scroll ends, whether or not the window changes again.
         let (buffer, sequence) = try await stream.latest(filter: filter, configuration: config, identity: geometry, after: base,
-                                                         wait: wait && !keyframe, seconds: refining ? 0.25 : 2)
+                                                         wait: wait && !keyframe,
+                                                         seconds: video.reduced ? max(0.02, motion.remaining) : refining ? 0.25 : 2)
         let captureMs = Date().timeIntervalSince(captureStarted) * 1000
-        guard try liveBounds(layout.id, layout.pid) == layout.frame,
-              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        try verifyFrame(layout)
+        // A window captured at single density is already small enough.
+        let moving = layout.scale >= 1.5 && motion.remaining > 0
         var next = sequence
         if sequence == base && !keyframe {
-            guard refining else { return ["unchanged": true, "sequence": after ?? sequence, "geometry": geometry] }
+            // Refinement waits for the scroll to end: it would be spent on a
+            // picture that is about to be replaced.
+            guard !moving, refining || video.reduced else { return ["unchanged": true, "sequence": after ?? sequence, "geometry": geometry] }
             next = MacWindowVideoEncoder.refined(sequence, level: level + 1)
         }
-        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
-        let top = Int((layout.cropTop * CGFloat(height) / layout.frame.height).rounded())
-        guard top >= 0, top < height else { throw Failure(7, "window_changed") }
+        guard layout.cropTop >= 0, layout.cropTop < layout.frame.height else { throw Failure(7, "window_changed") }
         let encodeStarted = Date()
         let frame: MacWindowVideoFrame
-        do { frame = try await video.encode(buffer, identity: geometry, forceKey: keyframe) }
+        do { frame = try await video.encode(buffer, identity: geometry, forceKey: keyframe, reduce: moving) }
         catch {
             video.fail()
             GuestDiagnostic.record("window", "video_encoder_unavailable")
             return nil
         }
+        let width = frame.width, height = frame.height
+        let top = min(height - 1, Int((layout.cropTop * CGFloat(height) / layout.frame.height).rounded()))
         // The second ownership check covers the time spent encoding.
-        guard try liveBounds(layout.id, layout.pid) == layout.frame,
-              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        try verifyFrame(layout)
         var reply: [String:Any] = ["window":layout.id,"pid":layout.pid,"mime":"video/avc","sequence":next,
                 "contentWidth":layout.content.width,"contentHeight":layout.content.height,
                 "pixelWidth":width,"pixelHeight":height-top,"cropTop":layout.cropTop,
@@ -329,8 +349,7 @@ final class ClaudeCanvasSession {
         let captureStarted = Date()
         let (updated, sequence) = try await stream.frame(filter: filter, configuration: config, identity: geometry, after: after, wait: wait)
         let captureMs = Date().timeIntervalSince(captureStarted) * 1000
-        guard try liveBounds(layout.id, layout.pid) == layout.frame,
-              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        try verifyFrame(layout)
         guard let image = updated else { return ["unchanged": true, "sequence": sequence, "geometry": geometry] }
         let top = Int((layout.cropTop * CGFloat(image.height) / layout.frame.height).rounded())
         guard top >= 0, top < image.height,
@@ -343,8 +362,7 @@ final class ClaudeCanvasSession {
         }.value
         let data = encoded.data, mime = encoded.mime
         // The second ownership check covers the time spent encoding.
-        guard try liveBounds(layout.id, layout.pid) == layout.frame,
-              try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        try verifyFrame(layout)
         var reply: [String:Any] = ["window":layout.id,"pid":layout.pid,"mime":mime,"sequence":sequence,
                 "contentWidth":layout.content.width,"contentHeight":layout.content.height,
                 "pixelWidth":content.width,"pixelHeight":content.height,"cropTop":layout.cropTop,

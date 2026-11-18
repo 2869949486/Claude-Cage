@@ -103,7 +103,7 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
             generation = UUID().uuidString
             number = 0
             key = identity
-            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 30)
+            configuration.minimumFrameInterval = CMTime(value: 1, timescale: 60)
             configuration.queueDepth = 3
             configuration.pixelFormat = kCVPixelFormatType_32BGRA
             let next = SCStream(filter: filter, configuration: configuration, delegate: self)
@@ -122,7 +122,7 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
             // two seconds even when ScreenCaptureKit reports no changed pixels.
             try await waitForFrame(after: sequence, seconds: seconds)
         }
-        guard key == identity else { throw Failure(7, "window_changed") }
+        guard key == identity else { throw Failure(7, "window_changed", detail: "frame_stream_replaced") }
         guard let buffer else { await stop(); throw Failure(8, "capture_no_frame") }
         return (buffer, sequence)
     }
