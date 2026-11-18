@@ -148,6 +148,9 @@ func (s *Server) macOSWindowConnection(w http.ResponseWriter, r *http.Request) {
 		if !json.Valid(data) {
 			return
 		}
+		if message.Request.Action == "status" {
+			s.archiveNativeDesktop(data)
+		}
 		_ = ws.SetWriteDeadline(time.Now().Add(12 * time.Second))
 		if ws.WriteJSON(struct {
 			ID     uint64          `json:"id"`

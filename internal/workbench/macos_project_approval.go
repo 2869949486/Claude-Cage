@@ -81,7 +81,7 @@ func (s *Server) macOSProjectApproval(w http.ResponseWriter, r *http.Request) {
 	default:
 	}
 	switch req.Action {
-	case "frame", "click":
+	case "frame", "click", "confirm":
 		input := macOSWindowRequest{Action: "project-" + req.Action, Project: macOSProjectPath(s.macosGuest.User, req.Workspace), Window: req.Window, PID: req.PID, Nonce: req.Nonce, X: req.X, Y: req.Y}
 		s.macOSWindowRPC(w, r, input)
 	default:

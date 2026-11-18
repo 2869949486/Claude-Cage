@@ -35,6 +35,32 @@ func (s *Server) syncMacGuestPassword(ctx context.Context) error {
 }
 
 func (s *Server) applyMacGuestPassword(ctx context.Context, id uuid.UUID, oldPassword, newPassword string) error {
+	return s.applyMacGuestAccount(ctx, id, "password", oldPassword+"\n"+newPassword+"\n")
+}
+
+// Only the first-setup route calls this, after checking its closed egress gate.
+func (s *Server) prepareMacGuestAccount(ctx context.Context) error {
+	s.macSetupAccountMu.Lock()
+	defer s.macSetupAccountMu.Unlock()
+	if s.macSetupAccountPrepared {
+		return nil
+	}
+	install, err := guestos.LoadInstallation(s.profile)
+	if err != nil || install == nil || s.macosGuest == nil || install.ID.String() != s.macosGuest.SetupID || !s.macSetupPending() {
+		return errors.New("首次设置身份已改变")
+	}
+	password, err := s.account.savedMacGuestPassword(ctx, install.ID)
+	if err != nil || password == "" {
+		return errors.New("客机凭据不可用，请核对安装记录与保险箱")
+	}
+	if err = s.applyMacGuestAccount(ctx, install.ID, "prepare", password+"\n"); err != nil {
+		return err
+	}
+	s.macSetupAccountPrepared = true
+	return nil
+}
+
+func (s *Server) applyMacGuestAccount(ctx context.Context, id uuid.UUID, operation, input string) error {
 	ctx, cancel := context.WithTimeout(ctx, 45*time.Second)
 	defer cancel()
 	provision, err := guestos.MacOSProvisionUser(s.profile)
@@ -63,7 +89,7 @@ func (s *Server) applyMacGuestPassword(ctx context.Context, id uuid.UUID, oldPas
 	out, err := command(ctx, `umask 077; mktemp -d /private/var/tmp/cage-account.XXXXXXXX`).Output()
 	stage := strings.TrimSpace(string(out))
 	if err != nil || !regexp.MustCompile(`^/private/var/tmp/cage-account\.[A-Za-z0-9]{8}$`).MatchString(stage) {
-		return errors.New("无法准备客机改密组件")
+		return errors.New("无法准备客机账户组件")
 	}
 	admin := " < /Users/" + provision + "/password"
 	defer func() {
@@ -76,11 +102,16 @@ func (s *Server) applyMacGuestPassword(ctx context.Context, id uuid.UUID, oldPas
 	if err = upload.Run(); err != nil {
 		return err
 	}
-	script := `chown -R root:wheel ` + stage + `; chmod 700 ` + stage + ` ` + stage + `/helper; chmod 600 ` + stage + `/input; exec ` + stage + `/helper password ` + id.String() + ` ` + s.macosGuest.User + ` < ` + stage + `/input`
+	script := `chown -R root:wheel ` + stage + `; chmod 700 ` + stage + ` ` + stage + `/helper; chmod 600 ` + stage + `/input; ` + stage + `/helper ` + operation + ` ` + id.String() + ` ` + s.macosGuest.User + ` < ` + stage + `/input`
+	if operation == "prepare" {
+		// Finish must use this helper too: older builds only revoke the former
+		// separate administrator, leaving the user's new membership behind.
+		script += `; /usr/bin/install -m 755 ` + stage + `/helper /usr/local/libexec/.cage-setup-account; /bin/mv -f /usr/local/libexec/.cage-setup-account /usr/local/libexec/cage-finish-initial-setup`
+	}
 	apply := command(ctx, `umask 077; cat > `+stage+`/input; sudo -S -p '' /bin/sh -ec `+shellescape.Quote(script)+admin)
-	apply.Stdin = strings.NewReader(oldPassword + "\n" + newPassword + "\n")
+	apply.Stdin = strings.NewReader(input)
 	if out, err := apply.CombinedOutput(); err != nil {
-		return fmt.Errorf("guest password update: %w: %.2048s", err, out)
+		return fmt.Errorf("guest account %s: %w: %.2048s", operation, err, out)
 	}
 	return nil
 }

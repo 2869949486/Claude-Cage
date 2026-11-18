@@ -42,6 +42,9 @@ type controlFile struct {
 	Controller ControllerIdentity `json:"controller"`
 }
 type Server struct {
+	shellLoginWatch                                  shellLoginWatchState
+	desktopCatalogRevision                           atomic.Uint64
+	desktopLoginWatch                                desktopWatchState
 	desktopViews                                     displayViewDemand
 	desktopDisplayUpdate                             func(bool) error
 	browserViews                                     displayViewDemand
@@ -49,6 +52,8 @@ type Server struct {
 	agentNativeQueue                                 agentNativeQueue
 	macSetupProjectsChecked                          time.Time
 	macSetupProjectsAttempt                          time.Time
+	macSetupAccountMu                                sync.Mutex
+	macSetupAccountPrepared                          bool
 	macSetupSharingConfirmed                         bool
 	macSetupSharingAttempt                           time.Time
 	macSetupSharingStatus                            macOSScreenSharingStatus
@@ -81,6 +86,8 @@ type Server struct {
 	closing                                          bool
 	shutdown                                         func()
 	claudeAccounts                                   claudeAccountManager
+	tokenUsage                                       tokenUsageManager
+	accountNetworks                                  accountNetworks
 	favoritesMu                                      sync.Mutex
 	diagnosticMu                                     sync.Mutex
 	diagnosticRateMu                                 sync.Mutex
@@ -126,6 +133,7 @@ type Server struct {
 	safetyOp                                         sync.Mutex
 	networkPaused                                    bool
 	proxyNetworkLost                                 bool
+	proxyNetworkRetry                                time.Time
 	checkCancel                                      context.CancelFunc
 	lifeContext                                      context.Context
 	lifeCancel                                       context.CancelFunc
@@ -390,6 +398,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/diagnostics/export", s.diagnosticExport)
 	mux.HandleFunc("GET /api/claude-accounts", s.listClaudeAccounts)
 	mux.HandleFunc("POST /api/claude-accounts", s.mutateClaudeAccounts)
+	mux.HandleFunc("GET /api/token-usage", s.getTokenUsage)
+	mux.HandleFunc("POST /api/token-usage", s.mutateTokenUsage)
 	mux.HandleFunc("GET /api/vault", s.vaultList)
 	mux.HandleFunc("POST /api/vault", s.vaultMutation)
 	mux.HandleFunc("POST /api/vault/browser", s.vaultBrowser)
@@ -430,6 +440,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/appearance/codex", s.codexAppearance)
 	mux.HandleFunc("POST /api/settings/probe", s.probe)
 	mux.HandleFunc("GET /api/proxy", s.proxyStatus)
+	mux.HandleFunc("GET /api/proxy/local-configs", s.proxyLocalConfigs)
 	mux.HandleFunc("POST /api/proxy/delay", s.proxyDelay)
 	mux.HandleFunc("GET /api/proxy/connections", s.proxyConnections)
 	mux.HandleFunc("GET /api/proxy/logs", s.proxyLogs)
@@ -478,6 +489,10 @@ func (s *Server) handler() http.Handler {
 		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale || s.windowsGuest != nil, "pixel_wheel": s.macosGuest == nil && s.windowsGuest == nil})
 	})
 	mux.HandleFunc("GET /api/vnc", s.vnc)
+	mux.HandleFunc("GET /api/desktop-instances", s.desktopCatalog)
+	mux.HandleFunc("POST /api/desktop-instances", s.newAccountDesktop)
+	mux.HandleFunc("GET /api/desktop-instances/{id}/{action}", s.accountDesktop)
+	mux.HandleFunc("POST /api/desktop-instances/{id}/{action}", s.accountDesktop)
 	mux.HandleFunc("GET /api/claude-desktop", s.claudeDesktopStatus)
 	mux.HandleFunc("GET /api/claude-desktop/vnc-credentials", s.claudeDesktopCredentials)
 	mux.HandleFunc("GET /api/claude-desktop/vnc", s.claudeDesktopVNC)
@@ -702,7 +717,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		projectError = "当前本机项目已断开，请重新共享或选择其他项目。"
 	}
 	view := map[string]any{
-		"projects": projects, "project_groups": groups, "ready": s.ready, "vm_running": running,
+		"account_desktops_supported": s.accountDesktopsSupported(),
+		"desktop_catalog_revision":   s.desktopCatalogRevision.Load(),
+		"projects":                   projects, "project_groups": groups, "ready": s.ready, "vm_running": running,
 		"workspace": s.workspaceLocked(), "environment_directory": s.environmentDir(),
 		"environment_identity_directory": cage.EnvironmentIdentityDir(s.profile),
 		"local_vm_storage":               s.localVMStorage(), "project_error": projectError, "project_errors": s.projectErrors,
@@ -752,6 +769,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.MobileRelay = s.preferences.MobileRelay
 	input.BalancedDisplay = s.preferences.BalancedDisplay
 	input.ProjectFileCache = s.preferences.ProjectFileCache
+	input.ReuseClaudeLogin = s.preferences.ReuseClaudeLogin
 	input.TransferAllowUnclean = s.preferences.TransferAllowUnclean
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)

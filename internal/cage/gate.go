@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/netip"
+	"reflect"
 	"sync"
 	"time"
 
@@ -123,7 +124,7 @@ func (g *EgressGate) SyncProxyRevision(cfg Config) error {
 		before.ExitPolicy, after.ExitPolicy = ExitPolicy{}, ExitPolicy{}
 	}
 	before.ProxyRevision, after.ProxyRevision = "", ""
-	if before != after || cfg.ProxyRevision == "" {
+	if !reflect.DeepEqual(before, after) || cfg.ProxyRevision == "" {
 		g.mu.Unlock()
 		return errors.New("出口地址或环境设置变化需要重启环境")
 	}

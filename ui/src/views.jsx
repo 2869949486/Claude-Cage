@@ -330,7 +330,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       if (disposed || !visibleRef.current || !focusedRef.current || !isClaudeLoginLink(uri)) return;
       try {
         const tab = await api(`/terminals/${session.id}/login-link`, { url: uri });
-        if (!disposed && visibleRef.current && focusedRef.current) onLoginTab?.(tab);
+        if (!disposed && visibleRef.current && focusedRef.current) await onLoginTab?.({ ...tab, url: uri });
       } catch (error) { if (!disposed) onStatus(error.message); }
     };
     const terminal = new Terminal({
@@ -596,7 +596,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       terminal.dispose();
       instance.current = null;
     };
-  }, [session.id, attempt]);
+  }, [session.id, session.cli_session_id, attempt]);
   useEffect(() => {
     if (visible) {
       fit.current?.fit();
@@ -629,7 +629,7 @@ export function TerminalView({ session, visible, focused = true, onStatus, onCon
       {!connected && (
         <div className="terminal-note">
           {session.closed
-            ? "终端会话已结束。可点击项目右侧的终端图标新建终端。"
+            ? session.login_notice || "终端会话已结束。可点击项目右侧的终端图标新建终端。"
             : "正在连接终端…"}
           {!session.closed && (
             <button onClick={() => setAttempt((v) => v + 1)}>

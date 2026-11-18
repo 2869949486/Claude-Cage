@@ -8,9 +8,9 @@ import { open } from "node:fs/promises";
 import http from "node:http";
 import { auditBrowser } from "./browser-audit.mjs";
 import { BrowserVault } from "./browser-vault.mjs";
-import { LoginBrowser } from "./browser-login.mjs";
+import { LoginBrowser, isClaudeSignIn } from "./browser-login.mjs";
 import { PrivateBrowser } from "./browser-private.mjs";
-import { browserCookies } from "./browser-cookies.mjs";
+import { browserCookies, AccountLoginCookies } from "./browser-cookies.mjs";
 import { BrowserExtensions, extensionUploadLimit } from "./browser-extensions.mjs";
 import { BrowserClipboard } from "./browser-clipboard.mjs";
 import { BrowserVisibility } from "./browser-visibility.mjs";
@@ -19,7 +19,7 @@ import { nativeInput } from "./native-input.mjs";
 import { createDisplaySettings, displayDensity } from "./display-density.mjs";
 import { DownloadManager } from "./browser-downloads.mjs";
 import { UploadManager, uploadLimit } from "./browser-uploads.mjs";
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash, randomUUID, timingSafeEqual } from "node:crypto";
 
 const config = JSON.parse(
   readFileSync("/etc/claude-cage/browser-control.json", "utf8"),
@@ -40,7 +40,7 @@ try {
 } catch {}
 function rememberSelection() {
   const tab = targets.get(activeId);
-  if (tab && !tab.login && !tab.incognito)
+  if (tab && !tab.login && !tab.incognito && !tab.routeScoped)
     try {
       writeFileSync(selectionFile, JSON.stringify({ url: tab.url }), {
         mode: 0o600,
@@ -84,6 +84,7 @@ const flags = [
   "--restore-last-session",
   "--no-default-browser-check",
   "--disable-quic",
+  "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
   "--disable-session-crashed-bubble",
   "--window-size=1440,900",
   ...(displaySettings.available ? [] : [`--force-device-scale-factor=${displayScale}`]),
@@ -105,7 +106,7 @@ let navigation = { id: "", back: false, forward: false }, navigationSequence = 0
 // Context IDs and unique blank-page URLs are registered before target creation.
 const auditExclusions = new Set();
 const auditCreations = new Set(), deferredTargetInfo = new Map();
-const loginBrowser = new LoginBrowser(cdp);
+const loginBrowser = new LoginBrowser(cdp, new AccountLoginCookies("/home/cage-browser/LoginProfiles"));
 const privateBrowser = new PrivateBrowser(cdp, downloadPath);
 const browserExtensions = new BrowserExtensions({ directory: "/home/cage-browser", cdp, control: splitController, protectedID: extensionId });
 const pending = new Map(),
@@ -318,6 +319,7 @@ chrome.stdio[4].on("data", (chunk) => {
       auditExclusions.delete(p.targetId);
       deferredTargetInfo.delete(p.targetId);
       inspectors.delete(p.targetId);
+      void mutate(() => loginBrowser.targetClosed(p.targetId)).catch(() => {});
       if (p.targetId === splitTarget) {
         splitTarget = null; splitSession = null;
         if (!shuttingDown) void mutate(async () => {
@@ -844,7 +846,7 @@ const server = http.createServer(async (req, res) => {
     let text = "";
     for await (const chunk of req) {
       text += chunk;
-      if (text.length > (req.url === "/paste-image" ? 28 * 1024 * 1024 : req.url === "/paste-text" ? 12 * 1024 * 1024 + 4096 : 65536)) throw new Error("Request too large");
+      if (text.length > (req.url === "/paste-image" ? 28 * 1024 * 1024 : req.url === "/paste-text" ? 12 * 1024 * 1024 + 4096 : req.url === "/cookies" ? 1 << 20 : 65536)) throw new Error("Request too large");
     }
     const input = JSON.parse(text || "{}");
     // Ahead of the queue below: a scroll does not wait for a tab operation.
@@ -898,12 +900,14 @@ const server = http.createServer(async (req, res) => {
         try { return await vault.request(input); }
         catch (error) { return { vaultError: error.message }; }
       }
-      if (req.url === "/login-open") {
-        return loginBrowser.open(input.login, input.url, async tab => {
-          if (!targets.has(tab.targetId)) targets.set(tab.targetId, loginBrowser.tab(tab));
+      if (req.url === "/login-open" || (req.url === "/new" && (input.route || isClaudeSignIn(input.url)))) {
+        const external = req.url === "/new" && !isClaudeSignIn(input.url);
+        const privateLogin = !external && !existsSync("/etc/claude-cage/login-browser-mode");
+        return loginBrowser.open(input.login || randomUUID(), input.url, async tab => {
+          targets.set(tab.targetId, loginBrowser.tab(tab));
           await activate(tab.targetId, true);
           return session(tab.targetId);
-        });
+        }, { private: privateLogin, route: input.route, account: input.account, external });
       }
       if (req.url === "/login-finish") {
         await loginBrowser.finish(input.login);
@@ -1085,6 +1089,6 @@ process.on("SIGTERM", () => {
   shuttingDown = true;
   server.close();
   void phoneBrowser?.dispose();
-  cdp("Browser.close").catch(() => {});
+  void loginBrowser.shutdown().finally(() => cdp("Browser.close")).catch(() => {});
   setTimeout(() => process.exit(0), 2000).unref();
 });

@@ -5,8 +5,25 @@ enum GuestDiagnostic {
     private static let limit = 1 << 20
     private static let sources = ["window", "clipboard"]
 
+    // A failing check can repeat with every pointer move. One line a second
+    // for each reason says as much without a file write per event.
+    private final class Recent: @unchecked Sendable {
+        private let lock = NSLock()
+        private var times: [String: TimeInterval] = [:]
+        func admit(_ key: String) -> Bool {
+            let now = ProcessInfo.processInfo.systemUptime
+            lock.lock(); defer { lock.unlock() }
+            if let last = times[key], now - last < 1 { return false }
+            if times.count > 64 { times.removeAll() }
+            times[key] = now
+            return true
+        }
+    }
+    private static let recent = Recent()
+
     static func record(_ source: String, _ reason: String) {
-        guard sources.contains(source), reason.range(of: "^[a-zA-Z][a-zA-Z0-9_]{0,95}$", options: .regularExpression) != nil else { return }
+        guard sources.contains(source), reason.range(of: "^[a-zA-Z][a-zA-Z0-9_]{0,95}$", options: .regularExpression) != nil,
+              recent.admit(source + ":" + reason) else { return }
         let directory = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Logs/Cage")
         try? append(source, reason, directory: directory)
     }

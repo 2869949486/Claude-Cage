@@ -22,6 +22,7 @@ const { page, browser, errors } = await createWorkbench({
       canvas.width = 800; canvas.height = 600;
       const context = canvas.getContext("2d");
       context.fillStyle = "#f7f5f1"; context.fillRect(0, 0, 800, 600);
+      context.fillStyle = "#202020"; context.font = "24px sans-serif"; context.fillText("Claude", 60, 100);
       return canvas.toDataURL().split(",")[1];
     }), "base64");
     await page.addInitScript(() => {
@@ -93,6 +94,7 @@ try {
   await page.evaluate(() => { window.cageWindowVisible = true; window.dispatchEvent(new Event("cage-window-visibility")); });
   await until(() => subscriptions.length > hiddenSubscriptions);
   await page.waitForFunction(() => document.querySelector(".mac-claude-frame img")?.naturalWidth === 800);
+  assert.equal(actions.filter(action => action === "launch").length,2,"returning to the view must restore application focus");
   assert.deepEqual(errors, []);
   console.log("Binary push, decode acknowledgements, independent input, resize, blob cleanup, hide and resume passed.");
 } finally { await browser.close(); }

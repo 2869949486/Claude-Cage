@@ -136,7 +136,7 @@ export async function browserSettingsInputs(info, profile) {
     prefs.intl ?? null, local.intl ?? null]);
 }
 
-export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs, profile }) {
+export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs, profile, privateLogin = () => true }) {
   let homepage, observed, focusSequence = 0, sequence = 1;
   let lastEventStatus, sampledAt = 0;
   const capabilities = { nativeWindow: true, login: true, editor: true };
@@ -188,13 +188,16 @@ export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs,
         catch (error) { if (error.code !== "ENOENT") throw error; }
       }
       const value = await auditBrowser(input, launch);
-      // A newly created Chrome profile can finish writing Local State and
-      // Preferences a few seconds after the first page finishes rendering.
+      // A real page can report before a new Chrome profile flushes Local State
+      // and Preferences. Wait for that snapshot without launching another tab;
+      // cancellation still stops the wait and no partial sample is authorized.
       let key;
-      for (let attempt = 0; attempt < 12; attempt++) {
+      const profileDeadline = Date.now() + 20000;
+      for (;;) {
         try { key = await settingsInputs(await status(signal)); break; }
         catch (error) {
-          if (error.code !== "ENOENT" || attempt === 11) throw error;
+          if (error.code !== "ENOENT") throw error;
+          if (Date.now() >= profileDeadline) throw failure("browser_profile_not_ready", "Chrome 的配置文件尚未就绪，请稍后重新检测，无需重新安装系统");
           await delay(250, undefined, { signal });
         }
       }
@@ -221,7 +224,11 @@ export function nativeBrowserDispatch({ window, editor, tailnet, settingsInputs,
       }
       const url = webURL(input.url);
       if (url.protocol !== "https:" || !officialLoginHosts.has(url.host)) throw failure("invalid_input", "仅可打开官方登录地址");
-      await window("launch", { login: input.login, url: url.href }, signal);
+      const isolated = input.private ?? privateLogin();
+      if (input.account && !/^[a-f0-9]{24}$/.test(input.account)) throw failure("invalid_input", "授权账号无效");
+      const binding = isolated || input.account ? {login: input.login} : {};
+      if (!isolated && input.account) binding.login_profile = input.account;
+      await window("launch", { ...binding, url: url.href }, signal);
       focusSequence = ++sequence;
       lastEventStatus = undefined;
       return { id: tabID };

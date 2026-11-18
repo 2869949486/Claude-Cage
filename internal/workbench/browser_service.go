@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/containerenv"
@@ -21,34 +22,35 @@ var (
 type browserInputError struct{ error }
 
 type browserInput struct {
-	Incognito      bool    `json:"incognito,omitempty"`
-	Enabled        *bool   `json:"enabled,omitempty"`
-	CookieKey      string  `json:"cookieKey,omitempty"`
-	Scope          string  `json:"scope,omitempty"`
-	Query          string  `json:"query,omitempty"`
-	Page           int     `json:"page,omitempty"`
-	Left           string  `json:"left,omitempty"`
-	Right          string  `json:"right,omitempty"`
-	ID             string  `json:"id"`
-	URL            string  `json:"url"`
-	X              int     `json:"x,omitempty"`
-	Y              int     `json:"y,omitempty"`
-	DeltaX         int     `json:"deltaX,omitempty"`
-	DeltaY         int     `json:"deltaY,omitempty"`
-	Width          int     `json:"width,omitempty"`
-	Height         int     `json:"height,omitempty"`
-	Scale          float64 `json:"scale,omitempty"`
-	Workspace      string  `json:"workspace,omitempty"`
-	ProjectID      string  `json:"project_id,omitempty"`
-	ProjectGrant   string  `json:"grant,omitempty"`
-	Text           string  `json:"text,omitempty"`
-	Mode           string  `json:"mode,omitempty"`
-	Target         string  `json:"target,omitempty"`
-	Session        string  `json:"session,omitempty"`
-	Context        string  `json:"context,omitempty"`
-	Sequence       int     `json:"sequence"`
-	SelectionStart int     `json:"selectionStart,omitempty"`
-	SelectionEnd   int     `json:"selectionEnd,omitempty"`
+	Incognito      bool     `json:"incognito,omitempty"`
+	Enabled        *bool    `json:"enabled,omitempty"`
+	CookieKey      string   `json:"cookieKey,omitempty"`
+	CookieKeys     []string `json:"cookieKeys,omitempty"`
+	Scope          string   `json:"scope,omitempty"`
+	Query          string   `json:"query,omitempty"`
+	Page           int      `json:"page,omitempty"`
+	Left           string   `json:"left,omitempty"`
+	Right          string   `json:"right,omitempty"`
+	ID             string   `json:"id"`
+	URL            string   `json:"url"`
+	X              int      `json:"x,omitempty"`
+	Y              int      `json:"y,omitempty"`
+	DeltaX         int      `json:"deltaX,omitempty"`
+	DeltaY         int      `json:"deltaY,omitempty"`
+	Width          int      `json:"width,omitempty"`
+	Height         int      `json:"height,omitempty"`
+	Scale          float64  `json:"scale,omitempty"`
+	Workspace      string   `json:"workspace,omitempty"`
+	ProjectID      string   `json:"project_id,omitempty"`
+	ProjectGrant   string   `json:"grant,omitempty"`
+	Text           string   `json:"text,omitempty"`
+	Mode           string   `json:"mode,omitempty"`
+	Target         string   `json:"target,omitempty"`
+	Session        string   `json:"session,omitempty"`
+	Context        string   `json:"context,omitempty"`
+	Sequence       int      `json:"sequence"`
+	SelectionStart int      `json:"selectionStart,omitempty"`
+	SelectionEnd   int      `json:"selectionEnd,omitempty"`
 }
 
 func (s *Server) browserClient() *browserClient {
@@ -112,10 +114,20 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 			}
 		}
 		if action == "cookies" && (input.ID == "" ||
-			(input.Mode != "list" && input.Mode != "details" && input.Mode != "delete" && input.Mode != "clear") ||
+			(input.Mode != "list" && input.Mode != "details" && input.Mode != "delete" && input.Mode != "delete-selected" && input.Mode != "clear") ||
 			(input.Scope != "site" && input.Scope != "all") || len(input.Query) > 800 || input.Page < 0 ||
 			((input.Mode == "delete" || input.Mode == "details") && len(input.CookieKey) != 64)) {
 			return nil, browserInputError{errors.New("Cookie 操作或目标标签无效")}
+		}
+		if action == "cookies" && input.Mode == "delete-selected" {
+			if len(input.CookieKeys) == 0 {
+				return nil, browserInputError{errors.New("请选择要删除的 Cookie")}
+			}
+			for _, key := range input.CookieKeys {
+				if len(key) != 64 || strings.Trim(key, "0123456789abcdef") != "" {
+					return nil, browserInputError{errors.New("所选 Cookie 无效")}
+				}
+			}
 		}
 		if (action == "copy-context" || action == "copy" || action == "cut") && (input.ID == "" || !validInputToken(input.Context)) {
 			return nil, browserInputError{errors.New("复制操作或目标标签无效")}

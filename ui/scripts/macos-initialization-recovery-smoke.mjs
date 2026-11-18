@@ -6,6 +6,8 @@ if (evidence) await fs.mkdir(evidence, { recursive: true });
 
 for (const mode of ["project-approval", "legacy", "guest-login", "filesystem-permission", "network", "restart"]) {
   let connected = false, checks = 0, starts = 0, stopped = false, stopFinished = false;
+  let didStart;
+  const started = new Promise(resolve => { didStart = resolve; });
   const workspace = "/preview/shared-workspace";
   const fixture = await createWorkbench({ initialization: { required: true, tracked: true, started: true, prepared: true }, beforeNavigate: async (page, state) => {
     Object.assign(state.account, { guest_system: "macos" });
@@ -33,43 +35,48 @@ for (const mode of ["project-approval", "legacy", "guest-login", "filesystem-per
     await page.route("**/api/start", route => {
       assert.ok(stopped && stopFinished, "start ran before stop completed"); starts++; state.status.vm_running = true;
       state.status.job = { id: "restarted", kind: "start", running: false, message: "已完成" };
+      didStart();
       return route.fulfill({ json: state.status.job });
     });
   }});
   const { page, state, browser, errors } = fixture;
   try {
-    await page.getByRole("heading", { name: "环境已启动，等待联网检查", exact: true }).waitFor();
+    const approval = page.getByRole("dialog", { name: "允许使用这个文件夹" });
+    if (["project-approval", "legacy"].includes(mode)) {
+      await approval.getByRole("button", { name: "暂不授权", exact: true }).click();
+      assert.equal(checks, 0, "automatic presentation must not grant file access");
+    }
+    if (mode === "restart") {
+      await started;
+      await approval.getByRole("button", { name: "暂不授权", exact: true }).click();
+      assert.equal(await page.getByRole("dialog", { name: "重启虚拟 Mac 并检查？" }).count(), 0);
+      assert.equal(starts, 1);
+    }
+    await page.getByRole("heading", { name: "系统已安装，完成使用检查", exact: true }).waitFor();
     await page.getByRole("button", { name: "查看操作详情", exact: true }).click();
     const details = page.getByRole("dialog", { name: "初始化操作详情" });
-    await details.getByText("请在 Cage 显示的客机授权窗口中允许此项目，然后验证授权。", { exact: true }).waitFor();
+    if (mode !== "restart") await details.getByText("请在 Cage 显示的客机授权窗口中允许此项目，然后验证授权。", { exact: true }).waitFor();
+    else assert.equal(state.status.job.error, undefined, "successful restart retained the old failure");
     await details.getByText("客机文件夹授权未完成", { exact: true }).waitFor();
     await details.getByRole("button", { name: "关闭面板" }).click();
-    if (mode === "guest-login") await page.getByRole("button", { name: "登录客机账户", exact: true }).waitFor();
+    if (mode === "guest-login") await page.getByRole("button", { name: "查看客机登录界面", exact: true }).waitFor();
     if (mode === "filesystem-permission") await page.getByRole("button", { name: "打开客机授权设置", exact: true }).waitFor();
     if (["project-approval", "legacy"].includes(mode)) {
-      const action = mode === "project-approval" ? "打开工作区授权" : "连接工作区并继续检查";
+      const action = mode === "project-approval" ? "确认文件夹并继续" : "连接文件夹并继续检查";
       if (evidence) await page.screenshot({ path: `${evidence}/${mode}.png`, fullPage: true });
       await page.reload();
-      await page.getByRole("button", { name: action, exact: true }).click();
-      const approval = page.getByRole("dialog", { name: "允许客机访问所选项目" });
-      await approval.getByRole("button", { name: "取消", exact: true }).click();
+      await approval.getByRole("button", { name: "暂不授权", exact: true }).click();
       assert.equal(checks, 0, "cancel must not start network verification");
       await page.getByRole("button", { name: action, exact: true }).click();
-      await approval.getByRole("button", { name: "验证授权", exact: true }).waitFor();
+      await approval.getByText("查看 macOS 授权窗口 / 已允许但未继续？", { exact: true }).click();
+      await approval.getByRole("button", { name: "我已允许，重新检查", exact: true }).waitFor();
       connected = true;
-      await approval.getByRole("button", { name: "验证授权", exact: true }).click();
-      await page.getByRole("button", { name: "进入工作台", exact: true }).waitFor();
+      await approval.getByRole("button", { name: "我已允许，重新检查", exact: true }).click();
+      await page.getByRole("complementary", { name: "项目与终端" }).waitFor();
       assert.equal(checks, 1);
-    } else if (mode === "restart") {
-      await page.getByRole("button", { name: "保存后重启并检查", exact: true }).click();
-      await page.getByRole("dialog", { name: "重启虚拟 Mac 并检查？" }).getByRole("button", { name: "重启并检查", exact: true }).click();
-      await page.waitForFunction(() => ![...document.querySelectorAll('[role="dialog"]')].length);
-      await page.getByRole("button", { name: "查看操作详情" }).waitFor();
-      await page.waitForFunction(() => ![...document.querySelectorAll('button')].some(b => b.textContent === '停止安装'));
-      assert.equal(starts, 1);
-    } else {
-      await page.getByRole("button", { name: "运行网络与隔离检查", exact: true }).click();
-      await page.getByRole("button", { name: "进入工作台", exact: true }).waitFor();
+    } else if (mode !== "restart") {
+      await page.getByRole("button", { name: "重新检查并继续", exact: true }).click();
+      await page.getByRole("complementary", { name: "项目与终端" }).waitFor();
     }
     await page.setViewportSize({ width: 390, height: 700 });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

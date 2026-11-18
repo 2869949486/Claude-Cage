@@ -111,9 +111,21 @@ func (s *Server) checkMacOSGuest(ctx context.Context) error {
 	}
 	s.publishGate(state)
 	probe := `test "$(uname -s)" = Darwin && [[ $(sysctl -n hw.model) == VirtualMac* ]] && test "$(id -un)" = ` +
-		shellescape.Quote(s.macosGuest.User) + ` && [[ " $(id -Gn) " != *" admin "* ]]`
+		shellescape.Quote(s.macosGuest.User)
 	if s.macosGuest.Backend == guestos.MacOSQEMU {
-		probe = `/usr/local/libexec/cage-guest-check --expect ` + shellescape.Quote(s.macosGuest.UUID) + ` && test "$(id -un)" = ` + shellescape.Quote(s.macosGuest.User) + ` && [[ " $(id -Gn) " != *" admin "* ]]`
+		probe = `/usr/local/libexec/cage-guest-check --expect ` + shellescape.Quote(s.macosGuest.UUID) + ` && test "$(id -un)" = ` + shellescape.Quote(s.macosGuest.User)
+	}
+	// First setup uses the bound user's temporary administrator membership.
+	// Its gate stays closed and routes stay restricted until the root helper
+	// verifies the setup receipt and revokes that membership during completion.
+	if !s.macSetupPending() {
+		probe += ` && [[ " $(id -Gn) " != *" admin "* ]]`
+	}
+	s.mu.Lock()
+	syncLogin, reuse := !s.ready, s.preferences.ReuseClaudeLogin
+	s.mu.Unlock()
+	if syncLogin && !s.macSetupPending() {
+		probe += " && ( " + macLoginPreferences(reuse) + " )"
 	}
 	if _, err := s.guest(ctx, probe); err != nil {
 		return errors.New("无法以已绑定的普通用户连接到这台虚拟 Mac，请检查客机身份和 SSH 登录")

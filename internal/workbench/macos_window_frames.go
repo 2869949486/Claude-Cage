@@ -4,7 +4,9 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"image"
@@ -35,6 +37,53 @@ type macOSFrameHeader struct {
 	TargetMs      float64 `json:"targetMs,omitempty"`
 	LayoutMs      float64 `json:"layoutMs,omitempty"`
 	Cached        bool    `json:"cached,omitempty"`
+	// Video frames: an H.264 access unit of length-prefixed NAL units. A key
+	// frame carries the decoder configuration record.
+	Key          bool   `json:"key,omitempty"`
+	VideoConfig  string `json:"videoConfig,omitempty"`
+	VideoCropTop int    `json:"videoCropTop,omitempty"`
+	VideoCorner  int    `json:"videoCorner,omitempty"`
+	VideoEdge    string `json:"videoEdge,omitempty"`
+}
+
+const macOSVideoMIME = "video/avc"
+
+// The host relays compressed video without decoding it. Check that the record
+// is a whole sequence of NAL units and that a key frame can configure a decoder.
+func validMacOSVideoFrame(header macOSFrameHeader, data []byte) bool {
+	if header.VideoCropTop < 0 || header.VideoCropTop > 8192 || header.VideoCorner < 0 || header.VideoCorner > 96 || len(header.VideoConfig) > 4096 {
+		return false
+	}
+	if edge := header.VideoEdge; edge != "" {
+		if len(edge) != 7 || edge[0] != '#' {
+			return false
+		}
+		if _, err := hex.DecodeString(edge[1:]); err != nil {
+			return false
+		}
+	}
+	if header.Key {
+		config, err := base64.StdEncoding.DecodeString(header.VideoConfig)
+		// avcC: version 1 and four-byte NAL lengths, as the walk below assumes.
+		if err != nil || len(config) < 7 || config[0] != 1 || config[4]&3 != 3 {
+			return false
+		}
+	} else if header.VideoConfig != "" {
+		return false
+	}
+	units := 0
+	for len(data) > 0 {
+		if len(data) < 4 {
+			return false
+		}
+		size := int(binary.BigEndian.Uint32(data))
+		if size == 0 || size > len(data)-4 {
+			return false
+		}
+		data = data[4+size:]
+		units++
+	}
+	return units > 0
 }
 
 // Each record contains a big-endian JSON length, metadata, and the original
@@ -74,6 +123,15 @@ func readMacOSFrame(reader io.Reader) (macOSFrameHeader, []byte, error) {
 	if _, err := io.ReadFull(reader, data); err != nil {
 		return header, nil, err
 	}
+	if header.MIME == macOSVideoMIME {
+		if !validMacOSVideoFrame(header, data) {
+			return header, nil, errors.New("窗口画面编码无效")
+		}
+		return header, data, nil
+	}
+	if header.Key || header.VideoConfig != "" || header.VideoCropTop != 0 || header.VideoCorner != 0 || header.VideoEdge != "" {
+		return header, nil, errors.New("窗口画面编码无效")
+	}
 	config, format, err := image.DecodeConfig(bytes.NewReader(data))
 	if err != nil || (format != "png" && format != "jpeg") || header.MIME != "image/"+format ||
 		config.Width != header.PixelWidth || config.Height != header.PixelHeight {
@@ -88,6 +146,8 @@ type macOSFrameSubscription struct {
 	Scale    float64 `json:"scale"`
 	Revision uint64  `json:"revision"`
 	Ack      string  `json:"ack"`
+	// The viewer can decode H.264 itself; otherwise it receives still images.
+	Video bool `json:"video,omitempty"`
 }
 
 // Frame waits have their own SSH channel so input never queues behind capture.
@@ -191,7 +251,10 @@ func relayMacOSFrames(parent context.Context, ws *websocket.Conn, input io.Write
 			after, revision = "", config.Revision
 		}
 		request := macOSWindowRequest{Action: "frame", Width: config.Width, Height: config.Height, Scale: config.Scale,
-			After: after, KeepAlive: true, Wait: true, Binary: true, Refresh: true}
+			After: after, KeepAlive: true, Wait: true, Binary: true, Refresh: true,
+			// A viewer that has no earlier frame of this size cannot decode a
+			// difference from one, so the first frame after a change is whole.
+			Video: config.Video, Keyframe: config.Video && after == ""}
 		if browser {
 			request.Surface, request.Action = "browser", "browser-frame"
 		}

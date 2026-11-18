@@ -207,8 +207,11 @@ func installMacWorkbench(ctx context.Context, profile, state string, l *vm.Lima)
 	if err != nil {
 		return err
 	}
+	// Provisioning has verified the root-owned setup receipt and bound this
+	// account's UID/GUID. It remains an administrator until first setup finishes;
+	// checking for a standard account here would reject every new v2 install.
 	verify := exec.CommandContext(ctx, "/usr/bin/ssh", append(ordinary, "-T", "cage-macos", "--",
-		`test "$(id -un)" = `+ordinaryUser+` && test "$(uname -s)" = Darwin && ! id -Gn | /usr/bin/grep -qw admin`)...)
+		`test "$(id -un)" = `+ordinaryUser+` && test "$(uname -s)" = Darwin`)...)
 	if err := verify.Run(); err != nil {
 		return errors.New("普通客机账户无法通过已验证的 SSH 通道连接，已保留安装进度")
 	}

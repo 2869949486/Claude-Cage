@@ -238,6 +238,10 @@ func (s *Server) macOSVMLayout() (bool, bool) {
 func (s *Server) macOSBrowserObservation(ctx context.Context, cfg cage.Config, network bool) (browserObservation, error) {
 	var observation browserObservation
 	data, err := s.nativeBrowserClient().request(ctx, "POST", "/audit", map[string]any{"timezone": cfg.Timezone, "network": network})
+	var failure windowsBrowserFailure
+	if errors.As(err, &failure) && failure.code != "browser_operation_failed" {
+		return observation, failure
+	}
 	if err != nil || json.Unmarshal(data, &observation) != nil || observation.Platform == "" {
 		return observation, errors.New("无法在虚拟 Mac 的实际浏览器页面读取观测结果")
 	}
@@ -299,7 +303,11 @@ func (s *Server) checkMacOSNetwork() error {
 			return err
 		}
 		if state.Configuration != cfg.Fingerprint() {
-			return errors.New("网络设置已保存，请重启 macOS 客机，登录后重新检测")
+			state, err = client.SyncProxyRevision(s.operationContext())
+			if err != nil {
+				return err
+			}
+			s.publishGate(state)
 		}
 	}
 	ctx := s.operationContext()

@@ -244,12 +244,12 @@ export function SettingsPanel({
         </nav>
       </aside>
       <div className="settings-main">
-        <div className={section === "archived-sessions" ? "settings-content settings-content--archives" : section === "mobile" ? "settings-content settings-content--remote" : "settings-content"} ref={contentRef}>
+        <div className={section === "archived-sessions" ? "settings-content settings-content--archives" : section === "account" ? "settings-content settings-content--account" : section === "mobile" ? "settings-content settings-content--remote" : "settings-content"} ref={contentRef}>
           {section === "appearance" && <AppearanceSettings />}
           {section === "about" && <AboutSettings />}
           {section === "archived-sessions" && <ArchivedSessions ready={status.ready && !busy} />}
           {section === "vault" && <PasswordVaultSettings onConfirm={onConfirm} onDirty={setAccountDirty} />}
-          {section === "account" && <AccountSettings busy={busy} onDirty={setAccountDirty} />}
+          {section === "account" && <AccountSettings busy={busy} onDirty={setAccountDirty} onConfirm={onConfirm} />}
           <fieldset className="settings-fields" disabled={busy && !(section === "project" && status.storage_recovery?.required)}>
             {section === "mobile" && (isRemoteClient()
               ? <section className="section-title"><h3>连接这台电脑</h3><p>请先切换到这台电脑的本机环境，再生成或管理手机配对码。</p></section>
@@ -518,6 +518,15 @@ export function SettingsPanel({
                   选择“Claude 终端”后，在所选项目中运行此命令，例如 claude --continue。
                   留空使用 claude；保存后仅影响新建的 Claude 终端，退出 Claude 后可继续使用 shell。
                 </p>
+                {typeof current.reuse_claude_login === "boolean" && <label className="toggle-row">
+                  <span>
+                    <strong>使用无痕标签页登录 Claude</strong>
+                    <small>{linuxGuest ? "每次授权使用独立的浏览器会话。关闭后可复用登录状态。" :
+                      "适用于工作台接管的 Claude Code 授权页。原生 Desktop 直接打开的登录页使用系统浏览器设置。"}</small>
+                  </span>
+                  <input type="checkbox" role="switch" checked={!draft.reuse_claude_login}
+                    onChange={(event) => update("reuse_claude_login", !event.target.checked)} />
+                </label>}
                 {typeof current.balanced_display === "boolean" && <label className="toggle-row">
                   <span>
                     <strong>优先流畅</strong>

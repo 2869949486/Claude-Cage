@@ -33,6 +33,7 @@ import { InitializationGate } from "./initialization";
 import { MacOSLogin } from "./macos-login";
 import { MacOSAppWindow } from "./macos-claude-window";
 import { ProjectRecovery } from "./project-recovery";
+import { DesktopPanes, useAccountDesktops } from "./account-desktops";
 import { ClaudeDesktop } from "./claude-desktop";
 import { ClaudeAccountsPanel, useClaudeAccounts } from "./claude-accounts";
 import { AccountProvider, AccountGate, useAccount } from "./account";
@@ -57,8 +58,9 @@ import { SafetyChecklistContext, SafetyMessage } from "./safety-message";
 import { networkState, isGuestLocalURL } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
+import { NetworkSpeed } from "./network-speed";
 import { useWindowVisibility } from "./window-visibility";
-import { AppUpdateButton, useAppUpdates } from "./app-updates";
+import { AppUpdateButton, AppUpdateDialog, useAppUpdates } from "./app-updates";
 import "./appearance.css";
 import { stopAndExit } from "./quit";
 import { guestCapability } from "./guest-capabilities.mjs";
@@ -259,11 +261,25 @@ function App() {
     if (status?.ready && mixedBrowserId && mixedBrowserId !== browser.active)
       api("/browser/activate", { id: mixedBrowserId }).catch(error => setToast(error.message));
   }, [mixedBrowserId, status?.ready, browser.active]);
+  const accountLogin = useRef("");
+  const tabsBeforeLogin = useRef("");
+  const [enrollmentID, setEnrollmentID] = useState("");
+  const terminalAccounts = [...new Set(tabs.map(t=>t.claude_account_id).filter(Boolean))].sort().join(",");
+  useEffect(() => {
+    if (terminalAccounts && terminalAccounts.split(",").some(id => !claudeProfiles.accounts?.some(a => a.id === id))) {
+      void claudeProfiles.load();
+    }
+  }, [terminalAccounts, claudeProfiles.load]);
   const finishedLogins = tabs.filter((tab) => tab.terminalKind === "claude-login" && tab.closed).map((tab) => tab.id).sort().join(",");
   useEffect(() => {
     if (finishedLogins) claudeProfiles.load();
   }, [finishedLogins, claudeProfiles.load]);
-  const audio = useAudioOutput(running && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
+  const notify = (text) => setToast(text);
+  const accountDesktops = useAccountDesktops(
+    () => {setManagementPage(""); setHome(false); setDesktopOpen(true);},
+    () => {setDesktopOpen(false); setHome(true);}, notify, (...args) => confirm(...args), desktopOpen && running && status?.account_desktops_supported && !managementPage, status?.desktop_catalog_revision);
+  const viewingAccountDesktop = desktopOpen && accountDesktops.panes.length > 0;
+  const audio = useAudioOutput(running && !viewingAccountDesktop && guestCapability(status, "audio") && !storageRecovery && !status?.environment_update_required && !connectionError);
   useEffect(() => {
     if (audio.error) setToast(audio.error);
   }, [audio.error]);
@@ -294,7 +310,6 @@ function App() {
         : running
           ? status?.environment_update_required ? "环境待更新" : "浏览器待恢复"
           : "已停止";
-  const notify = (text) => setToast(text);
   // A Linux environment keeps what it learned about project files for a while.
   const projectFilesCached = settings?.project_file_cache === true &&
     !/^(windows|macos)/.test(account?.guest_system || status?.guest_system || "");
@@ -311,7 +326,7 @@ function App() {
   };
   const clipboardConnection = getClientContext().connection_id;
   useEffect(() => {
-    if (!status?.ready || !clipboardAvailable || !nativeAvailable()) return;
+    if (!status?.ready || viewingAccountDesktop || !clipboardAvailable || !nativeAvailable()) return;
     const clipboard = shareClipboard({
       connect: () => new WebSocket(runtimeSocketURL("/clipboard")), native,
       onStatus: setToast,
@@ -319,8 +334,8 @@ function App() {
     });
     window.cageSyncClipboard = () => clipboard.sync();
     return () => { clipboard.dispose(); delete window.cageSyncClipboard; };
-  }, [status?.ready, clipboardAvailable, clipboardConnection]);
-  const desktopFiles = useDesktopFiles(Boolean(status?.ready && desktopAvailable), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
+  }, [status?.ready, viewingAccountDesktop, clipboardAvailable, clipboardConnection]);
+  const desktopFiles = useDesktopFiles(Boolean(status?.ready && desktopAvailable && !viewingAccountDesktop), notify, desktopOpen && !settingsOpen && !managementPage && !storageRecovery && windowVisible, windowVisible);
   const downloads = [...(browser.downloads || []), ...desktopFiles.downloads];
   useDownloadNotifications(downloads, notify, Boolean(browser.uploads?.length || desktopFiles.uploads.length));
   const refreshSettings = async () => {
@@ -478,11 +493,12 @@ function App() {
       previous?.anchor === anchor ? null : { path, anchor },
     );
   };
-  const createTerminal = async (path, kind, loginAccountId) => {
+  const createTerminal = async (path, kind, accountId, autoHandoff) => {
     setTerminalChoice(null);
     const result = await api("/terminals", {
       workspace: path, kind,
-      ...(loginAccountId && { claude_account_id: loginAccountId }),
+      ...(accountId && { claude_account_id: accountId }),
+      ...(autoHandoff !== undefined && { auto_handoff: autoHandoff }),
     });
     showTerminal(result);
     sessionsChanged();
@@ -490,6 +506,18 @@ function App() {
         !claudeProfiles.accounts?.some((profile) => profile.id === result.claude_account_id)) {
       claudeProfiles.load();
     }
+  };
+  const authorizeAccount = async (id, proxyNode) => {
+    browserDismissed.current = false;
+    const result = await api("/terminals", {
+      kind: "claude-login", background_login: true,
+      ...(id ? { claude_account_id: id } : { login_proxy_node: proxyNode || "" }),
+    });
+    accountLogin.current = result.id;
+    setEnrollmentID(result.id);
+    const tab = browserSnapshot.current?.tabs?.find(t => t.id === browserSnapshot.current.active && t.login);
+    if (tab) showBrowserResult(tab);
+    return result.id;
   };
   const showTerminal = result => {
     setTailnetLogin(null);
@@ -555,9 +583,10 @@ function App() {
     newTerminal(contentWorkspace, event?.currentTarget?.tagName === "BUTTON"
       ? event.currentTarget : terminalTrigger.current);
   const terminalMenuAt = (location) => terminalChoice?.anchor?.dataset.terminalLocation === location && (
-    <TerminalMenu choice={terminalChoice} busy={busy}
+    <TerminalMenu choice={terminalChoice} busy={busy} profiles={claudeProfiles}
+      usesOfficialCLI={(settings?.claude_terminal_command?.trim() || "claude") === "claude"}
       onClose={() => setTerminalChoice(null)}
-      onSelect={(kind) => createTerminal(terminalChoice.path, kind).catch((e) => notify(e.message))} />
+      onSelect={(kind, accountId, autoHandoff) => createTerminal(terminalChoice.path, kind, accountId, autoHandoff).catch((e) => notify(e.message))} />
   );
   const openEditor = async (path = workspace) => {
     if (!browserAvailable || !editorAvailable) {
@@ -753,9 +782,20 @@ function App() {
           if (!live) return;
           browserSnapshot.current = b;
           setBrowser(b);
+          const enrollment = t.find(item => item.background_login);
+          if (enrollment) {
+            accountLogin.current = enrollment.id;
+            setEnrollmentID(enrollment.id);
+          } else if (accountLogin.current) {
+            accountLogin.current = "";
+            setEnrollmentID("");
+            void claudeProfiles.load();
+            if (tabsBeforeLogin.current === activeRef.current) setManagementPage("claude-accounts");
+            tabsBeforeLogin.current = "";
+          }
           const all = [
             ...b.tabs,
-            ...t.map((item) => ({
+            ...t.filter(item => !item.background_login).map((item) => ({
               ...item,
               id: "terminal:" + item.id,
               sessionId: item.id,
@@ -772,6 +812,7 @@ function App() {
               ...all.filter((item) => !previous.some((p) => p.id === item.id)),
             ];
           });
+          if (b.tabs.some(t => t.login && t.id === b.active) && !browserIds.current.has(b.active)) setManagementPage("");
           if (!browserDismissed.current && initialized.current && b.active && b.active !== activeRef.current && !browserIds.current.has(b.active)) {
             setDesktopOpen(false);
             setHome(false);
@@ -857,6 +898,7 @@ function App() {
       const b = JSON.parse(event.data);
       setBrowserError("");
       if (b.desktopFocus === true) {
+        accountDesktops.clear();
         setDesktopOpen(true);
         setHome(false);
         setSettingsOpen(false);
@@ -879,8 +921,12 @@ function App() {
           ...b.tabs.filter((t) => !previous.some((p) => p.id === t.id)),
         ];
       });
-      const focusLogin = b.focus && b.tabs.some(tab => tab.native_window && tab.login);
-      if (focusLogin) browserDismissed.current = false;
+      const focusLogin = b.focus && b.tabs.some(tab => tab.id === b.active && tab.login);
+      if (focusLogin) {
+        if (accountLogin.current) tabsBeforeLogin.current = b.active;
+        browserDismissed.current = false;
+        setManagementPage("");
+      }
       if (!browserDismissed.current && b.active && b.focus) {
         setDesktopOpen(false);
         setHome(false);
@@ -992,6 +1038,7 @@ function App() {
         }
         return;
       }
+      if (event.target.closest?.(".account-desktop-screen")) return;
       // The guest owns Chrome's address bar, tabs and browser shortcuts.
       if (macGuest && !showHome && !desktopOpen && !terminal && event.target.closest?.(".mac-claude-frame")) return;
       let handle;
@@ -1194,7 +1241,7 @@ function App() {
     };
   }
   const claudeLabels = new Map(claudeProfiles.accounts?.map((account) => [account.id, account.label || account.email]));
-  const claudeNumbers = new Map(claudeProfiles.accounts?.map((account, index) => [account.id, index + 1]));
+  const claudeNumbers = new Map(claudeProfiles.accounts?.map(account => [account.id, account.number]));
   const terminalAccountName = (tab) => claudeLabels.get(tab.claude_account_id) ||
     (tab.terminalKind === "claude-login" ? "新账号登录" : tab.claude_account_id ? "Claude 账号" : "");
   const displayTabs = orderedTabs(tabs, metadata).map((tab) =>
@@ -1338,6 +1385,7 @@ function App() {
     onRecover={() => recoverEditor(tab)} />;
   const dialogs = (
     <>
+      <AppUpdateDialog updates={appUpdates} onStatus={setStatus} />
       {dialog && (
         <Modal
           title={dialog.title}
@@ -1501,7 +1549,8 @@ function App() {
             }}
             desktopOpen={!managementPage && desktopOpen}
             onClaudeWeb={() => openBrowserPage("https://claude.ai/")}
-            onClaudeDesktop={() => { setManagementPage(""); setHome(false); setDesktopOpen(true); }}
+            accountDesktops={status.account_desktops_supported ? accountDesktops : null}
+            onClaudeDesktop={() => { accountDesktops.clear(); setManagementPage(""); setHome(false); setDesktopOpen(true); }}
             onEditor={openEditor}
             onSettings={openSettings}
             onAccountConfirm={confirm}
@@ -1555,9 +1604,9 @@ function App() {
                     const nativeGuest = ["macos", "windows-11"].includes(status.guest_system);
                     if (nativeGuest && !await confirm({ title: "更新环境组件？", body: "更新会重新连接浏览器和显示组件，请先保存工作。设备身份、公钥和个人数据保留。", confirm: "更新组件" })) return;
                     await action(nativeGuest ? "/environment/update" : "/tailscale/install", {});
-                  }} /> : <ClaudeAccountsPanel store={claudeProfiles} tabs={tabs} onConfirm={confirm}
+                  }} /> : <ClaudeAccountsPanel guestSystem={status.guest_system} proxySources={proxy?.sources || []} desktopNetwork={status.account_desktops_supported} store={claudeProfiles} tabs={tabs} onConfirm={confirm}
                   running={status.vm_running} environmentBusy={busy || storageRecovery}
-                  login={(id) => createTerminal(workspace, "claude-login", id)} />}
+                  login={authorizeAccount} enrollmentID={enrollmentID} cancelLogin={() => api("/terminals/"+enrollmentID, undefined, "DELETE")} />}
               </div>
             </main>
           )}
@@ -1567,7 +1616,8 @@ function App() {
             {!storageRecovery && desktopOpen && macGuest && <MacOSAppWindow key="claude-desktop" uploads={desktopFiles.uploads} keyboard={status.keyboard} remoteRef={remote}
               onStatus={notify} onFallback={(text, message) => setTransfer({ text, message })} visible={!settingsOpen && !managementPage} onConfirm={confirm}
               sidebarCollapsed={sidebarCollapsed} onExpand={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)} />}
-            {!storageRecovery && desktopOpen && !macGuest && <ClaudeDesktop
+            {!storageRecovery && desktopOpen && !macGuest && accountDesktops.panes.length>0 && <DesktopPanes model={accountDesktops} visible={!settingsOpen && !managementPage && windowVisible}/>}
+            {!storageRecovery && desktopOpen && !macGuest && !accountDesktops.panes.length && <ClaudeDesktop
               uploads={desktopFiles.uploads}
               onProjectOpened={() => refreshStatus.current?.()}
               status={status} visible={!settingsOpen && !managementPage} remoteRef={remote}
@@ -1638,7 +1688,9 @@ function App() {
                     <div className="pane-body">
                       <TerminalView
                         session={{ ...tab, id: tab.sessionId }}
-                        onLoginTab={({ id }) => showBrowserResult({ id, kind: "web", login: true, incognito: true, title: "账号授权" })}
+                        onLoginTab={result => showBrowserResult({
+                          id: result.id, kind: "web", login: true, incognito: result.incognito !== false, title: "账号授权",
+                        })}
                         onControls={(control) =>
                           control
                             ? terminalControls.current.set(tab.id, control)
@@ -1911,6 +1963,10 @@ function App() {
               revision={proxy?.revision}
               selected={proxy?.selected}
             />
+            <NetworkSpeed
+              key={`speed:${proxy?.selected}:${proxy?.revision}:${running}:${busy}:${Boolean(connectionError)}`}
+              enabled={running && !busy && !connectionError}
+            />
             <span className="status-spacer" />
             <AudioControls audio={audio} />
             <EnvironmentClock timezone={settings.timezone} clock12Hour={settings.clock_12_hour} />
@@ -1920,7 +1976,7 @@ function App() {
                   ? status.job.message
                   : running
                     ? status.ready
-                      ? isRemoteClient() ? "文件保存在云端" : "文件与本机同步"
+                      ? isRemoteClient() ? "文件保存在云端" : ""
                       : "环境运行中 · 浏览器待恢复"
                     : "")} />
             </span>

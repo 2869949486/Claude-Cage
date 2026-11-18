@@ -83,13 +83,18 @@ final class MacChromeWindow {
         guard let requirement else { return [] }
         return NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).filter { running in
             guard !running.isTerminated, running.bundleURL?.standardizedFileURL == app.standardizedFileURL else { return false }
-            let args = arguments(running.processIdentifier)
-            guard args.contains("--user-data-dir=" + directory.path),
-                  !args.contains(where: { $0 == "--headless" || $0.hasPrefix("--headless=") || $0 == "--remote-debugging-pipe" }) else { return false }
-            var code: SecCode?
-            let attrs = [kSecGuestAttributePid: running.processIdentifier] as CFDictionary
-            return SecCodeCopyGuestWithAttributes(nil, attrs, [], &code) == errSecSuccess &&
-                code.map { SecCodeCheckValidity($0, [], requirement) == errSecSuccess } == true
+            let pid = running.processIdentifier
+            // A process keeps its arguments, so the profile it was started
+            // with is part of what was verified.
+            return VerifiedProcesses.shared.check(pid, scope: directory.path) {
+                let args = arguments(pid)
+                guard args.contains("--user-data-dir=" + directory.path),
+                      !args.contains(where: { $0 == "--headless" || $0.hasPrefix("--headless=") || $0 == "--remote-debugging-pipe" }) else { return false }
+                var code: SecCode?
+                let attrs = [kSecGuestAttributePid: pid] as CFDictionary
+                return SecCodeCopyGuestWithAttributes(nil, attrs, [], &code) == errSecSuccess &&
+                    code.map { SecCodeCheckValidity($0, [], requirement) == errSecSuccess } == true
+            }
         }
     }
 
@@ -194,25 +199,36 @@ final class MacChromeWindow {
                 return
             }
             let id = UUID().uuidString
-            let directory = temporaryProfile(id)
+            let directory: URL
             let entry = loginRegistry.appendingPathComponent(id)
-            try fm.createDirectory(at: loginRegistry, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-            try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
             let process: Process
-            do {
-                try Data().write(to: entry, options: .withoutOverwriting)
-                process = try start(["--user-data-dir=" + directory.path, "--no-first-run", "--no-default-browser-check", "--incognito", address])
-            } catch { removeTemporaryProfile(directory, entry: entry); throw error }
+            if let account = input.login_profile {
+                guard account.range(of: "^[a-f0-9]{24}$", options: .regularExpression) != nil else { throw Failure(8, "invalid_login") }
+                directory = profile.deletingLastPathComponent().appendingPathComponent("LoginProfiles").appendingPathComponent(account)
+                // The guest browser itself owns and encrypts this profile's cookies.
+                let launched = try start(Self.profileArguments(directory) + [address])
+                process = logins.values.first(where: { $0.directory == directory && $0.process.isRunning })?.process ?? launched
+            } else {
+                directory = temporaryProfile(id)
+                try fm.createDirectory(at: loginRegistry, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
+                try fm.createDirectory(at: directory, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
+                do {
+                    try Data().write(to: entry, options: .withoutOverwriting)
+                    process = try start(["--user-data-dir=" + directory.path, "--no-first-run", "--no-default-browser-check", "--incognito", address])
+                } catch { removeTemporaryProfile(directory, entry: entry); throw error }
+            }
             let expiry = Task { @MainActor [weak self] in
                 do { try await Task.sleep(nanoseconds: 900_000_000_000) } catch { return }
                 self?.finish(login)
             }
             currentLogin = login
             logins[login] = Login(directory: directory, process: process, expiry: expiry)
-            process.terminationHandler = { [weak self] _ in
+            process.terminationHandler = { [weak self] ended in
                 Task { @MainActor in
-                    if self?.logins[login]?.directory == directory { self?.finish(login) }
-                    self?.removeTemporaryProfile(directory, entry: entry)
+                    if let self {
+                        for token in self.logins.keys.filter({ self.logins[$0]?.process === ended }) { self.finish(token) }
+                    }
+                    if input.login_profile == nil { self?.removeTemporaryProfile(directory, entry: entry) }
                 }
             }
             return
@@ -240,21 +256,23 @@ final class MacChromeWindow {
     func finish(_ token: String) {
         guard let login = logins.removeValue(forKey: token) else { return }
         login.expiry.cancel()
-        if login.process.isRunning { login.process.terminate() }
+        if login.process.isRunning && !logins.values.contains(where: { $0.process === login.process }) { login.process.terminate() }
         if currentLogin == token {
             currentLogin = logins.keys.sorted().first
             applications(activeDirectory).first?.activate()
         }
     }
 
-    func ownsPoint(_ point: CGPoint, pid: pid_t, window: CGWindowID) throws -> Bool {
+    // Nil when the window is the one under the point; otherwise which check
+    // said it is not, for the guest's diagnostics.
+    func pointFailure(_ point: CGPoint, pid: pid_t, window: CGWindowID) throws -> String? {
         try consoleUser()
-        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, owns(pid) else { return false }
+        guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid, owns(pid) else { return "point_not_frontmost" }
         var element: AXUIElement?
         guard AXUIElementCopyElementAtPosition(AXUIElementCreateSystemWide(), Float(point.x), Float(point.y), &element) == .success,
-              let element else { return false }
+              let element else { return "point_hit_unavailable" }
         var owner: pid_t = 0
-        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return false }
+        guard AXUIElementGetPid(element, &owner) == .success, owner == pid else { return "point_other_process" }
         // AX hit testing disregards transparent system overlays but includes
         // focused Chrome controls; prevent a stale frame hitting another
         // top-level window of the same Chrome process.
@@ -265,7 +283,7 @@ final class MacChromeWindow {
                   let rect = CGRect(dictionaryRepresentation: box) else { return false }
             return rect.contains(point)
         }
-        return foremost?[kCGWindowNumber as String] as? CGWindowID == window
+        return foremost?[kCGWindowNumber as String] as? CGWindowID == window ? nil : "point_other_window"
     }
 
     func window() async throws -> SCWindow {

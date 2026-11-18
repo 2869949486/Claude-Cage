@@ -186,6 +186,8 @@ export function createNativeBrowserService(options = {}) {
   const tabs = new Map(), byPage = new WeakMap(), sessions = new Map(), frameSessions = new WeakMap(), internalPages = new WeakSet();
   const captures = new Map(), stoppingCaptures = new Map();
   let activeRequests = 0;
+  const loginProfiles = new Map();
+  let loginCookies;
   const events = [], transfers = new Map(), privateContexts = new Set(), editorConnections = new Map(), logins = new Map();
   const clipboardCopies = new Map();
   let clipboardHelper, clipboardSourceConnection, clipboardSourceID, copyVersion = 0, pendingCopy, copying;
@@ -720,6 +722,7 @@ export function createNativeBrowserService(options = {}) {
           await import(new URL("./modules/browser-extensions.mjs", import.meta.url)),
           await import(new URL("./modules/browser-vault.mjs", import.meta.url)));
       } catch { throw failure("browser_unavailable", "Windows 客机浏览器组件尚未完整安装"); }
+      if (modules.AccountLoginCookies) loginCookies = new modules.AccountLoginCookies(path.join(directory, "LoginProfiles"));
       await mkdir(directory, { recursive: true, mode: 0o700 });
       if (!creationProfile) {
         try { creationProfile = checkedBrowserProfile(JSON.parse(await readFile(path.join(directory, "guest-profile.json"), "utf8"))); }
@@ -1376,19 +1379,58 @@ export function createNativeBrowserService(options = {}) {
         url = new URL(input.url);
         if (url.protocol !== "https:" || url.username || url.password || !["claude.ai", "claude.com", "console.anthropic.com", "platform.claude.com", "platform.anthropic.com"].includes(url.hostname)) throw failure("invalid_input", "仅可打开官方登录地址");
       }
-      const old = logins.get(input.login);
-      if (old) { clearTimeout(old.expiry); logins.delete(input.login); privateContexts.delete(old.context); await old.context.close(); }
+      await logins.get(input.login)?.close();
       if (action === "login-finish") return { ok: true };
-      const context = await owner.newContext({ viewport, deviceScaleFactor: displayScale, ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...contextProxy() });
-      privateContexts.add(context);
-      const entry = { context, expiry: setTimeout(() => { logins.delete(input.login); privateContexts.delete(context); void context.close().catch(() => {}); }, 15 * 60000) }; entry.expiry.unref(); logins.set(input.login, entry);
-      const page = await context.newPage();
-      const tab = await addPage(page, { login: true });
-      await activate(tab.id);
-      context.on("page", popup => { void addPage(popup, { login: true }).then(next => activate(next.id)).catch(() => {}); });
-      await page.goto(url.href, { waitUntil: "commit", timeout: 8000 });
-      const current = tabs.get(active);
-      return { id: current?.page.context() === context ? current.id : tab.id };
+      const isolated = input.private !== false;
+      if (input.account && !/^[a-f0-9]{24}$/.test(input.account)) throw failure("invalid_input", "授权账号无效");
+      let profile = !isolated && input.account ? loginProfiles.get(input.account) : undefined;
+      let browser = profile?.browser ?? (!isolated && !input.account ? context : undefined);
+      if (!browser) {
+        browser = await owner.newContext({ viewport, deviceScaleFactor: displayScale, ...(timezone ? { timezoneId: timezone } : {}), ...(language ? { locale: language } : {}), ...contextProxy() });
+        if (!isolated) {
+          try { await browser.addCookies(await loginCookies.load(input.account)); }
+          catch (e) { await browser.close(); throw e; }
+          profile = { browser, users: 0 };
+          loginProfiles.set(input.account, profile);
+        }
+      }
+      if (profile) profile.users++;
+      const pages = new Set();
+      let expiry;
+      const close = async () => {
+        if (!logins.delete(input.login)) return;
+        clearTimeout(expiry);
+        const dispose = isolated || (profile && --profile.users === 0);
+        if (dispose && profile) loginProfiles.delete(input.account);
+        try { if (profile) await loginCookies.save(input.account, await browser.cookies()); }
+        finally {
+          if (dispose) await browser.close();
+          else await Promise.all([...pages].map(page => page.close().catch(() => {})));
+        }
+      };
+      const show = async page => {
+        pages.add(page);
+        page.once("close", () => {
+          pages.delete(page);
+          if (!pages.size) void close().catch(() => {});
+        });
+        const tab = await addPage(page, { login: true });
+        tab.login = true;
+        tab.incognito = isolated;
+        page.on("popup", popup => { void show(popup).catch(() => {}); });
+        await activate(tab.id);
+        return tab;
+      };
+      expiry = setTimeout(() => { void close().catch(() => {}); }, 15 * 60000);
+      expiry.unref();
+      logins.set(input.login, { close, expiry });
+      try {
+        const page = await browser.newPage();
+        const tab = await show(page);
+        await page.goto(url.href, { waitUntil: "commit", timeout: 8000 });
+        const current = tabs.get(active);
+        return { id: pages.has(current?.page) ? current.id : tab.id, incognito: isolated };
+      } catch (error) { await close(); throw error; }
     }
     if (action === "audit") {
       if (options.audit) return options.audit(context, input);
@@ -1609,7 +1651,7 @@ export function createNativeBrowserService(options = {}) {
       for (const id of transfers.keys()) await closeTransfer(id);
       await copying;
       for (const privateContext of privateContexts) await privateContext.close().catch(() => {});
-      for (const login of logins.values()) clearTimeout(login.expiry);
+      for (const login of logins.values()) await login.close().catch(() => {});
       await persistQueue.catch(() => {}); await context?.close().catch(() => {});
     })(); return closing;
   }
@@ -1636,7 +1678,7 @@ export const createWindowsBrowserService = createNativeBrowserService;
 export async function runWindowsBrowser(input = process.stdin, output = process.stdout, options) {
   const service = createWindowsBrowserService(options);
   try {
-    for await (const line of lines(input)) {
+    for await (const line of lines(input, 1 << 20)) {
       let result;
       try { result = await service.request(JSON.parse(line)); }
       catch (error) { result = { error: error.safe ? error.message : "Windows 客机浏览器操作未完成，请恢复连接后核对结果", code: error.safe ? error.code : "browser_operation_failed" }; }

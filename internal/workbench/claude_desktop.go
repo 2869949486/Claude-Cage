@@ -160,8 +160,12 @@ func (s *Server) startClaudeDesktop() error {
 		return err
 	}
 	defer clear(key)
+	scope, err := s.defaultDesktopScope(s.operationContext())
+	if err != nil {
+		return err
+	}
 	script := `test "$(dpkg-query -W -f='${Status}' claude-desktop 2>/dev/null)" = 'install ok installed' || { echo '请先安装 Claude Desktop。'; exit 1; }
-` + cage.ClaudeDesktopProvisionScript()
+` + scope + cage.ClaudeDesktopProvisionScript()
 	if err = s.runDesktopScript(script, 20*time.Second); err != nil {
 		return err
 	}
@@ -173,6 +177,7 @@ func (s *Server) startClaudeDesktop() error {
 	if err = cmd.Run(); err != nil {
 		return executionFailure("打开 Claude Desktop", errors.Join(ctx.Err(), err), s.jobs.snapshot().Log)
 	}
+	s.watchDesktopLogins()
 	return nil
 }
 
@@ -343,11 +348,15 @@ func (s *Server) claudeDesktopVNC(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer release()
+	s.streamDesktopSocket(w, r, "/run/cage-desktop/vnc.sock")
+}
+
+func (s *Server) streamDesktopSocket(w http.ResponseWriter, r *http.Request, socket string) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
 	// No extra localhost port or public VNC listener on the host. SSH is bound
 	// to this profile's single guest and carries the authenticated RFB session.
-	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec socat STDIO UNIX-CONNECT:/run/cage-desktop/vnc.sock")
+	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec socat STDIO UNIX-CONNECT:"+socket)
 	reader, err := cmd.StdoutPipe()
 	if err != nil {
 		http.Error(w, "无法连接应用画面", 502)

@@ -1,6 +1,6 @@
 // Verify that switching the guest keeps the Linux workbench's actual entry points.
 import assert from "node:assert/strict";
-import { createWorkbench } from "./workbench-fixture.mjs";
+import { createWorkbench, chooseInline } from "./workbench-fixture.mjs";
 
 let baseline;
 for (const system of ["debian-13", "windows-11", "macos"]) {
@@ -29,11 +29,14 @@ for (const system of ["debian-13", "windows-11", "macos"]) {
     await page.getByRole("option", {name:"125%"}).click();
     assert.match(await zoom.innerText(), /125%/);
     await nav.getByRole("button", {name:"打开浏览器"}).click();
-    await page.locator(".address-bar input").first().waitFor();
+    if (system === "macos") await page.getByRole("region", {name:"虚拟 Mac 中的 Google Chrome"}).waitFor();
+    else await page.locator(".address-bar input").first().waitFor();
     assert.ok(state.requests.some(r => r.path === "/browser/new"));
     await nav.getByRole("button", {name:"工作台", exact:true}).click();
     await page.locator('[data-terminal-location="shortcuts"]').click();
     await page.getByRole("menuitem", {name:"Claude 终端"}).click();
+    await chooseInline(page.getByRole("combobox", {name:"启动账号"}), "auto");
+    await page.getByRole("button", {name:"创建 Claude Code 终端"}).click();
     await page.waitForFunction(() => document.querySelector(".terminal-lane:not([hidden]) .terminal-view"));
     assert.ok(state.requests.some(r => r.path === "/terminals" && r.body?.kind === "claude"));
     assert.deepEqual(errors, []);

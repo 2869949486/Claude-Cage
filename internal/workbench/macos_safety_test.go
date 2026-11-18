@@ -5,6 +5,7 @@ import (
 	"errors"
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/guestos"
+	"github.com/sylvinus/agent-vm/internal/managedproxy"
 	"os"
 	"path/filepath"
 	"strings"
@@ -116,5 +117,51 @@ func TestMacOSWorkloadStartsNetworkSupervision(t *testing.T) {
 	case <-checked:
 	case <-time.After(7 * time.Second):
 		t.Fatal("the running macOS workbench never started its real network monitor")
+	}
+}
+
+func TestMacOSNetworkCheckSynchronizesSavedNodeWithoutRestart(t *testing.T) {
+	for _, changeSettings := range []bool{false, true} {
+		t.Run(map[bool]string{false: "node change", true: "environment setting change"}[changeSettings], func(t *testing.T) {
+			s, gate := interfaceMonitorServer(t)
+			instance := s.instanceDir()
+			s.macosGuest = &guestos.MacOSProfile{Instance: filepath.Base(instance), User: "guestdev"}
+			before := gate.Status()
+			cfg, err := loadConfig(s.configPath)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.ProxyRevision = "saved-node-generation"
+			cfg.ExitPolicy = cage.ExitPolicy{Mode: "static", IP: "8.8.8.8", CountryCode: "HK"}
+			if changeSettings {
+				cfg.Timezone = "Asia/Tokyo"
+			}
+			p, _ := managedproxy.Load(s.profile)
+			p.Revision = cfg.ProxyRevision
+			if err := p.Save(s.profile); err != nil {
+				t.Fatal(err)
+			}
+			if err := writePrivate(s.configPath, cfg); err != nil {
+				t.Fatal(err)
+			}
+			validate := validateProxyCore
+			t.Cleanup(func() { validateProxyCore = validate })
+			reachedCore := false
+			stopBeforeGuest := errors.New("reached proxy readiness")
+			validateProxyCore = func(context.Context, string, managedproxy.Store) error {
+				reachedCore = true
+				return stopBeforeGuest
+			}
+			err = s.checkMacOSNetwork()
+			if changeSettings {
+				if reachedCore || err == nil || gate.Status().Mode != cage.GateClosed {
+					t.Fatal("real environment change bypassed the restart requirement", err)
+				}
+				return
+			}
+			if !reachedCore || !errors.Is(err, stopBeforeGuest) || gate.Status().Configuration != cfg.Fingerprint() || gate.Status().RunID != before.RunID || gate.Status().Mode != cage.GateClosed || !s.vmRunning() {
+				t.Fatal("saved node was rejected before checking without a restart", err)
+			}
+		})
 	}
 }

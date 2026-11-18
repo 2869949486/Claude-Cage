@@ -16,7 +16,7 @@ internal static class WindowsCliRpc
     private static readonly Regex AccountID = new("^(default|[a-f0-9]{24})$",RegexOptions.CultureInvariant);
     private static readonly Regex Subject = new("^[a-f0-9]{64}$",RegexOptions.CultureInvariant);
     private static readonly Regex CCSProfile = new("^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$",RegexOptions.CultureInvariant);
-    private static readonly HashSet<string> Modes=["discover","view","rpc","active","handoff","purge","account-switch","account-switch-cancel"];
+    private static readonly HashSet<string> Modes=["discover","view","rpc","active","handoff","purge","account-switch","account-switch-cancel","account-binding"];
     private static readonly object Gate=new();
     private static readonly Dictionary<string,int> Active=new(StringComparer.OrdinalIgnoreCase);
     [ModuleInitializer] internal static void Register()
@@ -93,15 +93,24 @@ internal static class WindowsCliRpc
             else await TerminalRpc.RunHeadless(prefixed,token,launch,cli:true);
             return;
         }
-        string script;string[] args;JsonNode? input=null;var selected="default";
+        string script;string[] args;JsonNode? input=null;var selected="default";string? archiveSource=null;
         if(action=="account")
         {
             var mode=request["mode"]?.GetValue<string>()??"";
-            if(mode is not ("snapshot" or "usage" or "quotas"))throw new InvalidDataException("cli_account_operation_invalid");
+            if(mode is not ("snapshot" or "usage" or "quotas" or "archive-login"))throw new InvalidDataException("cli_account_operation_invalid");
             selected=request["account"]?.GetValue<string>()??"default";
             if(!AccountID.IsMatch(selected))throw new InvalidDataException("cli_account_invalid");
             args=[mode,selected];
             if(mode=="usage"){var subject=request["subject"]?.GetValue<string>()??"";if(!Subject.IsMatch(subject))throw new InvalidDataException("cli_identity_invalid");args=[mode,selected,subject];}
+            if(mode=="archive-login")
+            {
+                archiveSource=request["source"]?.GetValue<string>()??"";
+                var subject=request["subject"]?.GetValue<string>()??"";
+                if(selected=="default"||archiveSource=="default"||selected==archiveSource||
+                   !AccountID.IsMatch(archiveSource)||!Subject.IsMatch(subject))
+                    throw new InvalidDataException("cli_account_invalid");
+                args=[mode,selected,archiveSource,subject];
+            }
             if(mode=="quotas")
             {
                 var ids=request["ids"] as JsonArray??throw new InvalidDataException("cli_account_invalid");
@@ -109,6 +118,12 @@ internal static class WindowsCliRpc
                 args=[mode,..ids.Select(x=>x!.GetValue<string>())];
             }
             script=Path.Combine(layout.Code,"cage-claude-account.py");
+        }
+        else if(action=="token-usage")
+        {
+            input=request["input"] as JsonObject??throw new InvalidDataException("statistics_input_invalid");
+            PrivateDirectory(Path.Combine(layout.Root,"token-usage"),layout.Sandbox);
+            script=Path.Combine(layout.Code,"token_usage.py");args=[];
         }
         else if(action=="channel")
         {
@@ -123,6 +138,7 @@ internal static class WindowsCliRpc
             script=Path.Combine(layout.Code,"cli_channel.py");args=[mode,"-"];
         }
         else throw new InvalidDataException("cli_operation_invalid");
+        using var sourceLease=archiveSource is null ? null : AccountLease(layout,archiveSource);
         using var accountLease=AccountLease(layout,selected);
         var result=await Invoke(layout,selected,script,args,input,token,available);
         await Protocol.Write(stream,result,token);
@@ -136,6 +152,7 @@ internal static class WindowsCliRpc
         foreach(var path in new[]{root,accounts,state,shared})PrivateDirectory(path,sandbox);
         string Read(string resource){using var input=Assembly.GetExecutingAssembly().GetManifestResourceStream(resource)??throw new InvalidDataException("cli_helper_missing");using var reader=new StreamReader(input,Protocol.Utf8);return reader.ReadToEnd();}
         var files=new Dictionary<string,string>{{"client_runtime.py",Read("Cage.ClientRuntime")},{"cli_channel.py",Read("Cage.CliChannel")},{"cage-claude-account.py",Read("Cage.CliAccount")},{"windows_cli_platform.py",Read("Cage.CliPlatform")},{"windows_ccs_launch.cjs",Read("Cage.CliCCS")},{"mobile_cli_identity.py",Read("Cage.CliIdentity")},{"cli_channel.resume.md",Read("Cage.CliResume")},{"cli_channel.account-resume.md",Read("Cage.CliAccountResume")}};
+        files["token_usage.py"]=Read("Cage.TokenUsage");
         var digest=Convert.ToHexString(SHA256.HashData(Protocol.Utf8.GetBytes(string.Join("\n",files.Values)))).ToLowerInvariant();
         var code=Path.Combine(root,"code",digest);PrivateDirectory(code,sandbox,readOnly:true);
         foreach(var file in files){var path=Path.Combine(code,file.Key);if(!File.Exists(path))File.WriteAllText(path,file.Value,Protocol.Utf8);else if(File.ReadAllText(path,Protocol.Utf8)!=file.Value)throw new InvalidDataException("cli_helper_changed");}

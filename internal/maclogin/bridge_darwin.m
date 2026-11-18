@@ -130,3 +130,46 @@ bool cageLoginScroll(int x, int y, int deltaX, int deltaY) {
     });
     return ok;
 }
+
+// Feasibility spike: show the virtual display in an ordinary host window, with
+// the host's own keyboard and pointer, to measure what a direct display gives
+// before any product design. Nothing in the guest takes part.
+static NSWindow *directWindow;
+static VZVirtualMachineView *directView;
+
+bool cageDirectDisplay(bool open, int width, int height, bool reconfigure) {
+    __block BOOL ok = NO;
+    dispatch_sync(dispatch_get_main_queue(), ^{
+        if (!open) {
+            [directWindow orderOut:nil];
+            directView.virtualMachine = nil;
+            directWindow.contentView = nil;
+            directView = nil; directWindow = nil;
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyProhibited];
+            ok = YES;
+            return;
+        }
+        // One machine drives one view; the setup view keeps its own rules.
+        if (!machine || loginView || width < 640 || height < 400 || width > 3840 || height > 2400) return;
+        if (!directWindow) {
+            [NSApp setActivationPolicy:NSApplicationActivationPolicyAccessory];
+            NSRect rect = NSMakeRect(0, 0, width, height);
+            directWindow = [[NSWindow alloc] initWithContentRect:rect
+                styleMask:NSWindowStyleMaskTitled | NSWindowStyleMaskResizable | NSWindowStyleMaskMiniaturizable
+                backing:NSBackingStoreBuffered defer:NO];
+            directWindow.releasedWhenClosed = NO;
+            directWindow.title = @"Direct display";
+            directView = [[VZVirtualMachineView alloc] initWithFrame:rect];
+            directView.capturesSystemKeys = YES;
+            if (@available(macOS 14.0, *)) directView.automaticallyReconfiguresDisplay = reconfigure;
+            directView.virtualMachine = machine;
+            directWindow.contentView = directView;
+            [directWindow center];
+        }
+        [directWindow makeKeyAndOrderFront:nil];
+        [directWindow makeFirstResponder:directView];
+        [NSApp activateIgnoringOtherApps:YES];
+        ok = YES;
+    });
+    return ok;
+}

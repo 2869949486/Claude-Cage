@@ -1,6 +1,6 @@
 #import "macos-guest-identity.h"
-// The only administrator created by the native installer. The durable receipt
-// is root-only and binds both the directory service GUID and the numeric uid.
+// First setup temporarily elevates the bound ordinary account, then removes
+// that membership. Root-only receipts bind its directory GUID and numeric uid.
 #import <Foundation/Foundation.h>
 #import <OpenDirectory/OpenDirectory.h>
 #include <pwd.h>
@@ -112,7 +112,7 @@ static void synchronize(ODRecord *ordinary, ODRecord *setupRecord, NSDictionary 
         require(security.terminationStatus == 0, "Cannot synchronize the guest login keychain; existing data was retained.");
     } else require(errno == ENOENT, "Cannot inspect the guest login keychain.");
     updatePassword(ordinary,old,target);
-    if ([receipt[@"state"] isEqual:@"ready"]) {
+    if ([receipt[@"version"] intValue] != 2 && [receipt[@"state"] isEqual:@"ready"]) {
         require(setupRecord && !disabled(setupRecord), "The initial setup account is unavailable.");
         updatePassword(setupRecord,old,target);
     }
@@ -179,22 +179,14 @@ int main(int argc, const char **argv) {
         } else require(errno == ENOENT && prepare, "Missing guest setup receipt.");
         ODNode *node = [ODNode nodeWithSession:[ODSession defaultSession] name:@"/Local/Default" error:NULL];
         ODRecord *admin = [node recordWithRecordType:kODRecordTypeGroups name:@"admin" attributes:nil error:NULL];
-        ODRecord *record = users(node, setup).firstObject;
         NSString *install = prepare || password ? @(argv[2]) : nil;
         if (install) require([[NSUUID alloc] initWithUUIDString:install] != nil, "Invalid fresh guest installation ID.");
-        NSMutableDictionary *receipt;
+        NSMutableDictionary *receipt = nil;
         if (data) {
             receipt = [NSJSONSerialization JSONObjectWithData:data options:NSJSONReadingMutableContainers error:NULL];
             require([receipt isKindOfClass:NSMutableDictionary.class] &&
-                [[NSUUID alloc] initWithUUIDString:receipt[@"guid"]] && [receipt[@"uid"] intValue] >= 502 &&
                 [[NSUUID alloc] initWithUUIDString:receipt[@"installation"]] && (!install || [receipt[@"installation"] isEqual:install]),
                 "The setup account belongs to a different installation.");
-        } else {
-            require(!record && !getpwnam("cagesetup"), "A user already has the setup name; no account was modified.");
-            int uid = 502;
-            while (uid < 1000 && getpwuid(uid)) uid++;
-            require(uid < 1000, "No free local setup UID.");
-            receipt = [@{@"installation":install, @"guid":NSUUID.UUID.UUIDString, @"uid":@(uid), @"state":@"creating"} mutableCopy];
         }
         NSString *ordinaryName = argc == 4 ? @(argv[3]) : receipt[@"user"] ?: @"cage";
         NSRegularExpression *userPattern = [NSRegularExpression regularExpressionWithPattern:@"^[a-z][a-z0-9_]{0,30}$" options:0 error:NULL];
@@ -202,17 +194,35 @@ int main(int argc, const char **argv) {
             ![@[@"root",@"cagesetup",@"cageprovision"] containsObject:ordinaryName], "Invalid ordinary guest username.");
         require(!data || [ordinaryName isEqual:receipt[@"user"] ?: @"cage"], "The receipt belongs to another ordinary account.");
         ODRecord *ordinary = users(node, ordinaryName).firstObject;
-        require(node && admin && ordinary && !member(admin, ordinary), "The regular Cage user must not be a guest administrator.");
+        require(node && admin && ordinary, "The bound guest account is unavailable.");
         NSString *ordinaryGUID = [ordinary valuesForAttribute:kODAttributeTypeGUID error:NULL].firstObject;
+        NSString *ordinaryUID = [ordinary valuesForAttribute:kODAttributeTypeUniqueID error:NULL].firstObject;
         require(ordinaryGUID && (!receipt[@"ordinary_guid"] || [receipt[@"ordinary_guid"] isEqual:ordinaryGUID]), "The ordinary guest account has changed.");
-        receipt[@"user"] = ordinaryName; receipt[@"ordinary_guid"] = ordinaryGUID;
-        if (prepare) save(receipt,file);
-        NSString *uid = [receipt[@"uid"] stringValue];
-        if (record) {
-            NSString *guid = [record valuesForAttribute:kODAttributeTypeGUID error:NULL].firstObject;
-            NSString *actualUID = [record valuesForAttribute:kODAttributeTypeUniqueID error:NULL].firstObject;
-            require(guid && [guid caseInsensitiveCompare:receipt[@"guid"]] == NSOrderedSame && [actualUID isEqual:uid],
-                "Refusing to modify an unrelated guest user.");
+        require([ordinaryUID intValue] >= 501, "Invalid ordinary guest UID.");
+        if (!data) {
+            require(!member(admin,ordinary), "An existing administrator cannot be claimed for first setup.");
+            receipt = [@{@"version":@2, @"installation":install, @"user":ordinaryName,
+                @"ordinary_guid":ordinaryGUID, @"ordinary_uid":ordinaryUID, @"state":@"creating"} mutableCopy];
+            save(receipt,file);
+        }
+        BOOL unified = [receipt[@"version"] intValue] == 2;
+        require(unified || !receipt[@"version"], "Unknown setup receipt version.");
+        ODRecord *record = nil;
+        if (unified) {
+            require([receipt[@"ordinary_uid"] isEqual:ordinaryUID] && [receipt[@"ordinary_guid"] isEqual:ordinaryGUID],
+                "Refusing to modify a replaced guest account.");
+        } else {
+            // Older installers created a separate hidden administrator. Only a
+            // matching receipt allows that account to be retired during migration.
+            require(!member(admin,ordinary) && [[NSUUID alloc] initWithUUIDString:receipt[@"guid"]] && [receipt[@"uid"] intValue] >= 502,
+                "Invalid legacy setup identity.");
+            record = users(node, setup).firstObject;
+            if (record) {
+                NSString *guid = [record valuesForAttribute:kODAttributeTypeGUID error:NULL].firstObject;
+                NSString *uid = [record valuesForAttribute:kODAttributeTypeUniqueID error:NULL].firstObject;
+                require(guid && [guid caseInsensitiveCompare:receipt[@"guid"]] == NSOrderedSame && [uid isEqual:[receipt[@"uid"] stringValue]],
+                    "Refusing to modify an unrelated guest user.");
+            }
         }
         NSString *phase = receipt[@"state"];
         require([@[@"creating",@"ready",@"retiring",@"retired"] containsObject:phase], "Unknown guest setup state.");
@@ -222,36 +232,30 @@ int main(int argc, const char **argv) {
             save(receipt,file); close(lock); return 0;
         }
         if (prepare) {
-            require([phase isEqual:@"creating"] || [phase isEqual:@"ready"], "Initial setup has already closed.");
             NSString *pw = readPassword();
-            if (!record) {
-                require([phase isEqual:@"creating"] && !getpwuid([receipt[@"uid"] intValue]), "Setup account disappeared or its UID is in use.");
-                record = [node createRecordWithRecordType:kODRecordTypeUsers name:setup attributes:@{
-                    kODAttributeTypeGUID:@[receipt[@"guid"]], kODAttributeTypeUniqueID:@[uid],
-                    kODAttributeTypePrimaryGroupID:@[@"20"], kODAttributeTypeFullName:@[@"Cage Setup"],
-                    kODAttributeTypeNFSHomeDirectory:@[@"/var/empty"], kODAttributeTypeUserShell:@[@"/bin/sh"],
-                    @"dsAttrTypeNative:IsHidden":@[@"1"]
-                } error:NULL];
-                require(record != nil, "Cannot create the dedicated temporary guest account.");
+            require([ordinary verifyPassword:pw error:NULL] && !disabled(ordinary), "The stored credential does not match this guest.");
+            // A lost finish response must remain retryable after restart. Once
+            // retirement has begun, preparation can only finish revocation.
+            if ([phase isEqual:@"retiring"] || [phase isEqual:@"retired"]) {
+                if (unified) setMember(admin,ordinary,NO);
+                else if (record) retire(node,admin,record);
+                receipt[@"state"] = @"retired"; save(receipt,file); close(lock); return 0;
             }
-            if ([phase isEqual:@"creating"])
-                require([record changePassword:nil toPassword:pw error:NULL], "Cannot initialize the temporary password.");
-            require([record verifyPassword:pw error:NULL], "The stored credential does not match this guest.");
-            // macOS PAM checks /etc/shells even for System Settings authorization.
-            // A hidden admin with /usr/bin/false passes OD password checks but
-            // authorizationhost rejects it during account management.
-            if ([[record valuesForAttribute:kODAttributeTypeUserShell error:NULL].firstObject isEqual:@"/usr/bin/false"])
-                require([record setValue:@"/bin/sh" forAttribute:kODAttributeTypeUserShell error:NULL], "Cannot repair the temporary account's login shell.");
-            setMember(admin, record, YES);
+            if (!unified) {
+                if (record) retire(node,admin,record);
+                receipt = [@{@"version":@2, @"installation":receipt[@"installation"], @"user":ordinaryName,
+                    @"ordinary_guid":ordinaryGUID, @"ordinary_uid":ordinaryUID, @"state":@"creating"} mutableCopy];
+                save(receipt,file);
+            }
+            setMember(admin, ordinary, YES);
             receipt[@"state"] = @"ready";
         } else {
             require(![phase isEqual:@"creating"], "The temporary account has not completed setup.");
             if (![phase isEqual:@"retired"]) {
                 receipt[@"state"] = @"retiring"; save(receipt,file);
             }
-            // Keep the disabled directory record. Its home is the shared system
-            // directory /var/empty and must never be processed as a deletable home.
-            if (record) retire(node, admin, record);
+            if (unified) setMember(admin, ordinary, NO);
+            else if (record) retire(node, admin, record);
             require(!member(admin,ordinary), "The regular Cage user is a guest administrator.");
             receipt[@"state"] = @"retired";
         }

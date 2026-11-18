@@ -14,9 +14,13 @@ private let bundleID = "com.anthropic.claudefordesktop"
 struct Failure: Error {
     let code: Int32
     let message: String
-    init(_ code: Int32, _ message: String) {
+    // Tells the guest's own diagnostics which check failed. Callers and the
+    // host still receive only the message.
+    let detail: String?
+    init(_ code: Int32, _ message: String, detail: String? = nil) {
         self.code = code
         self.message = message
+        self.detail = detail
     }
 }
 
@@ -50,6 +54,39 @@ func claudeApplicationURL() -> URL {
     return FileManager.default.fileExists(atPath: writable.path) ? writable : URL(fileURLWithPath: "/Applications/Claude.app")
 }
 
+// Checking a running process (its arguments and code signature) takes several
+// milliseconds, and every frame and input event asks for it. The kernel never
+// gives another process the same identifier and start time, so a process that
+// passed is not checked again for one second.
+final class VerifiedProcesses: @unchecked Sendable {
+    static let shared = VerifiedProcesses()
+    private let lock = NSLock()
+    private var passed: [String: (started: UInt64, time: TimeInterval)] = [:]
+
+    private static func started(_ pid: pid_t) -> UInt64? {
+        var info = proc_bsdinfo()
+        let length = Int32(MemoryLayout.size(ofValue: info))
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, length) == length else { return nil }
+        return UInt64(info.pbi_start_tvsec) * 1_000_000 + UInt64(info.pbi_start_tvusec)
+    }
+
+    // The scope names what the process was verified as.
+    func check(_ pid: pid_t, scope: String, verify: () -> Bool) -> Bool {
+        guard let started = Self.started(pid) else { return false }
+        let key = scope + "\u{0}" + String(pid), now = ProcessInfo.processInfo.systemUptime
+        lock.lock()
+        let known = passed[key]
+        lock.unlock()
+        if let known, known.started == started, now - known.time < 1 { return true }
+        let valid = verify()
+        lock.lock()
+        passed[key] = valid ? (started, now) : nil
+        if passed.count > 64 { passed = passed.filter { now - $0.value.time < 1 } }
+        lock.unlock()
+        return valid
+    }
+}
+
 func claudePIDs() throws -> Set<pid_t> {
     var console = stat()
     var attributes: SessionAttributeBits = []
@@ -65,11 +102,14 @@ func claudePIDs() throws -> Set<pid_t> {
     guard !apps.isEmpty else { throw Failure(3, "not_running: Open Claude Desktop.") }
     let requirement = try claudeSigningRequirement()
     let validPIDs = apps.compactMap { app -> pid_t? in
-        let attributes = [kSecGuestAttributePid: app.processIdentifier] as CFDictionary
-        var code: SecCode?
-        guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code,
-              SecCodeCheckValidity(code, [], requirement) == errSecSuccess else { return nil }
-        return app.processIdentifier
+        let pid = app.processIdentifier
+        let valid = VerifiedProcesses.shared.check(pid, scope: "claude") {
+            let attributes = [kSecGuestAttributePid: pid] as CFDictionary
+            var code: SecCode?
+            guard SecCodeCopyGuestWithAttributes(nil, attributes, [], &code) == errSecSuccess, let code else { return false }
+            return SecCodeCheckValidity(code, [], requirement) == errSecSuccess
+        }
+        return valid ? pid : nil
     }
     guard !validPIDs.isEmpty else { throw Failure(5, "identity_error: The running app failed Anthropic signature verification.") }
     return Set(validPIDs)

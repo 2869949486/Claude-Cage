@@ -126,6 +126,8 @@ func (s *Server) publishGate(state cage.GateStatus) {
 			s.safety.Error = ""
 			s.safety.monitorError = ""
 			s.exitProbeError = ""
+			s.proxyNetworkLost = false
+			s.proxyNetworkRetry = time.Time{}
 		}
 	}
 }
@@ -1006,7 +1008,11 @@ func (s *Server) runSafetyCheck() (returned error) {
 			set("browser_settings", cage.CheckFailed, s.browserSettingsIssue(browser, cfg), "更新环境组件以补齐浏览器语言包并应用已保存设置；仍失败时查看各字段的期望值与实际值")
 		}
 	} else {
-		set("browser_settings", cage.CheckUnknown, browserErr.Error(), "停止并重启环境以加载最新浏览器组件，再重新检测")
+		remedy := "停止并重启环境以加载最新浏览器组件，再重新检测"
+		if s.macosGuest != nil {
+			remedy = "请稍候重新检查；若仍失败，打开日志与诊断核对浏览器组件与客机登录状态"
+		}
+		set("browser_settings", cage.CheckUnknown, browserErr.Error(), remedy)
 	}
 	s.setMessage("正在演练代理失败；现有代理进程保持运行…")
 	faultStart, err := client.SetFault(ctx, true)

@@ -119,6 +119,10 @@ func TestInitializationCompletionRequiresReadyGuestAndCurrentNetworkEvidence(t *
 		t.Fatal("stale configuration accepted")
 	}
 	s.safety.Gate.Configuration = cfg.Fingerprint()
+	// A concurrent health read must not make the final button fail. It also
+	// must not bypass the readiness/report checks above once the lock is free.
+	s.op.Lock()
+	time.AfterFunc(50*time.Millisecond, s.op.Unlock)
 	if w := initializationRequest(s, "complete", true); w.Code != 200 {
 		t.Fatal(w.Code, w.Body.String())
 	}

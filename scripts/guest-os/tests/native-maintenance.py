@@ -103,7 +103,7 @@ exit "${CAGE_TEST_FAIL_REGISTER:-0}"
         script = script.replace('/bin/launchctl', str(self.root / 'launchctl'))
         self.write('kit/maintain-macos-workbench.sh', script)
         self.write('kit/claude-desktop-macos.sh', self.translate((SOURCE / 'claude-desktop-macos.sh').read_text()))
-        self.write('plist-buddy', '#!/bin/sh\necho dev.cage.fixture\n', 0o755)
+        self.write('plist-buddy', '#!/bin/sh\ncase "$*" in *"Cage Guest Window.app"*) echo dev.cage.GuestClaudeWindow;; *) echo dev.cage.fixture;; esac\n', 0o755)
         self.write('launchctl', '''#!/bin/sh
 if [ -n "${CAGE_TEST_LOGIN_WINDOW:-}" ]; then exit 1; fi
 if [ "$1" = bootstrap ] && [ -n "${CAGE_TEST_FAIL_ACTIVATION:-}" ] && [ ! -f "$CAGE_TEST_FAIL_ACTIVATION" ]; then
@@ -124,7 +124,14 @@ stat() {
     else echo 0; fi
 }
 find() { :; }
-codesign() { if [[ $1 == -dv ]]; then echo 'TeamIdentifier=FIXTURE'; fi; }
+codesign() {
+    if [[ $1 == -dv ]]; then echo 'TeamIdentifier=FIXTURE';
+    elif [[ $1 == -d && $2 == -r- ]]; then echo 'designated => identifier "dev.cage.GuestClaudeWindow" and anchor apple generic';
+    elif [[ $1 == --verify && $2 == --strict && ${3:-} == -R ]]; then
+        [[ ${4:-} == =* ]] || return 1
+        [[ -z ${CAGE_TEST_CHANGED_WINDOW_IDENTITY:-} ]] || return 1
+    fi
+}
 ditto() { cp -R "$1" "$2"; }
 sudo() { shift 2; "$@"; }
 ps() { :; }
@@ -151,7 +158,10 @@ uname() { echo Darwin; }
 sysctl() { echo "$MODEL"; }
 id() { if [[ $1 == -u ]]; then echo 501; else echo "$GROUPS_FIXTURE"; fi; }
 stat() { echo 0; }
-dscl() { test -f "$QA_ROOT/group"; }
+dscl() {
+    if [[ $3 == "$QA_ROOT/Users/blue" && $4 == GeneratedUID ]]; then echo 'GeneratedUID: fixture-guid';
+    else test -f "$QA_ROOT/group"; fi
+}
 dseditgroup() {
     case "$2" in create) touch "$QA_ROOT/group";; edit) touch "$QA_ROOT/member";;
         checkmember) test -f "$QA_ROOT/member";; *) return 1;; esac
@@ -177,6 +187,19 @@ nc() { test "$1/$2/$3" = "-z/127.0.0.1/5900" && test -f "$QA_ROOT/loaded"; }
         env['GROUPS_FIXTURE'] = 'staff admin'
         self.assertNotEqual(enable('blue').returncode, 0)
         self.assertFalse((self.root / 'group').exists())
+        receipt = dict(version=2, state='ready', user='other', ordinary_uid='501', ordinary_guid='fixture-guid')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertNotEqual(enable('blue').returncode, 0, 'another bound account was accepted')
+        receipt.update(user='blue', state='retired')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertNotEqual(enable('blue').returncode, 0, 'retired setup privileges were accepted')
+        receipt.update(state='ready', ordinary_guid='replaced-guid')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertNotEqual(enable('blue').returncode, 0, 'a replaced account was accepted')
+        self.assertFalse((self.root / 'group').exists())
+        receipt.update(ordinary_guid='fixture-guid')
+        self.write('var/db/cage-initial-setup/account.json', json.dumps(receipt), 0o600)
+        self.assertEqual(enable('blue').returncode, 0, 'bound first-setup account must enable sharing')
         env['GROUPS_FIXTURE'] = 'staff'
         for model in ('Macmini8,1', 'VirtualMac2,1'):
             env['MODEL'] = model
@@ -188,6 +211,15 @@ nc() { test "$1/$2/$3" = "-z/127.0.0.1/5900" && test -f "$QA_ROOT/loaded"; }
         env = {**os.environ, 'BASH_ENV': str(self.root / 'environment.sh'), 'CAGE_TEST_FAIL_REGISTER': '1' if fail else '0'}
         return subprocess.run(['/bin/bash', str(self.kit / 'maintain-macos-workbench.sh'), str(self.kit), 'cage', 'components'],
                               capture_output=True, text=True, env=env, timeout=15)
+
+    def test_window_identity_change_is_rejected_before_replacing_authorized_helper(self):
+        self.prepare_installer()
+        with patch.dict(os.environ, {'CAGE_TEST_CHANGED_WINDOW_IDENTITY': '1'}):
+            result = self.run_install()
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('签名身份已变化', result.stderr)
+        self.assertEqual((self.root / 'Applications/Cage Guest Window.app/Contents/MacOS/CageGuestWindow').read_text(), 'previous-window')
+        self.assertEqual((self.root / 'Users/cage/account.json').read_text(), 'account-and-login-marker')
 
     def test_cli_tool_update_adds_github_and_preserves_login(self):
         self.prepare_installer()

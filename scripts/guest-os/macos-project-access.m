@@ -116,7 +116,7 @@ static NSString *mountID(NSString *project) {
     panel.canChooseFiles = NO;
     panel.allowsMultipleSelection = NO;
     panel.directoryURL = [NSURL fileURLWithPath:project isDirectory:YES];
-    panel.message = @"Allow Cage to open this mounted project in the guest terminal and editor.";
+    panel.message = @"Allow the terminal and editor to read and change files in this folder.";
     panel.prompt = @"Use Project";
     _nonce = NSUUID.UUID.UUIDString;
     _panel = panel;
@@ -460,8 +460,42 @@ static int probeCLI(int argc, char **argv) {
     return 1;
 }
 
+// Request the existing GUI application's ordinary quit path before replacing
+// it. A refusal or a timeout leaves it running and aborts the component update.
+static int quitForUpdate(void) {
+    NSString *bundle = @"/Applications/CageProjectAccess.app";
+    NSString *executable = [bundle stringByAppendingPathComponent:@"Contents/MacOS/CageProjectAccess"];
+    NSMutableArray<NSRunningApplication *> *pending = [NSMutableArray array];
+    for (NSRunningApplication *app in
+         [NSRunningApplication runningApplicationsWithBundleIdentifier:@"dev.cage.guest.project-access"]) {
+        if (app.processIdentifier == getpid())
+            continue;
+        if (![app.bundleURL.path isEqual:bundle] || ![app.executableURL.path isEqual:executable]) {
+            fputs("项目访问助手的运行位置无法确认，已取消组件更新。\n", stderr);
+            return 1;
+        }
+        if (!app.terminate) {
+            fputs("项目访问助手拒绝正常退出，已取消组件更新。\n", stderr);
+            return 1;
+        }
+        [pending addObject:app];
+    }
+    NSDate *deadline = [NSDate dateWithTimeIntervalSinceNow:10];
+    for (NSRunningApplication *app in pending) {
+        while (!app.terminated && deadline.timeIntervalSinceNow > 0)
+            [[NSRunLoop currentRunLoop] runUntilDate:[NSDate dateWithTimeIntervalSinceNow:0.05]];
+        if (!app.terminated) {
+            fputs("项目访问助手未在等待时间内正常退出，已取消组件更新。\n", stderr);
+            return 1;
+        }
+    }
+    return 0;
+}
+
 int main(int argc, char **argv) {
     @autoreleasepool {
+        if (argc == 2 && !strcmp(argv[1], "--quit-for-update"))
+            return quitForUpdate();
         if (argc > 1 && !strcmp(argv[1], "probe"))
             return probeCLI(argc, argv);
         if ((argc == 4 || (argc == 5 && !strcmp(argv[3], "claude"))) && !strcmp(argv[1], "--child")) {

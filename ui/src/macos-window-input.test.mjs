@@ -144,6 +144,7 @@ test("a frame change rejects queued input and disposal releases only its connect
   await gate;
   await assert.rejects(drained, /输入窗口已变化/);
   assert.deepEqual(f.calls.map(call => call.action), ["input-reset"]);
+  assert.equal(f.errors[0]?.code,"window_changed","recovery must retain the structured error code");
   f.input.dispose();
   const count = f.calls.length;
   f.pointer("pointerdown");
@@ -174,4 +175,48 @@ test("native window merges wheel events queued behind a slow scroll and keeps th
     assert.equal(calls[1].y, 0.6);
     assert.deepEqual(errors, []);
   } finally { input.dispose(); }
+});
+
+test("a hovering pointer passes over a changed window without a warning or reset", async () => {
+  let current = { pid: 23, window: 70, geometry: "geometry-1" };
+  const calls = [], errors = [];
+  const element = Object.assign(new EventTarget(), {
+    getBoundingClientRect: () => ({ left: 0, top: 0, width: 400, height: 300 }),
+    setPointerCapture() {}, hasPointerCapture: () => false, releasePointerCapture() {},
+  });
+  let failure = "window_changed";
+  const input = createMacWindowInput({
+    element, frame: () => current, active: () => true,
+    request: async (action, fields) => {
+      calls.push({ action, ...fields });
+      if (action === "pointer" && failure) throw Object.assign(new Error("changed"), { code: failure });
+      return { ok: true };
+    },
+    onError: error => errors.push(error), eventWindow: new EventTarget(),
+  });
+  const move = buttons => {
+    const event = new Event("pointermove");
+    Object.assign(event, { pointerId: 1, buttons, clientX: 40, clientY: 30, shiftKey: false, ctrlKey: false, altKey: false, metaKey: false });
+    element.dispatchEvent(event);
+  };
+  move(0);
+  await input.run(async () => {});
+  assert.deepEqual(calls.map(call => call.action), ["pointer"]);
+  assert.deepEqual(errors, []);
+
+  // The window was replaced before the queued hover ran.
+  move(0);
+  current = { ...current, geometry: "geometry-2" };
+  await input.run(async () => {});
+  assert.equal(calls.length, 1);
+  assert.deepEqual(errors, []);
+
+  // Other failures, and moves with a button held, are still reported.
+  failure = "accessibility_permission";
+  move(0);
+  await input.run(async () => {}).catch(() => {});
+  await new Promise(resolve => setTimeout(resolve));
+  assert.equal(errors.length, 1);
+  assert.equal(calls.at(-1).action, "input-reset");
+  input.dispose();
 });

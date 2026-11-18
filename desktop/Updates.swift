@@ -316,7 +316,12 @@ final class CageAppUpdater {
         case "status": break
         case "check": if !busy && worker == nil && validationTask == nil && installer == nil && prepared == nil { startDownload(checkOnly: true) }
         case "install":
-            if !busy && worker == nil && validationTask == nil && installer == nil { if prepared != nil { beginInstallation() } else { startDownload(checkOnly: false) } }
+            if !busy && worker == nil && validationTask == nil && installer == nil {
+                if prepared != nil { change(["phase": "ready", "message": "更新已下载，请保存工作并手动停止环境后安装", "retryable": true]) }
+                else { startDownload(checkOnly: false) }
+            }
+        case "complete":
+            if !busy && worker == nil && validationTask == nil && installer == nil && prepared != nil { beginInstallation() }
         case "cancel":
             if installer == nil && state["phase"] as? String != "installing" { generation += 1; if let worker { CageUpdateFiles.stop(worker) }; validationTask?.cancel(); change(["phase": prepared == nil ? "available" : "ready", "message": "更新已暂停，可稍后继续", "retryable": true]) }
         default: break
@@ -429,8 +434,8 @@ final class CageAppUpdater {
                 DispatchQueue.main.async {
                     if self.generation != operation { try? FileManager.default.removeItem(at: directory); return }
                     self.prepared = (directory, app, version, team)
-                    self.change(["phase": "ready", "message": "更新已下载并验证", "retryable": true])
-                    self.beginInstallation()
+                    if self.validationTask === task { self.validationTask = nil }
+                    self.change(["phase": "ready", "message": "更新已下载，请保存工作并手动停止环境后安装", "retryable": true])
                 }
             } catch {
                 try? FileManager.default.removeItem(at: directory)
@@ -482,7 +487,7 @@ final class CageAppUpdater {
             let response = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any]
             DispatchQueue.main.async {
                 guard self.installer === process, !self.waitingForTermination else { return }
-                if response?["status"] as? String == "ready" { self.prepareEnvironment(stop: false) }
+                if response?["status"] as? String == "ready" { self.prepareEnvironment() }
                 else { self.abortInstaller(); self.failure(response?["message"] as? String ?? "安全安装准备失败，原应用已保留") }
             }
         }
@@ -498,11 +503,11 @@ final class CageAppUpdater {
             }
         }
     }
-    private func prepareEnvironment(stop: Bool) {
-        change(["phase": "installing", "message": stop ? "正在停止环境，准备安装" : "正在检查环境是否可安全更新"])
+    private func prepareEnvironment() {
+        change(["phase": "installing", "message": "正在确认环境已停止"])
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                let arguments = ["prepare-update"] + (stop ? ["--stop"] : []) + ["--json"]
+                let arguments = ["prepare-update", "--json"]
                 let process = Process(); process.executableURL = self.cage; process.arguments = arguments
                 let output = Pipe(); process.standardOutput = output; process.standardError = FileHandle.nullDevice
                 try process.run()
@@ -522,8 +527,8 @@ final class CageAppUpdater {
                             self.change(["phase": "installing", "message": "正在安装并重启 Cage"])
                             self.quit()
                         } catch { self.abortInstaller(); self.failure("无法开始安装，原应用已保留"); self.reconnect() }
-                    case "stop_required" where !stop:
-                        self.prepareEnvironment(stop: true)
+                    case "stop_required":
+                        self.abortInstaller(); self.failure("环境仍在运行，请在工作台停止环境后重试安装")
                     default:
                         self.abortInstaller(); self.failure(result["message"] as? String ?? "环境未能安全停止，更新未安装")
                     }

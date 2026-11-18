@@ -49,6 +49,7 @@ type macSetupPermissions struct {
 	ProjectsError          string               `json:"projects_error,omitempty"`
 	Error                  string               `json:"error,omitempty"`
 	ManagedCredential      bool                 `json:"managed_credential,omitempty"`
+	AuthorizationUser      string               `json:"authorization_user,omitempty"`
 	Sharing                bool                 `json:"sharing"`
 	SharingSummary         string               `json:"sharing_summary,omitempty"`
 	SharingChecks          []screenSharingCheck `json:"sharing_checks,omitempty"`
@@ -91,7 +92,7 @@ func (s *Server) revokeMacLogin(session string) {
 func (s *Server) trackMacLogin(epoch context.Context, input guestos.MacLoginRequest, result guestos.MacLoginReply) {
 	if input.Action == "open" && result.Session != "" {
 		lifetime := s.lifetimeContext()
-		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: input.Setup, Maintenance: input.Maintenance}, socket: filepath.Join(s.instanceDir(), "cage-login.sock")}
+		lease := &macLoginLease{request: guestos.MacLoginRequest{Action: "close", Session: result.Session, Setup: input.Setup, Maintenance: input.Maintenance}, socket: macLoginSocket(s.instanceDir())}
 		s.mu.Lock()
 		previous := s.macLoginLease
 		s.macLoginLease = lease
@@ -153,6 +154,12 @@ func (s *Server) macSetupPermissions(ctx context.Context, refreshSharing bool) (
 	if install, err := guestos.LoadInstallation(s.profile); err == nil && install != nil {
 		password, err := s.account.savedMacGuestPassword(ctx, install.ID)
 		status.ManagedCredential = err == nil && password != ""
+		if status.ManagedCredential {
+			if err := s.prepareMacGuestAccount(ctx); err != nil {
+				return status, err
+			}
+			status.AuthorizationUser = s.macosGuest.User
+		}
 	}
 	return status, nil
 }
@@ -263,7 +270,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "请先完成窗口录制、辅助功能、文件系统扩展和屏幕共享授权", 409)
 				return
 			}
-			if !s.op.TryLock() {
+			if !s.lockCompletion(r.Context()) {
 				http.Error(w, "正在处理其他客机操作，请重试", 409)
 				return
 			}
@@ -310,7 +317,7 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	var dial net.Dialer
-	conn, err := dial.DialContext(ctx, "unix", filepath.Join(s.instanceDir(), "cage-login.sock"))
+	conn, err := dial.DialContext(ctx, "unix", macLoginSocket(s.instanceDir()))
 	if err != nil {
 		http.Error(w, "这台客机尚未启动带登录控件的运行器", 409)
 		return
@@ -340,6 +347,17 @@ func (s *Server) macOSLoginWindow(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(result); err != nil && input.Action == "open" {
 		s.revokeMacLogin(result.Session)
 	}
+}
+
+// UNIX socket limits apply to the spelling passed to connect. Prefer a shorter
+// spelling of the same endpoint; retain a short logical storage anchor when its
+// physical directory is longer. Account-lock revocation uses the same endpoint.
+func macLoginSocket(instance string) string {
+	path := filepath.Join(instance, "cage-login.sock")
+	if physical, err := filepath.EvalSymlinks(path); err == nil && len(physical) < len(path) {
+		return physical
+	}
+	return path
 }
 
 func (s *Server) macOSSetupAdminCommand(ctx context.Context) *exec.Cmd {
