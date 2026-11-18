@@ -30,6 +30,7 @@ type Chat = SavedChat & {
   loaded: boolean;
   saved: boolean;
   loadingPhoto: number;
+  logReader?: Worker;
   busy: boolean;
   notice: string;
 };
@@ -73,7 +74,10 @@ function chatName(chat: Chat) {
     chat.summaryTitle ||
     (chat.title !== "新对话"
       ? chat.title
-      : chat.draft.trim().slice(0, 26) || chat.photo?.name || chat.title)
+      : chat.draft.trim().slice(0, 26) ||
+        chat.photo?.name ||
+        chat.log?.name ||
+        chat.title)
   );
 }
 function sync() {
@@ -91,11 +95,22 @@ function sync() {
   } else {
     $<HTMLImageElement>("photo-preview").removeAttribute("src");
   }
+  $("log-attachment").hidden = !active.log;
+  if (active.log) {
+    $("log-name").textContent = active.log.name;
+    $("log-report").textContent = active.log.report;
+    const field = $<HTMLTextAreaElement>("log-excerpt");
+    if (field.value !== active.log.excerpt) field.value = active.log.excerpt;
+  } else {
+    $<HTMLDetailsElement>("log-details").open = false;
+  }
   $("web").setAttribute("aria-pressed", String(active.web));
   $<HTMLButtonElement>("send").disabled =
     active.busy ||
     !!active.loadingPhoto ||
-    !(input.value.trim() || active.photo);
+    !!active.logReader ||
+    (!!active.log && !active.log.excerpt.trim()) ||
+    !(input.value.trim() || active.photo || active.log);
   input.style.height = "auto";
   input.style.height = Math.min(140, input.scrollHeight) + "px";
 }
@@ -106,6 +121,7 @@ function memoryChat(meta: SavedChat, saved: boolean): Chat {
     loaded: !saved,
     saved,
     loadingPhoto: 0,
+
     busy: false,
     notice: "",
   };
@@ -124,6 +140,7 @@ function metadata(c: Chat): SavedChat {
     draft: c.draft,
     web: c.web,
     photo: c.photo,
+    log: c.log,
   };
 }
 function persist(chat: Chat, patch: Partial<SavedChat>, turn?: Turn) {
@@ -151,7 +168,13 @@ function historyNav() {
       button.setAttribute("aria-current", String(chat === active));
       button.append(template("history-icon"), el("span", "", name));
       row.append(button);
-      if (chat.saved || chat.turns.length || chat.draft || chat.photo) {
+      if (
+        chat.saved ||
+        chat.turns.length ||
+        chat.draft ||
+        chat.photo ||
+        chat.log
+      ) {
         const rename = btn(
           "",
           () => openRename(chat),
@@ -182,6 +205,8 @@ function dropChat(chat: Chat) {
   if (renameTarget === chat && renameDialog.open) renameDialog.close();
   chats.splice(at, 1);
   chat.loadingPhoto = 0;
+  chat.logReader?.terminate();
+  chat.logReader = undefined;
   if (active === chat) {
     if (chats.length)
       void select([...chats].sort((a, b) => b.updated - a.updated)[0]);
@@ -278,14 +303,26 @@ async function select(chat: Chat) {
   thread.scrollTop = thread.scrollHeight;
 }
 function newChat() {
-  if (active && !active.turns.length && !active.photo && !input.value.trim()) {
+  if (
+    active &&
+    !active.turns.length &&
+    !active.photo &&
+    !active.log &&
+    !input.value.trim()
+  ) {
     rail(false);
     input.focus();
     return;
   }
   const blank = chats.find(
     (c) =>
-      !c.saved && !c.turns.length && !c.draft && !c.photo && !c.loadingPhoto,
+      !c.saved &&
+      !c.turns.length &&
+      !c.draft &&
+      !c.photo &&
+      !c.log &&
+      !c.loadingPhoto &&
+      !c.logReader,
   );
   if (blank) void select(blank);
   else createBlank();
@@ -351,8 +388,75 @@ $("remove-photo").onclick = () => {
   sync();
   input.focus();
 };
+const zipInput = $<HTMLInputElement>("log-file");
+$("attach-log").onclick = () => zipInput.click();
+zipInput.onchange = () => {
+  const f = zipInput.files?.[0];
+  if (f) void attachLog(f);
+  zipInput.value = "";
+};
+$("remove-log").onclick = () => {
+  active.logReader?.terminate();
+  active.logReader = undefined;
+  active.log = undefined;
+  persist(active, { log: undefined });
+  notice("");
+  sync();
+  historyNav();
+  input.focus();
+};
+$<HTMLTextAreaElement>("log-excerpt").oninput = (e) => {
+  if (!active.log) return;
+  active.log = {
+    ...active.log,
+    excerpt: (e.currentTarget as HTMLTextAreaElement).value,
+  };
+  persist(active, { log: active.log });
+  sync();
+};
+function attachLog(f: File) {
+  const chat = active;
+  chat.logReader?.terminate();
+  let worker: Worker;
+  try {
+    worker = new Worker(new URL("./log-archive.ts", import.meta.url), {
+      type: "module",
+    });
+  } catch {
+    chat.logReader = undefined;
+    notice("当前浏览器无法读取 ZIP 日志。");
+    sync();
+    return;
+  }
+  chat.logReader = worker;
+  notice("正在本机读取 ZIP 日志…", chat);
+  sync();
+  function done(error?: string, log?: import("./log-archive").LogAttachment) {
+    worker.terminate();
+    if (chat.logReader !== worker) return;
+    chat.logReader = undefined;
+    if (log) {
+      chat.log = log;
+      persist(chat, { log });
+      historyNav();
+      notice("只发送选取的日志文字，可展开检查后再发送。", chat);
+    } else notice(error || "ZIP 无法读取，请重新导出。", chat);
+    if (active === chat) {
+      sync();
+      input.focus();
+    }
+  }
+  worker.onmessage = (e) => done(e.data.error, e.data.log);
+  worker.onerror = () => done("ZIP 无法读取，请重新导出或缩小文件。");
+  worker.postMessage(f);
+}
 let photoJob = 0;
 async function attach(f: File) {
+  if (
+    /\.zip$/i.test(f.name) ||
+    ["application/zip", "application/x-zip-compressed"].includes(f.type)
+  )
+    return attachLog(f);
   const chat = active,
     job = ++photoJob;
   chat.loadingPhoto = job;
@@ -667,26 +771,45 @@ function speaker() {
   return s;
 }
 function sendMessage(question: string) {
-  if (active.busy || active.loadingPhoto) return;
+  if (
+    active.busy ||
+    active.loadingPhoto ||
+    active.logReader ||
+    (active.log && !active.log.excerpt.trim())
+  )
+    return;
   const chat = active,
-    photo = chat.photo;
+    photo = chat.photo,
+    log = chat.log;
   question = question.trim();
-  if (!question && !photo) return;
+  if (!question && !photo && !log) return;
   const turn = makeTurn({
     id: crypto.randomUUID(),
     chatId: chat.id,
     created: Date.now(),
-    question: question || "请帮我看看这张图片。",
+    question:
+      question ||
+      (log
+        ? "请分析这份诊断日志，告诉我发生了什么以及下一步怎么做。"
+        : "请帮我看看这张图片。"),
+    log,
     photo,
     web: chat.web,
   });
   chat.turns.push(turn);
   if (chat.turns.length === 1) chat.title = turn.question.slice(0, 26);
   chat.photo = undefined;
+  chat.log = undefined;
   chat.draft = input.value = "";
   persist(
     chat,
-    { title: chat.title, draft: "", photo: undefined, web: chat.web },
+    {
+      title: chat.title,
+      draft: "",
+      photo: undefined,
+      log: undefined,
+      web: chat.web,
+    },
     turn,
   );
   thread.append(...turn.nodes);
@@ -700,6 +823,15 @@ function makeTurn(data: SavedTurn): Turn {
     im.alt = "你发送的图片";
     im.src = data.photo.url;
     u.append(im);
+  }
+  if (data.log) {
+    const details = el("details", "sent-log");
+    details.append(
+      el("summary", "", "日志 ZIP · " + data.log.name),
+      el("p", "", data.log.report),
+      el("pre", "", data.log.excerpt),
+    );
+    u.append(details);
   }
   u.append(el("div", "bubble", data.question));
   return { ...data, nodes: [u, el("div", "bot-turn")] };
@@ -766,7 +898,15 @@ async function run(chat: Chat, turn: Turn) {
   const a = turn.nodes[1];
   a.replaceChildren(
     speaker(),
-    el("p", "progress", turn.photo ? "正在看图并查阅资料…" : "正在查阅资料…"),
+    el(
+      "p",
+      "progress",
+      turn.log
+        ? "正在分析日志并查阅资料…"
+        : turn.photo
+          ? "正在看图并查阅资料…"
+          : "正在查阅资料…",
+    ),
   );
   notice("", chat);
   if (active === chat) {
@@ -781,7 +921,9 @@ async function run(chat: Chat, turn: Turn) {
       {
         role: "user",
         content: Array.from(
-          t.question + (t.observation ? "\n该轮截图：" + t.observation : ""),
+          t.question +
+            (t.log ? "\n此前日志节选：" + t.log.excerpt.slice(0, 1200) : "") +
+            (t.observation ? "\n该轮截图：" + t.observation : ""),
         )
           .slice(0, 1800)
           .join(""),
@@ -803,6 +945,7 @@ async function run(chat: Chat, turn: Turn) {
         collect: true,
         web: turn.web,
         photo: turn.photo?.url,
+        logExcerpt: turn.log?.excerpt,
       }),
       signal: AbortSignal.timeout(85000),
     });

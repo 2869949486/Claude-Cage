@@ -892,3 +892,55 @@ dialog header {
     overflow: hidden;
   }
 }
+.log-attachment,
+.sent-log {
+  padding: 8px 10px;
+  background: #f5f1e9;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  font-size: 13px;
+  margin-bottom: 9px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+.log-attachment > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.log-attachment > div span {
+  flex: 1;
+}
+.log-attachment summary,
+.sent-log summary {
+  cursor: pointer;
+}
+.log-attachment details {
+  margin-top: 4px;
+}
+.log-attachment p,
+.sent-log p {
+  color: var(--muted);
+  font-size: 12px;
+}
+#log-excerpt,
+.sent-log pre {
+  width: 100%;
+  max-height: 210px;
+  overflow: auto;
+  white-space: pre-wrap;
+  font:
+    12px/1.5 ui-monospace,
+    monospace;
+}
+#log-excerpt {
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  padding: 7px;
+  background: #fff;
+  resize: vertical;
+}
+.sent-log {
+  width: fit-content;
+  max-width: min(100%, 580px);
+}

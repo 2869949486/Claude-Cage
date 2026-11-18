@@ -30,6 +30,7 @@ type message struct {
 	Content string `json:"content"`
 }
 type request struct {
+	LogExcerpt   string    `json:"logExcerpt,omitempty"`
 	SuggestTitle bool      `json:"suggestTitle"`
 	Action       string    `json:"action"`
 	Ticket       string    `json:"ticket"`
@@ -230,6 +231,14 @@ func main() {
 			return
 		}
 		in.Question = strings.TrimSpace(in.Question)
+		if utf8.RuneCountInString(in.LogExcerpt) > 12000 {
+			fail(w, 400, "日志节选过长，请缩短后重试。")
+			return
+		}
+		in.LogExcerpt = strings.TrimSpace(in.LogExcerpt)
+		if in.Question == "" && in.LogExcerpt != "" {
+			in.Question = "请分析诊断日志并给出下一步。"
+		}
 		if in.Question == "" && in.Photo != "" {
 			in.Question = "请看看这张截图，帮我解释当前情况。"
 		}
@@ -268,6 +277,9 @@ func main() {
 			}
 			query += " " + observation
 		}
+		if in.LogExcerpt != "" {
+			query += " " + in.LogExcerpt
+		}
 		refs := append(learned.sources(query), ix.search(query)...)
 		external := 0
 		if in.Web {
@@ -286,7 +298,7 @@ func main() {
 			system += "\n本轮请同时生成历史对话标题：根据访客描述、近期对话和截图中的主题，在 JSON 的 chatTitle 字段给出一个便于日后查找的短标题。优先点明具体功能和问题，用访客的语言，例如「Windows 安装卡在启动环境」。中文通常 6–18 字，不加引号、序号、句号，不抄开场白、账号、路径、密钥或私人信息。仅有寒暄、尚无明确主题时省略 chatTitle。"
 		}
 		messages := append([]message{{"system", system}}, in.History...)
-		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, external, notes.String())})
+		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n访客提供的诊断日志节选（不完整）：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, in.LogExcerpt, external, notes.String())})
 		answer, err := complete(ctx, key, messages)
 		if err != nil {
 			log.Printf("answer unavailable: %v", err)
