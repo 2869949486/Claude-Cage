@@ -394,10 +394,13 @@ private func handle(_ input: Request, inputSession: MacWindowInputSession, video
             // A window object from before AX resizing still describes the old
             // surface. Reacquire that exact window before the first new frame.
             var target = window, source = capture
-            if abs(window.frame.width - layout.frame.width) >= 1 || abs(window.frame.height - layout.frame.height) >= 1 {
+            // Input compares the focused window with this object's frame, so
+            // a window the layout only moved is reacquired as well.
+            if abs(window.frame.width - layout.frame.width) >= 1 || abs(window.frame.height - layout.frame.height) >= 1 ||
+               abs(window.frame.minX - layout.frame.minX) >= 1 || abs(window.frame.minY - layout.frame.minY) >= 1 {
                 let (fresh, selection) = try await targetWindow(fresh: true)
                 guard fresh.windowID == layout.id, fresh.owningApplication?.processID == layout.pid else {
-                    throw Failure(7, "window_changed")
+                    throw Failure(7, "window_changed", detail: "frame_window_replaced")
                 }
                 target = fresh
                 source = selection ?? SCContentFilter(desktopIndependentWindow: fresh)

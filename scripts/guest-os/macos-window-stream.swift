@@ -122,7 +122,7 @@ final class MacWindowStream: NSObject, SCStreamOutput, SCStreamDelegate {
             // two seconds even when ScreenCaptureKit reports no changed pixels.
             try await waitForFrame(after: sequence, seconds: seconds)
         }
-        guard key == identity else { throw Failure(7, "window_changed") }
+        guard key == identity else { throw Failure(7, "window_changed", detail: "frame_stream_replaced") }
         guard let buffer else { await stop(); throw Failure(8, "capture_no_frame") }
         return (buffer, sequence)
     }

@@ -151,10 +151,14 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   const pickerTarget = useRef(null);
   const generation = useRef(0);
   const launched = useRef(false);
+  const stopped = useRef(false);
 
   useEffect(() => {
     if (!screenVisible) return;
-    if (browser) launched.current = false;
+    // Each return to this tab brings its application forward again: the other
+    // tab's application was in front meanwhile, and input is only delivered
+    // to the application in front. An application the user stopped stays so.
+    if (browser || !stopped.current) launched.current = false;
     const epoch = ++generation.current;
     let timer;
     let current, nextStatus = 0, after = "", captureSize = "", checkFrame = true;
@@ -257,8 +261,11 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
   }, [screenVisible, revision, base]);
 
   async function action(name) {
-    try { if (name === "stop") launched.current = true; await request(name); setError(""); refresh((n) => n + 1); }
-    catch (e) { setError(e.message); }
+    try {
+      if (name === "stop") launched.current = stopped.current = true;
+      if (name === "launch") stopped.current = false;
+      await request(name); setError(""); refresh((n) => n + 1);
+    } catch (e) { setError(e.message); }
   }
   useImperativeHandle(remoteRef, () => ({
     focus: () => controls.current?.transport.focus(),

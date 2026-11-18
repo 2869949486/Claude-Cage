@@ -21,6 +21,11 @@ func checkedMacInputWindow(_ input: Request, window: SCWindow) throws -> MacInpu
         throw unavailable("window_identity_changed")
     }
     guard NSWorkspace.shared.frontmostApplication?.processIdentifier == pid else {
+        // This input is not delivered, but the application the viewer is
+        // looking at comes forward so that the next one is. A pointer that
+        // only passes over the picture leaves the desktop as it is.
+        let hovering = input.action == "pointer" && input.phase == "move" && (input.buttons ?? 0) == 0
+        if !project && !hovering { NSRunningApplication(processIdentifier: pid)?.activate() }
         throw unavailable("window_not_frontmost")
     }
     let app = AXUIElementCreateApplication(pid)
