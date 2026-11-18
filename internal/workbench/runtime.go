@@ -42,9 +42,6 @@ func (s *Server) workspaceLocked() string {
 func (s *Server) workspace() string      { s.mu.Lock(); defer s.mu.Unlock(); return s.workspaceLocked() }
 func (s *Server) environmentDir() string { return environmentWorkspace(s.profile) }
 func (s *Server) sshTarget() string {
-	if s.macosGuest != nil {
-		return "cage-macos"
-	}
 	if containerenv.Configured(s.profile) {
 		return "cage-container"
 	}
@@ -72,9 +69,6 @@ func (s *Server) sshCommandWithForwarding(ctx context.Context, args ...string) *
 	return s.sshCommandOptions(ctx, true, args...)
 }
 func (s *Server) sshCommandOptions(ctx context.Context, maintenance bool, args ...string) *exec.Cmd {
-	if s.macosGuest != nil {
-		return s.macOSSSHCommand(ctx, args...)
-	}
 	cfg := filepath.Join(s.instanceDir(), "ssh.config")
 	base := []string{"-q", "-e", "none", "-F", cfg, "-o", "BatchMode=yes", "-o", "IdentitiesOnly=yes", "-o", "PermitLocalCommand=no", "-o", "PasswordAuthentication=no", "-o", "KbdInteractiveAuthentication=no", "-o", "ProxyCommand=none", "-o", "ProxyJump=none", "-o", "ConnectTimeout=3", "-o", "ServerAliveInterval=15", "-o", "ServerAliveCountMax=2", "-o", "ForwardAgent=no", "-o", "IdentityAgent=none", "-o", "ForwardX11=no", "-o", "ClearAllForwardings=yes", "-o", "ControlPath=none"}
 	if maintenance {
@@ -129,9 +123,6 @@ func (s *Server) guestControl(ctx context.Context, script, diagnosticSource stri
 func (s *Server) attach() error {
 	if err := s.requireStorageReady(); err != nil {
 		return err
-	}
-	if s.macosGuest != nil {
-		return s.attachMacOSGuest()
 	}
 	if err := s.requireCurrentLinuxTransferMount(); err != nil {
 		return err
@@ -218,10 +209,8 @@ func (s *Server) monitor(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	skipped := 0
-	networkSkips := 0
 	for ctx.Err() == nil {
 		timing := s.startMonitorTiming()
-		checkNetwork := false
 		if s.op.TryLock() {
 			skipped = 0
 			if !s.busy() {
@@ -229,7 +218,7 @@ func (s *Server) monitor(ctx context.Context) {
 				ready := s.ready
 				token := s.credentials.Token
 				s.mu.Unlock()
-				if !ready || s.macosGuest != nil {
+				if !ready {
 					_ = s.attach()
 				} else {
 					ctx, cancel := s.controlContext()
@@ -244,7 +233,6 @@ func (s *Server) monitor(ctx context.Context) {
 					}
 				}
 				timing.stage("environment_health")
-				checkNetwork = s.macosGuest != nil
 			} else {
 				timing.result = "job_running"
 			}
@@ -252,10 +240,6 @@ func (s *Server) monitor(ctx context.Context) {
 		} else {
 			skipped++
 			timing.result = "operation_lock_busy"
-		}
-		if checkNetwork {
-			s.runNetworkMonitorTick(ctx, &networkSkips)
-			timing.stage("network_tick")
 		}
 		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", skipped))
 		s.recordMonitorTiming("environment", timing)
@@ -328,14 +312,10 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 	s.desktopViews.reset()
 	s.browserViews.reset()
 	s.controlSession.close()
-	s.nativeControl.close()
 	s.desktopStatus.invalidate()
 	defer s.desktopStatus.invalidate()
 	if err := s.requireStorageReady(); err != nil {
 		return err
-	}
-	if s.macosGuest != nil {
-		return s.startMacOSGuest()
 	}
 	if err := s.requireCurrentLinuxTransferMount(); err != nil {
 		return err
@@ -509,9 +489,6 @@ func (s *Server) stopEnvironment() (returned error) {
 			returned = managedproxy.Stop(s.profile)
 		}
 	}()
-	if s.macosGuest != nil {
-		return s.stopMacOSGuest()
-	}
 	s.setMessage("正在停止 Cage 环境…")
 	if (explicitStop || s.jobs.snapshot().Kind == "storage") && cage.InstanceJobID(filepath.Join(s.profile, "state"), "base-building") != "" {
 		if err := s.runCage("stop", "--keep-proxy", "base-building"); err != nil {
@@ -528,7 +505,6 @@ func (s *Server) stopEnvironment() (returned error) {
 	s.credentials = guestCredentials{}
 	s.guestManifest = nil
 	s.guestUpdateRequired = false
-	s.macComponentsChecked = false
 	s.guestUpdateError = ""
 	s.safety.Error = ""
 	s.mu.Unlock()
@@ -560,9 +536,6 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 		resumeVersion = execution.pauseVersion
 	}
 	wasReady := vmAlive(s.profile, s.environmentDir())
-	if s.macosGuest != nil {
-		wasReady = macOSInstanceRunning(s.instanceDir(), s.macosGuest.Backend)
-	}
 	s.mu.Unlock()
 	changed := old != v.Config || oldPrefs.AutoTimezone != v.Preferences.AutoTimezone || oldPrefs.AutoLanguage != v.Preferences.AutoLanguage
 	if changed && validate && old.RequireManagedProxy(s.profile) == nil {
@@ -660,9 +633,6 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 func (s *Server) networkMonitorBlockedReason() string {
 	if s.storageRecoveryStatus().Required {
 		return "storage_recovery_pending"
-	}
-	if s.macSetupPending() {
-		return "setup_pending"
 	}
 	return ""
 }
@@ -786,8 +756,5 @@ func vmAlive(profile, workspace string) bool {
 	return processExists(record.PID) && cage.ProcessStartMatches(record.PID, record.Started)
 }
 func (s *Server) vmRunning() bool {
-	if s.macosGuest != nil {
-		return macOSInstanceRunning(s.instanceDir(), s.macosGuest.Backend)
-	}
 	return vmAlive(s.profile, s.environmentDir())
 }

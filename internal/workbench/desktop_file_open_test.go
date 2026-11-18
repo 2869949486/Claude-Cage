@@ -8,30 +8,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
-
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
-
-func TestNativeDesktopProjectPathsUseCurrentGuestMount(t *testing.T) {
-	s := testServer(t)
-	project := t.TempDir()
-	file := filepath.Join(project, "中文 #+%.md")
-	if err := os.WriteFile(file, []byte("project document"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	s.macosGuest = &guestos.MacOSProfile{User: "cage"}
-	guest := macOSProjectPath("cage", project)
-	got, err := s.resolveDesktopProjectFile(guest+"/"+filepath.Base(file), []string{project})
-	want, _ := filepath.EvalSymlinks(file)
-	if err != nil || got != want {
-		t.Fatalf("guest mount did not resolve to host original: %q %v", got, err)
-	}
-	for _, invalid := range []string{guest + "-other/" + filepath.Base(file), guest + "/../outside", guest + "/missing", "relative", "file://" + guest} {
-		if _, err := s.resolveDesktopProjectFile(invalid, []string{project}); err == nil {
-			t.Fatalf("accepted invalid guest path %q", invalid)
-		}
-	}
-}
 
 func TestDesktopFilePathsStayInProjectGrants(t *testing.T) {
 	project := t.TempDir()

@@ -93,14 +93,6 @@ func run() int {
 	cli.Command = "claude-cage"
 	cli.UpdateHint = "update Cage from the app, or with the installer or package that installed it"
 	args := os.Args[1:]
-	if len(args) > 0 && args[0] == "host-download" {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-		if err := hostDownload(ctx, args[1:], os.Stdout); err != nil {
-			return fail(err)
-		}
-		return 0
-	}
 	if len(args) == 0 || args[0] == "help" || args[0] == "--help" || args[0] == "-h" {
 		fmt.Print(help)
 		return 0
@@ -122,14 +114,7 @@ func run() int {
 		}
 		return 0
 	}
-	if len(args) == 1 && (args[0] == "verify-macos-guest" || args[0] == "verify-macos-trial") {
-		if !macGuestLoginAvailable() {
-			return fail(fmt.Errorf("this helper was built without the virtual Mac login view"))
-		}
-		return 0
-	}
-	macGuestCommand := len(args) >= 2 && args[0] == "guest-os" && args[1] == "macos"
-	if args[0] == "guest-os" && !macGuestCommand {
+	if args[0] == "guest-os" {
 		ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 		defer cancel()
 		if err := writeGuestOSInspection(ctx, args[1:], os.Stdout); err != nil {
@@ -146,18 +131,8 @@ func run() int {
 			return fail(err)
 		}
 		defer os.RemoveAll(dir)
-		share, err := limaembed.WriteShare(dir)
-		if err != nil {
+		if _, err := limaembed.WriteShare(dir); err != nil {
 			return fail(err)
-		}
-		if runtime.GOOS == "darwin" {
-			arch := "aarch64"
-			if runtime.GOARCH == "amd64" {
-				arch = "x86_64"
-			}
-			if _, err := share.GuestAgent("Darwin", arch); err != nil {
-				return fail(err)
-			}
 		}
 		return 0
 	}
@@ -434,12 +409,6 @@ func run() int {
 		}
 		return 0
 	}
-	if args[0] == "display-spike" {
-		if err := displaySpike(path, args[1:]); err != nil {
-			return fail(err)
-		}
-		return 0
-	}
 	if args[0] == "prepare-update" {
 		stop, returnJSON := false, false
 		for _, argument := range args[1:] {
@@ -536,14 +505,6 @@ func run() int {
 	// Guest traffic keeps the isolated hostagent hooks in limaembed.Run.
 	http.DefaultTransport = hostproxy.NewTransport()
 	if limaembed.Run(args) {
-		return 0
-	}
-	if macGuestCommand {
-		ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-		defer cancel()
-		if err := runMacGuest(ctx, profile, state, args[2:]); err != nil {
-			return fail(err)
-		}
 		return 0
 	}
 	if args[0] == "proxy-start" || args[0] == "proxy-stop" {

@@ -3,11 +3,8 @@ package workbench
 import (
 	"encoding/json"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
-
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 func TestDesktopCatalogUsesStableNumbersWithoutStartingGuest(t *testing.T) {
@@ -44,18 +41,6 @@ func TestDesktopInstanceNeverFallsBackToNativeDefault(t *testing.T) {
 	if w := request(s, "POST", "/api/desktop-instances/"+id+"/stop", s.origin, "{}", false); w.Code != 401 {
 		t.Fatalf("unauthenticated stop: %d", w.Code)
 	}
-	s.macosGuest = &guestos.MacOSProfile{}
-	r := httptest.NewRequest("GET", "/api/desktop-instances/"+id+"/vnc", nil)
-	r.SetPathValue("id", id)
-	r.SetPathValue("action", "vnc")
-	w := httptest.NewRecorder()
-	s.accountDesktop(w, r)
-	if w.Code != http.StatusNotImplemented {
-		t.Fatalf("macOS account display: got %d", w.Code)
-	}
-	if !macOSWorkbenchRoute("/api/desktop-instances") {
-		t.Fatal("native platform cannot query capabilities")
-	}
 }
 
 func TestBoundAccountProbeUsesSubscriptionAndGuestCapability(t *testing.T) {
@@ -73,10 +58,6 @@ func TestBoundAccountProbeUsesSubscriptionAndGuestCapability(t *testing.T) {
 		if a.ID == first.ID && (route == nil || route.ID != first.ID) || a.ID == second.ID && route != nil {
 			t.Fatal("default profile took another subscription's route")
 		}
-	}
-	s.macosGuest = &guestos.MacOSProfile{}
-	if _, err := s.readClaudeGuestSnapshot(t.Context(), "default"); err != errUnsupportedAccountNetwork {
-		t.Fatal("native identity discovery used a bound default profile", err)
 	}
 }
 

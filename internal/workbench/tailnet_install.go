@@ -30,9 +30,6 @@ func (s *Server) refreshInstalledTailnet() error {
 }
 
 func (s *Server) installTailnet() error {
-	if s.macosGuest != nil {
-		return errTailnetNativeInstall
-	}
 	if !s.vmRunning() {
 		return errors.New("请先启动 Cage 环境")
 	}

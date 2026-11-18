@@ -79,11 +79,7 @@ func (s *Server) startMonitors() {
 	}()
 	go func() {
 		defer s.monitors.Done()
-		// macOS performs both probes from the same tick. Its periodic SSH
-		// attestation otherwise races this loop for the lifecycle lock.
-		if s.macosGuest == nil {
-			s.monitorNetwork(ctx)
-		}
+		s.monitorNetwork(ctx)
 	}()
 }
 
@@ -138,10 +134,8 @@ func (s *Server) closeService() error {
 		s.activities.Wait()
 		s.op.Lock()
 		defer s.op.Unlock()
-		s.closeMacOSScreenSharing()
 		s.closeProjectShares()
 		s.closeHostTools()
-		s.closeWindowsBrowser()
 		s.mu.Lock()
 		browser := s.browserControl
 		s.ready = false
@@ -151,7 +145,6 @@ func (s *Server) closeService() error {
 			browser.close()
 		}
 		s.controlSession.close()
-		s.nativeControl.close()
 		s.closeErr = s.closeProxyGate("控制服务正在退出，外网保持关闭")
 		s.closeErr = errors.Join(s.closeErr, managedproxy.Stop(s.profile))
 		if s.controlPublished {

@@ -145,14 +145,6 @@ func (s *Server) claudePanelView(ctx context.Context) (claudePanel, claudeAccoun
 	s.mu.Lock()
 	ready, update := s.ready, s.guestUpdateRequired
 	s.mu.Unlock()
-	if ready && !update && s.macosGuest != nil {
-		// A login may finish after the user leaves the Desktop window.
-		if status, err := s.desktopStatus.read(ctx, s.lifetimeContext(), func(check context.Context) ([]byte, error) {
-			return s.macOSWindowQuick(check, macOSWindowRequest{Action: "status"})
-		}); err == nil {
-			s.archiveNativeDesktop(status)
-		}
-	}
 	view := claudePanel{DetectionStatus: "offline"}
 	if unavailable := s.usageAvailability(); unavailable != nil {
 		view.UsageUnavailableReason = unavailable.Error()

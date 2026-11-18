@@ -1,6 +1,11 @@
 package workbench
 
-import "path/filepath"
+import (
+	"path/filepath"
+	"slices"
+
+	"github.com/sylvinus/agent-vm/internal/guestos"
+)
 
 // abandonedGuestData lists, per guest system Cage no longer runs, the profile
 // entries such a guest left behind. Entries are glob patterns relative to the
@@ -9,6 +14,7 @@ var abandonedGuestData = []struct {
 	system   string
 	patterns []string
 }{
+	{"macos", []string{"macos-guest.json", filepath.Join("state", "lima", "mac"), filepath.Join("state", "guest-media", "macos")}},
 	{"windows", []string{"windows-guest.json", filepath.Join("state", "windows-*")}},
 }
 
@@ -28,9 +34,25 @@ func abandonedGuests(profile string) []string {
 	return found
 }
 
+// abandonedGuestList also names the system of an installation that an earlier
+// version recorded but can no longer continue.
+func (s *Server) abandonedGuestList() []string {
+	found := abandonedGuests(s.profile)
+	if pending, err := guestos.LoadInstallation(s.profile); err == nil && pending != nil {
+		system := map[string]string{guestos.MacOS: "macos", guestos.Windows11: "windows"}[pending.System]
+		if system != "" && !slices.Contains(found, system) {
+			found = append(found, system)
+			slices.Sort(found)
+		}
+	}
+	return found
+}
+
 func abandonedGuestMessage(system string) string {
 	name := "所选"
 	switch system {
+	case "macos":
+		name = "macOS"
 	case "windows", "windows-11":
 		name = "Windows"
 	}

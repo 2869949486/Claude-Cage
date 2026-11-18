@@ -325,9 +325,6 @@ func (s *Server) terminalSummaries() []map[string]any {
 		}
 		item["custom_title"], item["pinned"], item["metadata_set"] = record.CustomTitle, record.Pinned, record.MetadataSet
 		item["title"] = record.snapshot().Title
-		if s.macOSLegacyWorkspace(record) != "" {
-			item["workspace_notice"] = macOSLegacyWorkspaceNotice
-		}
 	}
 	return list
 }

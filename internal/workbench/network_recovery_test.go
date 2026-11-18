@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 func TestExitProbeTimeoutKeepsExistingLeaseWithoutRenewing(t *testing.T) {
@@ -50,34 +49,6 @@ func TestExitProbeTimeoutKeepsExistingLeaseWithoutRenewing(t *testing.T) {
 	})
 	if gate.Status().Mode != cage.GateClosed || s.recovery.RunID == "" {
 		t.Fatal("expired lease did not remain closed and schedule recovery")
-	}
-}
-
-func TestMacOSNetworkTickDispatchesRecoveryOnlyAfterSetup(t *testing.T) {
-	for _, tc := range []struct {
-		name, setupID string
-		wantJob       bool
-	}{
-		{"installed guest", "", true},
-		{"setup pending", "pending", false},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			s := testServer(t)
-			s.macosGuest = &guestos.MacOSProfile{Instance: "mac", SetupID: tc.setupID}
-			s.ready = true
-			s.safety.VerifiedAt = time.Now()
-			s.recovery = networkRecovery{RunID: "isolated-retry", Next: time.Now().Add(-time.Second)}
-			// Inspect scheduling without starting a guest or executing a network check.
-			s.op.Lock()
-			s.monitorNetworkTick(proxyInterfaceObservation{}, s.startMonitorTiming())
-			job := s.jobs.snapshot()
-			s.jobs.cancelRunning()
-			s.op.Unlock()
-			s.jobs.close()
-			if (job.Running && job.Kind == "network-recovery") != tc.wantJob {
-				t.Fatalf("recovery job = %+v, want queued = %t", job, tc.wantJob)
-			}
-		})
 	}
 }
 

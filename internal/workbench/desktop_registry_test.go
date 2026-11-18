@@ -1,7 +1,6 @@
 package workbench
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -62,16 +61,6 @@ func TestDesktopSharedDefaultAndDedicatedScopeRebinding(t *testing.T) {
 		if restart {
 			t.Fatal("restarted a confirmed unchanged identity")
 		}
-	}
-	s := testServer(t)
-	if err := s.saveClaudeAccounts(claudeAccountList{Accounts: []claudeAccount{account}}); err != nil {
-		t.Fatal(err)
-	}
-	payload, _ := json.Marshal(map[string]any{"running": true, "desktop_identity": login})
-	s.archiveNativeDesktop(payload)
-	list, _ := s.loadClaudeAccounts()
-	if len(list.Accounts) != 1 || list.Accounts[0].DesktopInstanceID != "default" || list.Accounts[0].Status != "ready" {
-		t.Fatal("native Desktop did not match Code record")
 	}
 }
 

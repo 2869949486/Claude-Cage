@@ -12,9 +12,6 @@ import (
 )
 
 func (s *Server) instanceDir() string {
-	if s.macosGuest != nil {
-		return filepath.Join(s.profile, "state", "lima", s.macosGuest.Instance)
-	}
 	if containerenv.Configured(s.profile) {
 		return filepath.Join(s.profile, "state", "container", "environment")
 	}
@@ -22,10 +19,6 @@ func (s *Server) instanceDir() string {
 }
 
 func (s *Server) resourceStatus(w http.ResponseWriter, r *http.Request) {
-	if s.macosGuest != nil {
-		s.macOSResourceStatus(w, r)
-		return
-	}
 	if containerenv.Configured(s.profile) {
 		environment, err := containerenv.Load(s.profile)
 		if err != nil {
@@ -95,7 +88,7 @@ func (s *Server) applyResources(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if input.Allocation != nil {
-		if _, _, err := s.resourceAllocationLimits(*input.Allocation); err != nil {
+		if _, _, err := input.Allocation.Limits(); err != nil {
 			requestError(w, err)
 			return
 		}
@@ -117,7 +110,7 @@ func (s *Server) applyResources(w http.ResponseWriter, r *http.Request) {
 		if err != nil {
 			return err
 		}
-		if _, _, err := s.resourceAllocationLimits(allocation); err != nil {
+		if _, _, err := allocation.Limits(); err != nil {
 			return err
 		}
 		if s.vmRunning() {
@@ -140,15 +133,11 @@ func (s *Server) checkNetworkIfWanted() error {
 	s.mu.Lock()
 	paused := s.networkPaused
 	s.mu.Unlock()
-	if paused || s.macSetupPending() {
+	if paused {
 		return nil
 	}
 	var err error
-	if s.macosGuest != nil {
-		err = s.checkMacOSNetwork()
-	} else {
-		err = s.runSafetyCheck()
-	}
+	err = s.runSafetyCheck()
 	if err != nil {
 		return networkCheckError{err}
 	}

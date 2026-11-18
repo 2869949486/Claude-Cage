@@ -2,8 +2,6 @@ package guestos
 
 import (
 	"bytes"
-	"context"
-	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -73,34 +71,6 @@ func (i Installation) Validate() error {
 		}
 	} else if hash, err := hex.DecodeString(i.SHA256); i.Media == "" || !i.EditorTerms || err != nil || len(hash) != 32 || !strings.EqualFold(filepath.Ext(i.Media), ".iso") {
 		return errors.New("请选择 Windows 11 x64 ISO，并填写这份镜像的完整 SHA-256")
-	}
-	return nil
-}
-
-// VerifyMediaDigest checks a user-selected local image against the SHA-256
-// supplied with the choice. The file is only read.
-func VerifyMediaDigest(ctx context.Context, path, expected string) error {
-	f, err := os.Open(path)
-	if err != nil {
-		return errors.New("原安装镜像不可读，请恢复其原路径后重试")
-	}
-	defer f.Close()
-	hash, buf := sha256.New(), make([]byte, 1<<20)
-	for {
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		n, err := f.Read(buf)
-		hash.Write(buf[:n])
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("读取安装镜像失败：%w", err)
-		}
-	}
-	if !strings.EqualFold(hex.EncodeToString(hash.Sum(nil)), expected) {
-		return errors.New("安装镜像的 SHA-256 与填写的值不一致，请核对镜像文件和校验值")
 	}
 	return nil
 }
@@ -272,8 +242,29 @@ func ClearUnstartedInstallation(profile string, id uuid.UUID) error {
 	return os.Remove(filepath.Join(profile, installRecord))
 }
 
-// The Apple login surface accepts physical keys from the guest's initial US
-// layout. Check this before downloading media or creating the local account.
-func ValidMacOSInstallPassword(value string) bool {
-	return len(value) >= 8 && len(value) <= 256 && strings.IndexFunc(value, func(r rune) bool { return r < ' ' || r > '~' }) < 0
+// publishBinding creates the named profile file once and never replaces a
+// different existing one.
+func publishBinding(profile, name string, data []byte) error {
+	temp, err := os.CreateTemp(profile, ".guest-binding-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(temp.Name())
+	_, writeErr := temp.Write(data)
+	if err := errors.Join(writeErr, temp.Close()); err != nil {
+		return err
+	}
+	path := filepath.Join(profile, name)
+	if err := os.Link(temp.Name(), path); !errors.Is(err, os.ErrExist) {
+		return err
+	}
+	info, err := os.Lstat(path)
+	if err != nil || !info.Mode().IsRegular() || info.Size() != int64(len(data)) {
+		return fmt.Errorf("unexpected existing %s", name)
+	}
+	prior, err := os.ReadFile(path)
+	if err != nil || !bytes.Equal(data, prior) {
+		return fmt.Errorf("refusing to replace existing %s", name)
+	}
+	return nil
 }

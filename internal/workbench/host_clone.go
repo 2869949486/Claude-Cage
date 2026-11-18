@@ -35,17 +35,9 @@ func (s *Server) hostClonePlan(ctx context.Context) (hostimage.Plan, error) {
 	return hostimage.Resolve(ctx, identity, cache, filepath.Join(home, "Downloads"), template, transport)
 }
 
-func hostCloneSystemReserve(plan hostimage.Plan) int {
-	if hostimage.IsLinux(plan.Host.System) {
-		return 16
-	}
-	// Intel stages the full installer inside the new disk in addition to the
-	// installed system and development tools.
-	if plan.Host.System == "macos" && plan.Host.Arch == "amd64" {
-		return 64
-	}
-	return 32
-}
+// hostCloneSystemReserve is the space, in GiB, a new Linux system disk needs
+// beyond its installation image.
+const hostCloneSystemReserve = 16
 
 func (s *Server) hostClone(w http.ResponseWriter, r *http.Request) {
 	if !s.hasTrustedView(r) || !s.localVMStorage() {
@@ -75,7 +67,7 @@ func (s *Server) hostClone(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	minimumGiB := hostCloneSystemReserve(plan)
+	minimumGiB := hostCloneSystemReserve
 	started := view.Pending != nil && !view.Reselect
 	if started {
 		minimumGiB = 0

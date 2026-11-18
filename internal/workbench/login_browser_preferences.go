@@ -13,19 +13,9 @@ func linuxLoginPreferences(reuse bool) string {
 	}
 	return "if test -f /etc/claude-cage/login-browser-mode; then sudo unlink /etc/claude-cage/login-browser-mode || exit 1; fi"
 }
-func macLoginPreferences(reuse bool) string {
-	if reuse {
-		return `umask 077; d="$HOME/Library/Application Support/Cage"; mkdir -p "$d" && touch "$d/reuse-claude-login"`
-	}
-	return `f="$HOME/Library/Application Support/Cage/reuse-claude-login"; if test -f "$f"; then unlink "$f"; fi`
-}
 
 func (s *Server) syncLoginPreferences(ctx context.Context, reuse bool) error {
-	// The Windows controller receives the mode with each workbench login request.
 	script := linuxLoginPreferences(reuse)
-	if s.macosGuest != nil {
-		script = macLoginPreferences(reuse)
-	}
 	if _, err := s.guest(ctx, script); err != nil {
 		return errors.New("未能将登录浏览器设置同步到环境，请重新连接后重试")
 	}

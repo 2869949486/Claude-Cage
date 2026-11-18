@@ -98,7 +98,6 @@ try {
     Enter-CiPhase $(if ($Release) { 'Build and sign the application' } else { 'Build the application' })
     & (Join-Path $PSScriptRoot 'build-windows.ps1') -Release:$Release
     Enter-CiPhase 'Go and desktop shell tests'
-    Invoke-BuildTool 'go' @('test', './internal/hostproxy', './cmd/cage', '-run', '^Test(ParallelPackage|DownloadLockCancellationAndReuse|HostDownloadParentExitCancels)', '-count=1')
     Invoke-BuildTool 'dotnet' @('run', '--project', 'desktop/windows.tests/Cage.Windows.Tests.csproj')
     # RUNNER_TEMP and the checkout share D: on hosted runners. Use a
     # unique system-drive directory, outside user data, for the other side.

@@ -6,7 +6,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -33,9 +32,8 @@ func (surface phoneSurface) label() string {
 }
 
 type phoneSurfaceState struct {
-	op            sync.Mutex
-	session       *phoneSurfaceSession  // guarded by op
-	nativeBrowser *windowsBrowserClient // Native guest phone browser, guarded by op
+	op      sync.Mutex
+	session *phoneSurfaceSession // guarded by op
 }
 
 func (p *mobilePairing) surface(kind phoneSurface) *phoneSurfaceState {
@@ -193,38 +191,9 @@ func (s *Server) retirePhoneSurface(surface phoneSurface, b *phoneSurfaceSession
 		b.releaseDisplay()
 		b.releaseDisplay = nil
 	}
-	if surface == phoneBrowser && state.nativeBrowser != nil {
-		state.nativeBrowser.close()
-		state.nativeBrowser = nil
-	}
 }
 
 func (s *Server) phoneSurfaceGuest(ctx context.Context, surface phoneSurface, token, op string, input phoneSurfaceInput) ([]byte, int, error) {
-	if surface == phoneDesktop && s.macosGuest != nil {
-		return s.macOSPhoneDesktop(ctx, token, op, input)
-	}
-	if surface == phoneBrowser && s.macosGuest != nil {
-		client := s.phones.browser.nativeBrowser
-		if client == nil {
-			return nil, 410, nil
-		}
-		out, err := client.request(ctx, "POST", "/phone-browser/"+op, input)
-		if err != nil {
-			var rejected windowsPhoneBrowserError
-			if errors.As(err, &rejected) {
-				return nil, rejected.status, nil
-			}
-			return nil, 502, err
-		}
-		limit := 4096
-		if op == "frame" || input.ReturnFrame {
-			limit = 3 << 20
-		}
-		if len(out) > limit || !json.Valid(out) {
-			return nil, 502, nil
-		}
-		return out, 200, nil
-	}
 	data, err := json.Marshal(input)
 	if err != nil {
 		return nil, 400, err
@@ -341,13 +310,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 		s.mu.Lock()
 		token := s.credentials.Token
 		s.mu.Unlock()
-		if surface == phoneDesktop && s.macosGuest != nil {
-			token = randomToken()
-		}
 		b = &phoneSurfaceSession{id: input.ID, token: token, ctx: sessionCtx, cancel: cancel, stopEpoch: context.AfterFunc(epoch, cancel)}
-		if surface == phoneBrowser && s.macosGuest != nil {
-			state.nativeBrowser = s.macOSPhoneBrowserClient(s.lifetimeContext())
-		}
 		if surface == phoneDesktop {
 			b.readyUntil = time.Now().Add(90 * time.Second)
 		}
@@ -473,11 +436,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 		case 404:
 			http.Error(w, "当前客机未提供"+surface.label()+"，请在电脑上更新环境", 409)
 		case 403:
-			if surface == phoneDesktop && s.macosGuest != nil {
-				http.Error(w, "请在电脑的 Cage 中完成虚拟 Mac 的屏幕录制和辅助功能授权，再重新打开。", 403)
-			} else {
-				http.Error(w, "客机拒绝此次访问", 403)
-			}
+			http.Error(w, "客机拒绝此次访问", 403)
 		case 426:
 			http.Error(w, "请在电脑的 Cage 中更新客机组件，再从手机打开 Claude Desktop。", http.StatusUpgradeRequired)
 		case 501:

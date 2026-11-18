@@ -329,17 +329,6 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 	if sharedRecord != nil && (!sharedCLILauncher(command) || sharedRecord.Launcher != "" && sharedRecord.Launcher != command) {
 		return nil, errors.New("主机启动命令与原会话不一致，请恢复原配置后重试")
 	}
-	if s.macosGuest != nil {
-		if input.Kind == "claude" && !sharedCLILauncher(command) {
-			return nil, errors.New("macOS 客机支持 claude 或 ccs 配置名启动命令")
-		}
-		s.mu.Lock()
-		ready := s.ready
-		s.mu.Unlock()
-		if !ready {
-			return nil, errTerminalNotReady
-		}
-	}
 	if !s.vmRunning() || s.busy() {
 		return nil, errTerminalNotReady
 	}
@@ -365,11 +354,7 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 	}
 	var err error
 	if input.Kind != "claude-login" {
-		if s.macOSLegacyWorkspace(sharedRecord) != "" {
-			workspace, err = s.projectWorkspace(sharedRecord.Workspace)
-		} else {
-			workspace, err = s.connectProject(input.Workspace, false)
-		}
+		workspace, err = s.connectProject(input.Workspace, false)
 		if err != nil {
 			return nil, err
 		}
@@ -384,13 +369,7 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 			launchCommand += " --add-dir " + shellescape.Quote(directory)
 		}
 	}
-	script := terminalScript(s.cliWorkspace(workspace), input.Kind, launchCommand)
-	if s.macosGuest != nil {
-		script = `cd -- "$HOME" && exec env TERM=xterm-256color COLORTERM=truecolor /bin/zsh -l`
-		if input.Kind != "claude-login" {
-			script = "exec /usr/local/libexec/cage-macos-terminal " + shellescape.Quote(macOSProjectPath(s.macosGuest.User, workspace))
-		}
-	}
+	script := terminalScript(guestPath(workspace), input.Kind, launchCommand)
 	var selection claudeSelection
 	var finished func()
 	if managed {
@@ -431,16 +410,8 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 			if !login && selection.Subject == "" {
 				return nil, errors.New("Claude 账号状态已变化，请重试")
 			}
-			script = managedClaudeTerminalScript(s.cliWorkspace(workspace), launchCommand, selection.GuestID, selection.Subject, login)
+			script = managedClaudeTerminalScript(guestPath(workspace), launchCommand, selection.GuestID, selection.Subject, login)
 			if login {
-				if s.macosGuest != nil {
-					ctx, cancel := context.WithTimeout(s.lifetimeContext(), 20*time.Second)
-					_, browserErr := s.guestAPI(ctx, "", "GET", "/health", nil)
-					cancel()
-					if browserErr != nil {
-						return nil, errors.New("客机登录浏览器尚未就绪，请恢复浏览器连接后重试")
-					}
-				}
 				if input.loginDraft == nil {
 					finished = func() {
 						ctx, cancel := context.WithTimeout(s.lifetimeContext(), 12*time.Second)
@@ -451,7 +422,7 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 			}
 		}
 	}
-	ordinaryShell := !managed && s.macosGuest == nil && !componentUpdate
+	ordinaryShell := !managed && !componentUpdate
 	if ordinaryShell {
 		finished = s.refreshShellLoginWatch
 	}

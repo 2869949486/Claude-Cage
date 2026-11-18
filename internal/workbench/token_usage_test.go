@@ -41,11 +41,6 @@ func TestTokenUsagePrivacyPersistenceAndControls(t *testing.T) {
 		}
 		return tokenUsageSnapshot{Version: 1, UpdatedAt: time.Now().Unix(), Timezone: "UTC", Today: "2026-11-16", Days: days}, nil
 	}
-	for _, route := range []string{"/api/token-usage"} {
-		if !macOSWorkbenchRoute(route) {
-			t.Fatal("native route missing")
-		}
-	}
 	read := request(s, "GET", "/api/token-usage", s.origin, "", true)
 	if read.Code != 200 || calls != 0 {
 		t.Fatal("passive read started collection", read.Code, calls)

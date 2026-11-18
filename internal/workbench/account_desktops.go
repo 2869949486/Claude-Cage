@@ -28,7 +28,7 @@ type desktopEntry struct {
 }
 
 func (s *Server) accountDesktopsSupported() bool {
-	return s.macosGuest == nil && !containerenv.Configured(s.profile)
+	return !containerenv.Configured(s.profile)
 }
 
 func (s *Server) accountDesktop(w http.ResponseWriter, r *http.Request) {

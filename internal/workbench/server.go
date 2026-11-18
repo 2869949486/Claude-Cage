@@ -50,18 +50,6 @@ type Server struct {
 	browserViews                                     displayViewDemand
 	desktopStatus                                    desktopStatusCache
 	agentNativeQueue                                 agentNativeQueue
-	macSetupProjectsChecked                          time.Time
-	macSetupProjectsAttempt                          time.Time
-	macSetupAccountMu                                sync.Mutex
-	macSetupAccountPrepared                          bool
-	macSetupSharingConfirmed                         bool
-	macSetupSharingAttempt                           time.Time
-	macSetupSharingStatus                            macOSScreenSharingStatus
-	macProjectsRetryAt                               time.Time
-	macLoginLease                                    *macLoginLease
-	macosGuest                                       *guestos.MacOSProfile
-	screenSharing                                    macOSScreenSharing
-	macResources                                     macOSResourceObserver
 	clipboardFiles                                   map[string]clipboardFileSelection
 	clipboardRelease                                 func([]string)
 	clipboardCancel                                  context.CancelFunc
@@ -77,7 +65,6 @@ type Server struct {
 	identity                                         ControllerIdentity
 	guestManifest                                    *cage.GuestManifest
 	guestUpdateRequired                              bool
-	macComponentsChecked                             bool
 	guestUpdateError                                 string
 	storageRecoveryError                             string
 	closing                                          bool
@@ -93,12 +80,6 @@ type Server struct {
 	tickets                                          map[string]time.Time
 	browserControl                                   *browserClient
 	controlSession                                   guestSession
-	nativeControl                                    nativeControl
-	nativeBrowserUsed                                atomic.Int64
-	windowsBrowserControl                            *windowsBrowserClient
-	nativeDownloads                                  map[string]*nativeDownload
-	nativeDownloadSlots                              chan struct{}
-	nativeDownloadRevision                           uint64
 	op                                               sync.Mutex
 	profile, configPath, exe, origin, token, session string
 	mu                                               sync.Mutex
@@ -223,10 +204,6 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 		if err = cage.RecoverStorage(context.Background(), profile, nil); err != nil {
 			s.failStorageRecovery(err)
 		}
-		s.macosGuest, err = guestos.LoadMacOSProfile(profile)
-		if err != nil {
-			return err
-		}
 		s.instanceID, err = ensureRemoteInstance(profile)
 		if err != nil {
 			return err
@@ -260,9 +237,7 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 			}
 		}
 		// A previously running VM cannot keep an unmanaged endpoint online.
-		if s.macosGuest != nil {
-			_ = s.closeProxyGate("控制服务已重新连接，外网等待重新检查")
-		} else if cfg, e := loadConfig(configPath); e != nil || cfg.RequireManagedProxy(profile) != nil {
+		if cfg, e := loadConfig(configPath); e != nil || cfg.RequireManagedProxy(profile) != nil {
 			_ = s.closeProxyGate("尚未配置有效节点，外网保持关闭")
 		}
 		if s.networkPaused {
@@ -401,9 +376,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/environment/guest-systems", s.guestInstallation)
 	mux.HandleFunc("GET /api/environment/guest-systems/clone", s.hostClone)
 	mux.HandleFunc("DELETE /api/environment/guest-systems", s.guestInstallation)
-	mux.HandleFunc("POST /api/environment/guest-systems/activate", s.guestInstallation)
-	mux.HandleFunc("GET /api/macos/install-recovery", s.macOSInstallRecovery)
-	mux.HandleFunc("POST /api/macos/install-recovery", s.macOSInstallRecovery)
 	mux.HandleFunc("GET /api/environment/storage", s.environmentStorage)
 	mux.HandleFunc("POST /api/environment/storage", s.environmentStorage)
 	mux.HandleFunc("POST /api/environment/storage/recover", s.recoverEnvironmentStorage)
@@ -411,7 +383,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/environment/resources", s.applyResources)
 	mux.HandleFunc("POST /api/environment/update", s.updateEnvironment)
 	mux.HandleFunc("POST /api/environment/tools", s.updateEnvironmentTools)
-	mux.HandleFunc("POST /api/environment/macos-screen-sharing", s.openMacOSScreenSharing)
 	mux.HandleFunc("GET /api/appearance", s.getAppearance)
 	mux.HandleFunc("GET /api/favorites", s.serveFavorites)
 	mux.HandleFunc("POST /api/favorites", s.serveFavorites)
@@ -461,9 +432,9 @@ func (s *Server) handler() http.Handler {
 			http.Error(w, "环境尚未就绪", 409)
 			return
 		}
-		// A Linux guest scrolls its page by the viewer's distance, outside the
-		// display stream. A macOS guest negotiates it inside its own.
-		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale, "pixel_wheel": s.macosGuest == nil})
+		// The guest scrolls its page by the viewer's distance, outside the
+		// display stream.
+		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale, "pixel_wheel": true})
 	})
 	mux.HandleFunc("GET /api/vnc", s.vnc)
 	mux.HandleFunc("GET /api/desktop-instances", s.desktopCatalog)
@@ -475,19 +446,9 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/claude-desktop/vnc", s.claudeDesktopVNC)
 	mux.HandleFunc("POST /api/claude-desktop/resize", s.claudeDesktopResize)
 	mux.HandleFunc("POST /api/claude-desktop/{action}", s.claudeDesktopAction)
-	if s.macosGuest != nil {
-		mux.HandleFunc("POST /api/macos/first-setup", s.macOSLoginWindow)
-		mux.HandleFunc("POST /api/macos/login", s.macOSLoginWindow)
-		mux.HandleFunc("POST /api/macos/maintenance", s.macOSLoginWindow)
-		s.registerMacOSClaudeRoutes(mux)
-		s.registerMacOSBrowserRoutes(mux)
-		mux.HandleFunc("POST /api/macos/project-approval", s.macOSProjectApproval)
-		mux.HandleFunc("POST /api/macos/exit-policy", s.bindMacOSExit)
-	}
 	mux.HandleFunc("GET /api/terminals", s.listTerminals)
 	mux.HandleFunc("GET /api/audio", s.audio)
 	mux.HandleFunc("GET /api/clipboard", s.sharedClipboard)
-	mux.HandleFunc("POST /api/clipboard/copy", s.clipboardCopy)
 	mux.HandleFunc("POST /api/clipboard/files", s.clipboardArchive)
 	mux.HandleFunc("GET /api/clipboard/files/{id}", s.clipboardArchive)
 	mux.HandleFunc("DELETE /api/clipboard/files/{id}", s.clipboardArchive)
@@ -542,25 +503,14 @@ func (s *Server) handler() http.Handler {
 			mux.ServeHTTP(w, r)
 			return
 		}
-		if s.macosGuest == nil && !s.desktopEntry && !s.clientOnly && strings.HasPrefix(r.URL.Path, "/api/") {
-			pending, err := guestos.LoadInstallation(s.profile)
-			if err != nil {
-				if !macOSInstallRecoveryRoute(r.Method, r.URL.Path) {
-					http.Error(w, "安装记录无法读取，请保留现有数据", http.StatusConflict)
-					return
-				}
-			}
-			if pending != nil && pending.System == guestos.MacOS && !macOSInstallRecoveryRoute(r.Method, r.URL.Path) {
-				http.Error(w, "macOS 客机尚未完成安装", http.StatusConflict)
+		if !s.desktopEntry && !s.clientOnly && strings.HasPrefix(r.URL.Path, "/api/") {
+			if _, err := guestos.LoadInstallation(s.profile); err != nil {
+				http.Error(w, "安装记录无法读取，请保留现有数据", http.StatusConflict)
 				return
 			}
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/agent/native") || r.URL.Path == "/api/agent/routes" {
 			mux.ServeHTTP(w, r)
-			return
-		}
-		if s.macosGuest != nil && (!macOSWorkbenchRoute(r.URL.Path) || s.macSetupPending() && !macOSSetupRoute(r.URL.Path)) {
-			http.Error(w, "此功能尚未接入 macOS 客机", http.StatusConflict)
 			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/mobile/") {
@@ -577,7 +527,7 @@ func (s *Server) handler() http.Handler {
 				http.Error(w, "请连接运行 Cage 环境的主机", http.StatusConflict)
 				return
 			}
-		} else if s.macosGuest == nil && s.routeRemote(w, r) {
+		} else if s.routeRemote(w, r) {
 			return
 		}
 		ctx, finish, err := s.beginActivity(r.Context())
@@ -591,10 +541,6 @@ func (s *Server) handler() http.Handler {
 		bootstrapRoute := r.URL.Path == "/api/session" || r.URL.Path == "/api/launch" || r.URL.Path == "/api/handoff" || r.URL.Path == "/api/remote/manifest"
 		trustedDesktop := s.hasTrustedView(r)
 		phoneRoom := s.pairedPhoneRoom(r)
-		if s.macosGuest != nil && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !trustedDesktop && phoneRoom == nil {
-			http.Error(w, "请通过本机 Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
-			return
-		}
 		if strings.HasPrefix(r.URL.Path, "/api/") && !accountRoute && !bootstrapRoute && !strings.HasPrefix(r.URL.Path, "/api/diagnostics") && !(r.Method == "GET" && r.URL.Path == "/api/appearance") {
 			epoch, unlocked := s.account.accessFor(trustedDesktop, phoneRoom != nil)
 			if !unlocked {
@@ -697,11 +643,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"keyboard":         s.preferences.Keyboard, "auto_timezone": s.preferences.AutoTimezone, "job": s.jobs.snapshot(),
 		"location": s.location, "network_error": s.currentNetworkErrorLocked(), "can_restore": e == nil,
 		"safety": s.safety, "environment_update_required": s.guestUpdateRequired, "environment_update_error": s.guestUpdateError,
-		"abandoned_guests": abandonedGuests(s.profile),
+		"abandoned_guests": s.abandonedGuestList(),
 	}
-	if s.macosGuest != nil {
-		view["guest_system"] = guestos.MacOS
-	} else if system, err := s.installedLinuxSystem(); err != nil {
+	if system, err := s.installedLinuxSystem(); err != nil {
 		view["guest_system_error"] = err.Error()
 	} else if system != guestos.Debian13 {
 		view["guest_system"] = system
@@ -811,40 +755,12 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 			requestError(w, err)
 			return
 		}
-		if s.macosGuest != nil {
-			http.Error(w, "已有客机不能替换创建配置", http.StatusConflict)
-			return
-		}
 	}
-	if s.macosGuest != nil {
-		if input.System != "" && input.System != guestos.MacOS {
-			http.Error(w, "此配置已绑定 macOS 客机", http.StatusConflict)
-			return
-		}
-		s.launch(w, "start", s.startMacOSGuest)
+	if input.System == guestos.MacOS || input.System == guestos.Windows11 {
+		http.Error(w, abandonedGuestMessage(input.System), http.StatusConflict)
 		return
 	}
-	if input.System == guestos.MacOS {
-		pending, err := guestos.LoadInstallation(s.profile)
-		if err != nil {
-			requestError(w, err)
-			return
-		}
-		if pending != nil && pending.System == guestos.MacOS {
-			if recovery, loadErr := guestos.LoadMacOSInstallRecovery(s.profile); loadErr != nil {
-				requestError(w, loadErr)
-				return
-			} else if recovery != nil {
-				s.resumePendingMacOSInstall(w, r, pending.ID)
-				return
-			}
-		}
-	}
-	if input.System == guestos.Windows11 {
-		http.Error(w, abandonedGuestMessage(guestos.Windows11), http.StatusConflict)
-		return
-	}
-	if input.System == guestos.MacOS || input.CloneKey != "" {
+	if input.CloneKey != "" {
 		s.beginGuestInstall(w, r, input)
 		return
 	}
@@ -853,22 +769,8 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "客户机安装记录无法读取，请保留现有数据", http.StatusConflict)
 		return
 	}
-	if pending != nil && pending.System == guestos.MacOS {
-		unstarted, err := guestos.UnstartedInstallation(s.profile, *pending)
-		if err != nil {
-			requestError(w, err)
-			return
-		}
-		if unstarted {
-			input.System = pending.System
-			s.beginGuestInstall(w, r, input)
-		} else {
-			s.resumePendingMacOSInstall(w, r, pending.ID)
-		}
-		return
-	}
 	if pending != nil && !hostimage.IsLinux(pending.System) {
-		http.Error(w, "已有原生客户机安装，请继续原安装", http.StatusConflict)
+		http.Error(w, abandonedGuestMessage(pending.System), http.StatusConflict)
 		return
 	}
 	if pending != nil && input.System != "" && pending.System != input.System {
@@ -894,7 +796,7 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.launch(w, "start", func() error {
-		if err := s.prepareGuestProfile(input.GuestProfile, input.System); err != nil {
+		if err := s.prepareGuestProfile(input.GuestProfile); err != nil {
 			return err
 		}
 		if err := s.prepareEnvironment(); err != nil {
@@ -921,13 +823,7 @@ func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
 	if jobID != "" {
 		_ = cage.RequestJobStop(s.profile, jobID)
 	}
-	if s.macosGuest != nil {
-		// Stopping the guest revokes its current grant. A user's saved pause
-		// remains distinct so the next Mac start can honor the same intent.
-		_ = s.revokeNetworkNow("正在停止环境", false)
-	} else {
-		_ = s.pauseNetworkNow("正在停止环境")
-	}
+	_ = s.pauseNetworkNow("正在停止环境")
 	kind := "stop"
 	if logout {
 		kind = "logout"

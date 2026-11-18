@@ -37,7 +37,7 @@ func (m *terminalManager) hasLiveShell() bool {
 // workbench shells. Its stdin closes when the final shell exits; cancelling the
 // access epoch or controller lifetime kills the connection immediately.
 func (s *Server) refreshShellLoginWatch() {
-	if s.macosGuest != nil || s.account == nil {
+	if s.account == nil {
 		return
 	}
 	m := &s.shellLoginWatch

@@ -6,8 +6,6 @@ import (
 	"net/http"
 	"strings"
 	"testing"
-
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 func TestBrowserWheelReachesTheLinuxControllerWithItsDistance(t *testing.T) {
@@ -58,7 +56,7 @@ func TestBrowserWheelReachesTheLinuxControllerWithItsDistance(t *testing.T) {
 	}
 }
 
-func TestBrowserWheelIsOfferedOnlyByLinuxGuests(t *testing.T) {
+func TestBrowserWheelIsOfferedByTheGuest(t *testing.T) {
 	offered := func(s *Server) bool {
 		w := desktopRequestForTest(s, http.MethodGet, "/api/vnc-credentials", nil)
 		var reply struct {
@@ -73,13 +71,5 @@ func TestBrowserWheelIsOfferedOnlyByLinuxGuests(t *testing.T) {
 	s.ready = true
 	if !offered(s) {
 		t.Fatal("Linux guest does not offer the scrolled distance")
-	}
-	// Native displays negotiate the distance inside their own stream.
-	s.macosGuest = &guestos.MacOSProfile{}
-	if offered(s) {
-		t.Fatal("macOS guest offers a controller wheel")
-	}
-	if w := desktopRequestForTest(s, http.MethodPost, "/api/browser/wheel", []byte(`{"x":1,"y":1,"deltaY":5}`)); w.Code != http.StatusBadRequest {
-		t.Fatal("macOS guest accepted a controller wheel", w.Code)
 	}
 }

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/cage"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 func initializationRequest(s *Server, action string, trusted bool) *httptest.ResponseRecorder {
@@ -71,10 +70,6 @@ func TestInitializationPersistsBeforeDiskCreationAndDoesNotResetExisting(t *test
 	}
 	if read().Required {
 		t.Fatal("existing Linux installation forced to reinstall")
-	}
-	s.macosGuest = &guestos.MacOSProfile{}
-	if next, err := s.initializationState(); err != nil || next.Required {
-		t.Fatalf("existing Mac installation: %+v %v", next, err)
 	}
 }
 

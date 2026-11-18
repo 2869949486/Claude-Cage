@@ -180,8 +180,5 @@ func (s *Server) runCacheMaintenance(ctx context.Context, request map[string]any
 		return nil, err
 	}
 	python := []string{"sudo", "-n", "/usr/bin/python3", "-I", "-c", script}
-	if s.macosGuest != nil {
-		python = []string{macCLIInstall + "/bin/python3", "-I", "-c", cacheMaintenanceScript}
-	}
 	return s.guest(ctx, "exec "+shellescape.QuoteCommand(python)+" <<'MAINTENANCE_INPUT'\n"+string(input)+"\nMAINTENANCE_INPUT\n")
 }

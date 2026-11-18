@@ -13,18 +13,17 @@ import (
 )
 
 type Job struct {
-	Canceled         bool           `json:"canceled,omitempty"`
-	SettingsSaved    bool           `json:"settings_saved,omitempty"`
-	GUIAuthorization bool           `json:"gui_authorization,omitempty"`
-	SetupProgress    *SetupProgress `json:"setup_progress,omitempty"`
-	ID               string         `json:"id"`
-	Kind             string         `json:"kind"`
-	Running          bool           `json:"running"`
-	Message          string         `json:"message"`
-	Error            string         `json:"error,omitempty"`
-	Recovery         string         `json:"recovery,omitempty"`
-	Workspace        string         `json:"workspace,omitempty"`
-	Log              string         `json:"log,omitempty"`
+	Canceled      bool           `json:"canceled,omitempty"`
+	SettingsSaved bool           `json:"settings_saved,omitempty"`
+	SetupProgress *SetupProgress `json:"setup_progress,omitempty"`
+	ID            string         `json:"id"`
+	Kind          string         `json:"kind"`
+	Running       bool           `json:"running"`
+	Message       string         `json:"message"`
+	Error         string         `json:"error,omitempty"`
+	Recovery      string         `json:"recovery,omitempty"`
+	Workspace     string         `json:"workspace,omitempty"`
+	Log           string         `json:"log,omitempty"`
 }
 
 var (
@@ -269,14 +268,6 @@ func (e *jobExecution) settingsSaved() {
 	defer e.owner.mu.Unlock()
 	if e.id != "" && e.owner.state.ID == e.id && e.owner.state.Running {
 		e.owner.state.SettingsSaved = true
-	}
-}
-
-func (e *jobExecution) guiAuthorization() {
-	e.owner.mu.Lock()
-	defer e.owner.mu.Unlock()
-	if e.id != "" && e.owner.state.ID == e.id && e.owner.state.Running {
-		e.owner.state.GUIAuthorization = true
 	}
 }
 

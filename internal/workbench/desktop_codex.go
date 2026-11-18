@@ -72,7 +72,7 @@ type desktopCodexEndpoint struct{ Grant, Session string }
 
 func (s *Server) monitorDesktopCodex(ctx context.Context) {
 	// Local Linux guests use the same private SSH transport on supported hosts.
-	if s.macosGuest != nil || containerenv.Configured(s.profile) {
+	if containerenv.Configured(s.profile) {
 		return
 	}
 	ticker := time.NewTicker(5 * time.Second)
@@ -129,7 +129,7 @@ func (s *Server) monitorDesktopCodex(ctx context.Context) {
 			if bindings[scope.Account] == nil {
 				bindings[scope.Account] = map[string]string{}
 			}
-			bindings[scope.Account][s.cliWorkspace(path)] = grant
+			bindings[scope.Account][guestPath(path)] = grant
 		}
 		if len(bindings) == 0 {
 			stop()

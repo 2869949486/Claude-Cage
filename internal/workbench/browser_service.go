@@ -7,7 +7,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -85,9 +84,6 @@ func (s *Server) browserClient() *browserClient {
 }
 
 func (s *Server) guestAPI(ctx context.Context, token, method, path string, body []byte) ([]byte, error) {
-	if s.macosGuest != nil {
-		return s.nativeBrowserAPI(ctx, method, path, body)
-	}
 	return s.browserClient().request(ctx, token, method, path, body)
 }
 
@@ -108,11 +104,6 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 	var body []byte
 	if input != nil {
 		method = http.MethodPost
-		if action == "download-retry" && (s.macosGuest != nil) {
-			if handled, err := s.retryNativeDownload(input.ID); handled {
-				return []byte(`{"ok":true}`), err
-			}
-		}
 		if action == "cookies" && (input.ID == "" ||
 			(input.Mode != "list" && input.Mode != "details" && input.Mode != "delete" && input.Mode != "delete-selected" && input.Mode != "clear") ||
 			(input.Scope != "site" && input.Scope != "all") || len(input.Query) > 800 || input.Page < 0 ||
@@ -136,9 +127,8 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 			return nil, browserInputError{errors.New("画面像素密度无效")}
 		}
 		if action == "wheel" {
-			// Only the Linux guest's controller scrolls a page by a distance.
-			// The native displays take it inside their own display stream.
-			if s.macosGuest != nil || !validWheel(input) {
+			// The guest's controller scrolls a page by a distance.
+			if !validWheel(input) {
 				return nil, browserInputError{errors.New("滚动位置或距离无效")}
 			}
 			body, _ := json.Marshal(map[string]int{"x": input.X, "y": input.Y, "deltaX": input.DeltaX, "deltaY": input.DeltaY})
@@ -183,12 +173,6 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 				return nil, browserInputError{err}
 			}
 			input.Workspace = guestPath(workspace)
-			if s.macosGuest != nil {
-				if isClientMountPath(workspace) {
-					return nil, browserInputError{errors.New("请先打开并授权本机项目")}
-				}
-				input.Workspace = filepath.Base(macOSProjectPath(s.macosGuest.User, workspace))
-			}
 		}
 		body, _ = json.Marshal(input)
 	}
@@ -233,9 +217,6 @@ func (s *Server) subscribeBrowser(ctx context.Context) (io.ReadCloser, error) {
 	s.mu.Unlock()
 	if !ready {
 		return nil, errBrowserNotReady
-	}
-	if s.macosGuest != nil {
-		return s.subscribeNativeBrowser(ctx), nil
 	}
 	return s.browserClient().events(ctx, token)
 }

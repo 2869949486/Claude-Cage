@@ -161,10 +161,6 @@ var imageInput string
 //go:embed desktop-files.py
 var desktopFiles string
 
-// DesktopFileReceiver shares the same bounded attachment writer with native
-// guests. Its --save-file mode uses only Python's standard library.
-func DesktopFileReceiver() string { return desktopFiles }
-
 //go:embed desktop-downloads.py
 var desktopDownloads string
 

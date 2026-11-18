@@ -131,7 +131,7 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	if err != nil {
 		return err
 	}
-	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+s.cliHelperCommand(mode, "-")))
+	command := "exec /bin/bash -c " + shellescape.Quote("exec 3>&1 1>&2; exec /bin/bash -lc "+shellescape.Quote("exec 1>&3 3>&-; exec "+cliChannelCommand(mode, "-")))
 	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", command)
 	cmd.Stdin = strings.NewReader(string(data))
 	var stderr fileControlStderr
@@ -186,7 +186,7 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 	}
 	workspaces := make(map[string]string, len(paths))
 	for _, path := range paths {
-		workspaces[s.cliWorkspace(path)] = path
+		workspaces[guestPath(path)] = path
 	}
 	var found []terminalConversation
 	if err := s.runCLIChannel(ctx, "discover", map[string]any{"accounts": accounts, "workspaces": workspaces}, &found); err != nil {
@@ -288,10 +288,7 @@ func (s *Server) readTerminalConversation(ctx context.Context, id string, observ
 	if err := s.runCLIChannel(ctx, "view", input, &current); err != nil {
 		return mobileSession{}, err
 	}
-	root := s.cliWorkspace(record.Workspace)
-	if legacy := s.macOSLegacyWorkspace(record); legacy != "" {
-		root = legacy
-	}
+	root := guestPath(record.Workspace)
 	if current.Workspace == "" && !current.HasHistory && record.TerminalID != "" {
 		if record.Switch != nil && record.Switch.Phase == "starting" && !current.Running {
 			if owner := s.terminals.get(record.TerminalID); owner == nil || !owner.ownsConversation() {
@@ -342,9 +339,6 @@ func (s *Server) readTerminalConversation(ctx context.Context, id string, observ
 		record.Turns = []mobileTurn{}
 	}
 	record.Title, record.ConnectionNotice = current.Title, current.ConnectionNotice
-	if s.macOSLegacyWorkspace(record) != "" {
-		record.ConnectionNotice = strings.TrimSpace(record.ConnectionNotice + "\n" + macOSLegacyWorkspaceNotice)
-	}
 	record.CanSend, record.HistoryTruncated = &current.CanSend, current.HistoryTruncated
 	record.GuestConfig, record.Connection = current.Config, current.Connection
 	record.GuestWorkspace = current.Workspace
@@ -489,10 +483,6 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 	if err != nil {
 		return "", nil, err
 	}
-	legacyWorkspace := ""
-	if existing != "" {
-		legacyWorkspace = s.macOSLegacyWorkspace(record)
-	}
 	if selection.ID == "" && selection.Subject == "" {
 		selection.GuestID = ""
 	}
@@ -534,36 +524,17 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 		payload["switch_id"] = record.Switch.ID
 		payload["continue_after_switch"] = record.Switch.Continue
 	}
-	if s.macosGuest != nil && record.GuestWorkspace != "" {
-		root := s.cliWorkspace(workspace)
-		if legacyWorkspace != "" {
-			root = legacyWorkspace
-		}
-		if !cliWorkspaceWithin(record.GuestWorkspace, root) {
-			return "", nil, errors.New("会话目录不在已授权的 macOS 项目内")
-		}
-		payload["project_subdir"] = strings.TrimPrefix(strings.TrimPrefix(record.GuestWorkspace, root), "/")
-	}
 	data, _ := json.Marshal(payload)
 	record.CanSend = new(bool)
 	record.ConnectionNotice = ""
-	if legacyWorkspace != "" {
-		record.ConnectionNotice = macOSLegacyWorkspaceNotice
-	}
-	body := s.cliHelperCommand("launch", string(data)) + "; exec bash -i"
+	body := cliChannelCommand("launch", string(data)) + "; exec bash -i"
 	directory := record.GuestWorkspace
 	if directory == "" {
-		directory = s.cliWorkspace(workspace)
+		directory = guestPath(workspace)
 	}
 	record.GuestWorkspace = directory
 	if err := writePrivate(mobileRecordPath(s.profile, id), record); err != nil {
 		return "", nil, err
-	}
-	if s.macosGuest != nil {
-		if legacyWorkspace != "" {
-			return "cd -- " + shellescape.Quote(legacyWorkspace) + " && exec " + s.cliHelperCommand("macos-launch", string(data)), record, nil
-		}
-		return s.macOSClaudeLaunch(workspace, string(data)), record, nil
 	}
 	script := "cd " + shellescape.Quote(directory) + " && exec env TERM=xterm-256color COLORTERM=truecolor CAGE_WORKBENCH=1 bash -lic " + shellescape.Quote(body)
 	return script, record, nil

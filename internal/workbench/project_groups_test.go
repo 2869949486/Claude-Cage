@@ -9,8 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 func groupFixture(t *testing.T) (*Server, string, string) {
@@ -54,19 +52,9 @@ func TestProjectGroupSaveReloadLegacyAndLaunchDirectories(t *testing.T) {
 	if err != nil || len(paths) != 3 || !slices.Contains(paths, other) {
 		t.Fatal(paths, err)
 	}
-	for _, platform := range []string{"linux", "macos"} {
-		t.Run(platform, func(t *testing.T) {
-			s.macosGuest = nil
-			expected := guestPath(b)
-			if platform == "macos" {
-				s.macosGuest = &guestos.MacOSProfile{User: "developer"}
-				expected = macOSProjectPath("developer", b)
-			}
-			actual, err := s.projectAdditionalDirectories(a)
-			if err != nil || !slices.Equal(actual, []string{expected}) {
-				t.Fatalf("directories=%q err=%v", actual, err)
-			}
-		})
+	actual, err := s.projectAdditionalDirectories(a)
+	if err != nil || !slices.Equal(actual, []string{guestPath(b)}) {
+		t.Fatalf("directories=%q err=%v", actual, err)
 	}
 }
 

@@ -9,8 +9,6 @@ import (
 	"slices"
 	"strings"
 	"testing"
-
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 func TestProjectAuthorizationProtectsCredentialsAcrossGuests(t *testing.T) {
@@ -24,13 +22,10 @@ func TestProjectAuthorizationProtectsCredentialsAcrossGuests(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, system := range []string{"linux", "macos"} {
+	for _, system := range []string{"linux"} {
 		t.Run(system, func(t *testing.T) {
 			s := testServer(t)
 			s.ready = true
-			if system == "macos" {
-				s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "guestdev"}
-			}
 			for _, directory := range []string{credentials, siblingState} {
 				body, _ := json.Marshal(map[string]any{"workspace": directory, "add": true})
 				response := desktopRequestForTest(s, http.MethodPost, "/api/projects/open", body)

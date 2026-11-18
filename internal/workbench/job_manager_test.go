@@ -46,11 +46,11 @@ func TestJobManagerStopPreemptsAndFencesOldExecution(t *testing.T) {
 	var old *jobExecution
 	first, err := manager.submit(&operation, "start", 17, nil, nil, func() error {
 		old = manager.execution()
-		old.guiAuthorization()
+		old.settingsSaved()
 		close(started)
 		<-old.ctx.Done()
 		old.message("stale message")
-		old.guiAuthorization()
+		old.settingsSaved()
 		_, _ = old.Write([]byte("stale output"))
 		close(canceled)
 		return errors.New("stale error")
@@ -59,7 +59,7 @@ func TestJobManagerStopPreemptsAndFencesOldExecution(t *testing.T) {
 		t.Fatal(err)
 	}
 	awaitJobSignal(t, started)
-	if old.id != first.ID || old.pauseVersion != 17 || !manager.snapshot().GUIAuthorization {
+	if old.id != first.ID || old.pauseVersion != 17 || !manager.snapshot().SettingsSaved {
 		t.Fatal("execution lost admission identity or pause generation")
 	}
 	if _, err := manager.submit(&operation, "settings", 0, func() error {
@@ -78,7 +78,7 @@ func TestJobManagerStopPreemptsAndFencesOldExecution(t *testing.T) {
 	awaitJobSignal(t, canceled)
 	awaitJobSignal(t, stopped)
 	state := awaitJobIdle(t, &manager)
-	if state.ID != stop.ID || state.Error != "" || state.Log != "" || state.Message != "已完成" || state.GUIAuthorization {
+	if state.ID != stop.ID || state.Error != "" || state.Log != "" || state.Message != "已完成" || state.SettingsSaved {
 		t.Fatalf("old execution changed stop result: %+v", state)
 	}
 
@@ -95,11 +95,11 @@ func TestJobManagerStopPreemptsAndFencesOldExecution(t *testing.T) {
 	}
 	awaitJobSignal(t, startedAgain)
 	old.message("late message")
-	old.guiAuthorization()
+	old.settingsSaved()
 	_, _ = old.Write([]byte("late output"))
 	state = manager.snapshot()
 	close(release)
-	if state.Log != "" || state.Message != "正在准备…" || state.GUIAuthorization {
+	if state.Log != "" || state.Message != "正在准备…" || state.SettingsSaved {
 		t.Fatalf("late output reached another job: %+v", state)
 	}
 }

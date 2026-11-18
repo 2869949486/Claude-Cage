@@ -380,32 +380,3 @@ func (s *Server) defaultDesktopScope(ctx context.Context) (string, error) {
 	subject := claudeIdentityHash(account.Email, account.Organization)
 	return "sudo install -d -m 0755 " + directory + "\nprintf '%s\\n' " + shellescape.Quote(account.ID+" "+mode+" "+account.guestID()+" "+subject) + " | sudo tee " + marker + " >/dev/null\nprintf %s " + shellescape.Quote(config) + " | sudo tee " + override + " >/dev/null\n", nil
 }
-
-// Native guests have one legacy Desktop. Its owner can change while it is
-// running; a Mac status reply is filtered by the GUI helper's signed PID.
-func (s *Server) archiveNativeDesktop(data []byte) {
-	var reply struct {
-		Identity *claudeGuestSnapshot `json:"desktop_identity"`
-	}
-	if json.Unmarshal(data, &reply) != nil || reply.Identity == nil {
-		return
-	}
-	epoch, open := s.account.access()
-	if !open {
-		return
-	}
-	m := &s.claudeAccounts
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if epoch.Err() != nil {
-		return
-	}
-	list, err := s.loadClaudeAccounts()
-	if err != nil {
-		return
-	}
-	changed, _, _ := list.bindDesktop("default", *reply.Identity)
-	if changed {
-		_ = s.saveClaudeAccounts(list)
-	}
-}

@@ -98,7 +98,7 @@ func (s *Server) mobileSessionMedia(w http.ResponseWriter, r *http.Request) {
 	}
 	var name string
 	var err error
-	name, err = mediaFileName(s.cliWorkspace(view.Workspace), view.mediaWorkingDir, in.Reference)
+	name, err = mediaFileName(guestPath(view.Workspace), view.mediaWorkingDir, in.Reference)
 	if err != nil {
 		http.Error(w, "只能预览当前项目中的媒体文件。", 403)
 		return

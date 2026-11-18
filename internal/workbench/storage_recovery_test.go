@@ -86,7 +86,7 @@ func TestStorageRecoveryKeepsHostAccessAndBlocksEnvironmentMutations(t *testing.
 	for _, endpoint := range []string{
 		"/api/start", "/api/stop", "/api/settings", "/api/projects/open", "/api/environment/resources",
 		"/api/environment/storage", "/api/environment/update", "/api/environment/initialization",
-		"/api/browser/open", "/api/input", "/api/input/paste/start", "/api/clipboard/copy", "/api/account/logout",
+		"/api/browser/open", "/api/input", "/api/input/paste/start", "/api/account/logout",
 	} {
 		response := desktopRequestForTest(s, http.MethodPost, endpoint, []byte(`{}`))
 		if response.Code != http.StatusConflict || !strings.Contains(response.Body.String(), "synthetic system manager unavailable") {

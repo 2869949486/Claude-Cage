@@ -69,7 +69,6 @@ func AgentOperations() []AgentOperation {
 	}
 	get("guest.options", "Available guest systems and resumable installation state", "/api/environment/guest-systems")
 	get("guest.match", "Inspect a host-matching clean image plan; pass key as clone_key and plan.host.system as guest_system to environment.start", "/api/environment/guest-systems/clone")
-	post("guest.activate", "Activate an installed guest; controller may retire, reconnect afterwards", "/api/environment/guest-systems/activate", object(nil))
 	get("initialization.status", "Read initial setup state", "/api/environment/initialization")
 	post("initialization.set", "action: begin, install or complete; complete requires verified readiness", "/api/environment/initialization", object(map[string]string{"action": "string"}))
 	post("environment.start", "Start or resume installation. Omit guest_system for an existing environment; use guest.options for supported choices", "/api/start", from(guestInstallRequest{}))
