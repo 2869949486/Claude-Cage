@@ -1,3 +1,4 @@
+import { pageProof } from "./page-proof.js";
 import { marked } from "marked";
 import DOMPurify from "dompurify";
 
@@ -739,6 +740,7 @@ function draftCard(draft: Draft, changed: () => void) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           action: "publish_issue",
+          proof: await pageProof(endpoint, "cage_issue"),
           ticket: draft.ticket,
           title: title.value,
           body: body.value,
@@ -939,6 +941,7 @@ async function run(chat: Chat, turn: Turn) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        proof: await pageProof(endpoint, "cage_ask"),
         suggestTitle,
         question: turn.question,
         history,

@@ -30,6 +30,7 @@ type message struct {
 	Content string `json:"content"`
 }
 type request struct {
+	Proof        string    `json:"proof"`
 	LogExcerpt   string    `json:"logExcerpt,omitempty"`
 	SuggestTitle bool      `json:"suggestTitle"`
 	Action       string    `json:"action"`
@@ -88,6 +89,8 @@ type decision struct {
 	Issue     *issueDraft `json:"issue,omitempty"`
 	Answer    string      `json:"answer"`
 	Status    string      `json:"status"`
+	Policy    string      `json:"policy"`
+	Lookups   []string    `json:"lookups"`
 	Question  string      `json:"question"`
 }
 
@@ -189,9 +192,13 @@ func main() {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.WriteHeader(204)
+			return
+		}
+		if r.Method == "GET" {
+			protectionConfig(w, r)
 			return
 		}
 		if r.Method != "POST" {
@@ -218,16 +225,29 @@ func main() {
 			fail(w, 400, "问题过长或格式有误。")
 			return
 		}
+		if in.Action != "" && in.Action != "publish_issue" {
+			fail(w, 400, "未知操作。")
+			return
+		}
+		action := "ask"
+		if in.Action == "publish_issue" {
+			action = "issue"
+		}
+		verified, verifyErr := validatePageProof(r.Context(), in.Proof, action)
+		if verifyErr != nil {
+			fail(w, 503, "页面验证暂不可用，请稍后重试。")
+			return
+		}
+		if !verified {
+			fail(w, 403, "页面验证无效或已过期，请在官网答疑页重新发送。")
+			return
+		}
 		if in.Action == "publish_issue" {
 			if issues == nil {
 				fail(w, 503, "机器人暂不可用。")
 				return
 			}
 			issues.publish(w, r, in, ip.String())
-			return
-		}
-		if in.Action != "" {
-			fail(w, 400, "未知操作。")
 			return
 		}
 		in.Question = strings.TrimSpace(in.Question)
@@ -280,7 +300,9 @@ func main() {
 		if in.LogExcerpt != "" {
 			query += " " + in.LogExcerpt
 		}
-		refs := append(learned.sources(query), ix.search(query)...)
+		plan := planLookup(ctx, key, in.Question)
+		refs := append(learned.sources(query), ix.search(query, "")...)
+		refs = ix.investigate(refs, plan.Queries)
 		external := 0
 		if in.Web {
 			webCtx, stop := context.WithTimeout(ctx, 5*time.Second)
@@ -289,23 +311,30 @@ func main() {
 			external = len(ws)
 			refs = append(refs, ws...)
 		}
-		var notes strings.Builder
-		for i, s := range refs {
-			fmt.Fprintf(&notes, "[%d] %s\n%s\n%s\n\n", i+1, s.Title, s.URL, s.Text)
-		}
 		system := prompt + "\n维护者规则：\n" + string(rules)
 		if in.SuggestTitle {
 			system += "\n本轮请同时生成历史对话标题：根据访客描述、近期对话和截图中的主题，在 JSON 的 chatTitle 字段给出一个便于日后查找的短标题。优先点明具体功能和问题，用访客的语言，例如「Windows 安装卡在启动环境」。中文通常 6–18 字，不加引号、序号、句号，不抄开场白、账号、路径、密钥或私人信息。仅有寒暄、尚无明确主题时省略 chatTitle。"
 		}
 		messages := append([]message{{"system", system}}, in.History...)
-		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n访客提供的诊断日志节选（不完整）：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, in.LogExcerpt, external, notes.String())})
+		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n访客提供的诊断日志节选（不完整）：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, in.LogExcerpt, external, numberedSources(refs, 0))})
 		answer, err := complete(ctx, key, messages)
 		if err != nil {
 			log.Printf("answer unavailable: %v", err)
-			fail(w, 502, "模型暂时没有返回回答，请稍后重试。")
+			respond(w, 200, map[string]any{"answer": referenceOnly(in.Question, refs), "sources": refs, "webCount": external, "observation": observation, "issue": nil})
 			return
 		}
-		if learned != nil && in.Collect && answer.Status == "knowledge_gap" {
+		reviewed := false
+		if answer.Status == "lookup" || answer.Status == "knowledge_gap" {
+			oldLen := len(refs)
+			refs = ix.investigate(refs, answer.Lookups)
+			follow := fmt.Sprintf("核查刚才的初稿。请结合新增检索到的资料和前文编号重新给出完整 JSON。不论技术细节是否查到，都直接回答能确认的部分或问访客要证据；查不到的兼容性要说明尚无实测。只有访客原本就在问尚未确定的商务条款、服务承诺或未来计划时可保留 knowledge_gap 并填 policy。不要将技术疑问改写为对维护者的政策提问。不要再发起 lookup。初稿：%s\n新增资料：\n%s", answer.Answer, numberedSources(refs[oldLen:], oldLen))
+			revised, reviewErr := complete(ctx, key, append(messages, message{"user", follow}))
+			if reviewErr == nil {
+				answer = revised
+				reviewed = true
+			}
+		}
+		if learned != nil && in.Collect && reviewed && plan.canAskOwner(answer) {
 			if err := learned.collect(answer.Question); err != nil {
 				log.Printf("question storage: %v", err)
 			}
