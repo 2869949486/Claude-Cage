@@ -22,10 +22,10 @@ import (
 )
 
 type Preferences struct {
-	ReuseClaudeLogin      bool   `json:"reuse_claude_login"`
-	TransferAllowUnclean  bool   `json:"transfer_allow_unclean"`
-	BalancedDisplay       bool   `json:"balanced_display"`
-	ProjectFileCache      bool   `json:"project_file_cache"`
+	ReuseClaudeLogin     bool `json:"reuse_claude_login"`
+	TransferAllowUnclean bool `json:"transfer_allow_unclean"`
+	BalancedDisplay      bool `json:"balanced_display"`
+	ProjectFileCache     bool `json:"project_file_cache"`
 	// HostTools lets Claude in the environment run commands on this computer.
 	HostTools             bool   `json:"host_tools,omitempty"`
 	MobileRelay           string `json:"mobile_relay,omitempty"`
