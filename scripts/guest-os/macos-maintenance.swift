@@ -88,9 +88,13 @@ enum MacMaintenance {
 
     private static func verified(_ app: NSRunningApplication, identifiers: Set<String>? = nil) -> Bool {
         guard let bundle = app.bundleIdentifier, (identifiers ?? applications).contains(bundle) else { return false }
+        return verifiedProcess(app.processIdentifier, identifier: bundle)
+    }
+
+    private static func verifiedProcess(_ pid: pid_t, identifier: String) -> Bool {
         var code: SecCode?, requirement: SecRequirement?
-        return SecRequirementCreateWithString("anchor apple and identifier \"\(bundle)\"" as CFString, [], &requirement) == errSecSuccess &&
-            SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: app.processIdentifier] as CFDictionary, [], &code) == errSecSuccess &&
+        return SecRequirementCreateWithString("anchor apple and identifier \"\(identifier)\"" as CFString, [], &requirement) == errSecSuccess &&
+            SecCodeCopyGuestWithAttributes(nil, [kSecGuestAttributePid as String: pid] as CFDictionary, [], &code) == errSecSuccess &&
             code != nil && requirement != nil && SecCodeCheckValidity(code!, [], requirement!) == errSecSuccess
     }
 
@@ -124,6 +128,13 @@ enum MacMaintenance {
                   let bounds = CGRect(dictionaryRepresentation: raw as CFDictionary), bounds.width > 0, bounds.height > 0,
                   (window[kCGWindowAlpha as String] as? Double ?? 1) > 0 else { continue }
             let owner = window[kCGWindowOwnerPID as String] as? Int32
+            // WindowServer publishes the pointer as a window. Moving it over
+            // Settings must not terminate the authorization view.
+            if let layer = window[kCGWindowLayer as String] as? Int,
+               layer == Int(CGWindowLevelForKey(.cursorWindow)),
+               let owner, verifiedProcess(owner, identifier: "com.apple.WindowServer") {
+                continue
+            }
             let app = owner.flatMap { NSRunningApplication(processIdentifier: $0) }
             let consent = app.flatMap { $0.bundleIdentifier == "com.apple.UserNotificationCenter" && verified($0) ? $0 : nil }
             let target = owner == front.processIdentifier ? front : consent
