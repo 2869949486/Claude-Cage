@@ -1,7 +1,7 @@
 ---
 import '@fontsource-variable/inter';
 import {Image} from 'astro:assets';
-import {ArrowUp, ArrowUpRight, BookOpen, ChevronRight, CircleDot, Globe, ImagePlus, MessageSquare, PanelLeft, Plus, SquarePen, Trash, X} from '@lucide/astro';
+import {ArrowUp, ArrowUpRight, BookOpen, ChevronRight, CircleDot, Globe, ImagePlus, MessageSquare, PanelLeft, Pencil, Plus, SquarePen, Trash, X} from '@lucide/astro';
 import GoogleAnalytics from '../components/GoogleAnalytics.astro';
 import {guidePages,guideURL} from '../lib/guide';
 import portrait from '../../../assets/claude-cage-character.png';
@@ -54,7 +54,9 @@ const guides=guidePages.map(p=>({path:guideURL(p.slug),title:p.title,sections:p.
 </div>
 <dialog id="document"><header><span><BookOpen size={17}/> 使用手册</span><button id="close-doc" class="icon" aria-label="关闭文档预览" data-tip="关闭预览"><X size={18}/></button></header><div id="doc-text"></div><a id="doc-link" class="doc-link" target="_blank" rel="noopener noreferrer">打开完整文档 <ArrowUpRight size={15}/></a></dialog>
 <template id="bot-avatar"><Image src={portrait} width={64} height={64} format="webp" alt="" /></template>
-<dialog id="delete-chat" aria-labelledby="delete-title"><h2 id="delete-title">删除这段对话？</h2><p id="delete-name"></p><div><button id="cancel-delete">取消</button><button id="confirm-delete">删除对话</button></div></dialog>
+<dialog id="rename-chat" class="history-dialog" aria-labelledby="rename-heading"><form id="rename-form"><h2 id="rename-heading">重命名对话</h2><label for="new-title">对话标题</label><input id="new-title" type="text" maxlength="80" required autocomplete="off"/><div><button type="button" id="cancel-rename">取消</button><button type="submit" class="primary">保存</button></div></form></dialog>
+<template id="rename-icon"><Pencil size={15}/></template>
+<dialog class="history-dialog" id="delete-chat" aria-labelledby="delete-title"><h2 id="delete-title">删除这段对话？</h2><p id="delete-name"></p><div><button id="cancel-delete">取消</button><button id="confirm-delete">删除对话</button></div></dialog>
 <template id="delete-icon"><Trash size={15}/></template>
 <template id="history-icon"><MessageSquare size={15}/></template>
 <script id="doc-map" type="application/json" set:html={JSON.stringify(guides).replaceAll('<','\\u003c')}></script>
