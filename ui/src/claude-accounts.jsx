@@ -218,7 +218,7 @@ function accountCaption(profile) {
   return profile.number ? `#${String(profile.number).padStart(2, "0")} ${label}` : label;
 }
 
-function ProfileCard({ guestSystem, proxySources, desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
+function ProfileCard({ proxySources, desktopNetwork, profile, environment, usageEnvironment, busy, active, defaultActive, perform, change, login, cancelDraft }) {
   const [renaming, setRenaming] = useState(false);
   const [label, setLabel] = useState("");
   const [group, setGroup] = useState(profile.handoff_group || "");
@@ -245,7 +245,7 @@ function ProfileCard({ guestSystem, proxySources, desktopNetwork, profile, envir
         </div>}
         <div className="claude-profile-meta">
           <span className="claude-profile-status" data-ready={profile.status === "ready"}>{profile.code_unlinked ? "Code 待授权" : "Code · "+(statusLabels[profile.status] || "状态未知")}</span>
-          <span className="claude-profile-status" data-ready={profile.desktop_status === "ready"}>{guestSystem === "windows-11" ? "Desktop 使用系统登录" : profile.desktop_status === "ready" ? "Desktop 已授权" : profile.desktop_instance_id ? "Desktop 待登录" : "Desktop 首次使用时授权"}</span>
+          <span className="claude-profile-status" data-ready={profile.desktop_status === "ready"}>{profile.desktop_status === "ready" ? "Desktop 已授权" : profile.desktop_instance_id ? "Desktop 待登录" : "Desktop 首次使用时授权"}</span>
           {profile.email && <span className="claude-profile-email" title={[profile.email, profile.organization].filter(Boolean).join(" · ")}>
             {[profile.email !== displayName && profile.email, profile.organization].filter(Boolean).join(" · ")}
           </span>}
@@ -299,7 +299,7 @@ function ProfileCard({ guestSystem, proxySources, desktopNetwork, profile, envir
   </article>;
 }
 
-export function ClaudeAccountsPanel({ guestSystem, proxySources, desktopNetwork, store, running, environmentBusy, tabs, login, enrollmentID, cancelLogin, onConfirm }) {
+export function ClaudeAccountsPanel({ proxySources, desktopNetwork, store, running, environmentBusy, tabs, login, enrollmentID, cancelLogin, onConfirm }) {
   const { accounts, detected, detectionStatus, detectionError, loginNotice, usageRunning, usageUnavailable, load, error } = store;
   const [busy, setBusy] = useState(false);
   const [adding, setAdding] = useState(false);
@@ -369,7 +369,7 @@ export function ClaudeAccountsPanel({ guestSystem, proxySources, desktopNetwork,
   };
   return <section className="claude-profiles" aria-label="Claude 账号管理">
     <div className="section-title">
-      <p>{guestSystem === "windows-11" ? "在这里添加账号，或直接在 Claude Code 中登录。" : "在这里添加账号，或直接在 Desktop 和 Claude Code 中登录。"}</p>
+      <p>在这里添加账号，或直接在 Desktop 和 Claude Code 中登录。</p>
     </div>
     <details className="claude-scheduling">
       <summary>调度设置 · {store.scheduling.mode === "sequential" ? "顺序优先" : "均衡分配"}</summary>
@@ -427,7 +427,7 @@ export function ClaudeAccountsPanel({ guestSystem, proxySources, desktopNetwork,
         {detected && <DetectedProfile key={detected.identity} profile={detected} usageEnvironment={usageEnvironment} busy={busy || environmentBusy || !!environment}
           perform={perform} change={load}
           join={() => perform(joinDetected)} />}
-        {accounts?.map((profile) => <ProfileCard guestSystem={guestSystem} proxySources={proxySources} desktopNetwork={desktopNetwork} key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
+        {accounts?.map((profile) => <ProfileCard proxySources={proxySources} desktopNetwork={desktopNetwork} key={profile.id} profile={profile} environment={environment} usageEnvironment={usageEnvironment}
           busy={busy || environmentBusy} perform={perform} change={load} login={login} cancelDraft={cancelDraft}
           active={activeCounts.get(profile.id)?.all || 0} defaultActive={activeCounts.get(profile.id)?.fromDefault || 0} />)}
       </QuotaClock>

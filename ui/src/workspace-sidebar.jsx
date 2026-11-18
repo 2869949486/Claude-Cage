@@ -57,9 +57,6 @@ export function WorkspaceSidebar({
   runtimeLabel,
   network,
   onHome,
-  browserAvailable = true,
-  editorAvailable = true,
-  projectsAvailable = true,
   onOpenProject,
   onProjectSelect,
   onSelect,
@@ -128,7 +125,7 @@ export function WorkspaceSidebar({
           <button
             className="sidebar-link"
             onClick={onBrowser}
-            disabled={!ready || busy || !browserAvailable}
+            disabled={!ready || busy}
             aria-label="打开浏览器"
             title="打开浏览器"
           >
@@ -138,7 +135,7 @@ export function WorkspaceSidebar({
           <button
             className="icon-button sidebar-claude-shortcut"
             onClick={onClaudeWeb}
-            disabled={!ready || busy || !browserAvailable}
+            disabled={!ready || busy}
             aria-label="claude.ai"
             title="打开 claude.ai"
           >
@@ -172,8 +169,8 @@ export function WorkspaceSidebar({
               className="icon-button"
               onClick={() => onOpenProject()}
               aria-label="添加项目"
-              title={projectsAvailable ? "添加项目" : "当前环境尚未支持外部项目，文件保存在隔离工作目录中"}
-              disabled={busy || !projectsAvailable}
+              title="添加项目"
+              disabled={busy}
             >
               <Plus size={15} />
             </button>
@@ -238,7 +235,7 @@ export function WorkspaceSidebar({
                   className="icon-button"
                   aria-label={`打开 ${project} 的编辑器`}
                   title="在 code-server 中打开项目目录"
-                  disabled={!ready || busy || !editorAvailable}
+                  disabled={!ready || busy}
                   onClick={() => onEditor(path)}
                 >
                   <ExternalLink size={15} />
@@ -263,7 +260,7 @@ export function WorkspaceSidebar({
               </div>
               {terminalMenuAt(path)}
               {expanded && folders.length > 1 && <div className="sidebar-project-folders" aria-label={`${project} 的文件夹`}>
-                {folders.map((folder, index) => <button key={folder} title={folder} disabled={!ready || busy || !editorAvailable} onClick={() => onEditor(folder)} aria-label={`打开文件夹 ${projectName(folder)} 的编辑器`}><Folder size={13} /><span>{projectName(folder)}</span>{index === 0 && <small>默认</small>}</button>)}
+                {folders.map((folder, index) => <button key={folder} title={folder} disabled={!ready || busy} onClick={() => onEditor(folder)} aria-label={`打开文件夹 ${projectName(folder)} 的编辑器`}><Folder size={13} /><span>{projectName(folder)}</span>{index === 0 && <small>默认</small>}</button>)}
               </div>}
               <div
                 className={`project-children ${expanded ? "expanded" : ""}`}
@@ -322,7 +319,7 @@ export function WorkspaceSidebar({
           );
         })}
         {!projects.length && (
-          <p className="sidebar-empty">{projectsAvailable ? "打开本地文件夹开始工作" : "使用 PowerShell 管理隔离工作目录中的文件"}</p>
+          <p className="sidebar-empty">打开本地文件夹开始工作</p>
         )}
       </div>
       <div className="sidebar-bottom">

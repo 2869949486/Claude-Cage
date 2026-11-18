@@ -40,9 +40,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
     private var completeUpdateMenu: NSMenuItem!
     private var controllerNeedsUpdate = false
     private var appUpdater: CageAppUpdater!
-    private var guestWorkspace: GuestWorkspaceLayout?
-    private var workspacePreviousFrame: NSRect?
-    private var workspacePreviousMinimum: NSSize?
 
     private struct DesktopEntry {
         let status: String
@@ -89,10 +86,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             verifyCodexDecision("授权 Codex 查看和操作「\(label)」(\(bundleID))。\(scope) 请求项目：\(project)")
         }
         CageProfile.pinEnvironment()
-        if CommandLine.arguments.dropFirst().elementsEqual(["--store-trial-guest-password"]) {
-            do { try MacGuestLoginCredential.importFromPipe(); return }
-            catch { FileHandle.standardError.write(Data((error.localizedDescription + "\n").utf8)); exit(1) }
-        }
         NSSetUncaughtExceptionHandler { exception in CageDiagnostics.record("Uncaught native exception: \(exception.name.rawValue): \(exception.reason ?? "")\n\(exception.callStackSymbols.joined(separator: "\n"))") }
         let app = NSApplication.shared
         let delegate = CageApp()
@@ -115,7 +108,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         NSApp.appearance = mode == "system" ? nil : NSAppearance(named: mode == "dark" ? .darkAqua : .aqua)
         makeMenus()
         window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1280, height: 850), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = CageProfile.macGuestTrial ? "Cage macOS" : "Cage"
+        window.title = "Cage"
         window.titlebarAppearsTransparent = false
         window.backgroundColor = NSColor(srgbRed: 247.0/255, green: 247.0/255, blue: 247.0/255, alpha: 1)
         window.minSize = NSSize(width: 820, height: 580)
@@ -191,9 +184,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         completeUpdateMenu = appMenu.addItem(withTitle: "完成待安装更新…", action: #selector(completePendingUpdate), keyEquivalent: "")
         completeUpdateMenu.isHidden = true
         appMenu.addItem(.separator())
-        if CageProfile.macGuestTrial {
-            appMenu.addItem(withTitle: "复制试用客机登录密码", action: #selector(copyGuestLoginPassword), keyEquivalent: "")
-        }
         appMenu.addItem(withTitle: "设置…", action: #selector(settings), keyEquivalent: ",")
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "隐藏 Cage", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
@@ -247,10 +237,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         let status = controllerNeedsUpdate ? "\n当前连接旧后台；更新尚未完成。" : ""
         NSApp.orderFrontStandardAboutPanel(options: [.applicationName:"Cage", .applicationVersion:version, .credits:NSAttributedString(string:"本机隔离编码工作区\n基于 agent-vm、Lima、Chromium、noVNC 与 xterm.js" + status)])
     }
-    @objc private func copyGuestLoginPassword() {
-        do { try MacGuestLoginCredential.copyForLogin() }
-        catch { let alert = NSAlert(error: error); alert.beginSheetModal(for: window) }
-    }
     @objc private func settings() { action("settings") }
     @objc private func openProject() { action("openProject") }
     @objc private func newTab() { action("newTab") }
@@ -273,12 +259,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
     }
     private func action(_ name: String) { webView.evaluateJavaScript("window.cageNativeAction?.('\(name)')", completionHandler: nil) }
     private func requestEntry(options: [String] = [], _ completion: @escaping (Result<DesktopEntry, Error>) -> Void) {
-        if CageProfile.macGuestTrial {
-            let binding = CageProfile.configURL().deletingLastPathComponent().appendingPathComponent("macos-guest.json")
-            guard FileManager.default.fileExists(atPath: binding.path) else {
-                completion(.failure(CageUpdateError("这份试用版尚未绑定 macOS 客机，准备完成后请点重试。"))); return
-            }
-        }
         guard let executable = Bundle.main.url(forResource: "cage", withExtension: nil) else {
             completion(.failure(NSError(domain: "Cage", code: 1))); return
         }
@@ -305,7 +285,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         }
     }
     private func bootstrap(options: [String] = []) {
-        setGuestWorkspace(nil)
         loading.stringValue = options.contains("--complete-update") ? "正在停止环境并切换到新版后台…" : "正在启动 Cage 工作台…"
         loading.isHidden = false; retry.isHidden = true; webView.isHidden = true
         completeUpdateButton.isHidden = true; existingEnvironmentButton.isHidden = true
@@ -314,7 +293,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             case .success(let entry):
                 self.controllerNeedsUpdate = entry.status != "ready"
                 self.completeUpdateMenu.isHidden = !self.controllerNeedsUpdate
-                let appTitle = CageProfile.macGuestTrial ? "Cage macOS" : "Cage"
+                let appTitle = "Cage"
                 self.window.title = self.controllerNeedsUpdate ? "\(appTitle)（更新待完成）" : appTitle
                 if let url = entry.url { self.expectedPort = url.port!; self.webView.load(URLRequest(url: url)) }
                 else { self.showError(entry.message); self.completeUpdateButton.isHidden = false; self.existingEnvironmentButton.isHidden = false }
@@ -484,13 +463,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         case "workbenchReady":
             guard !controllerNeedsUpdate else { replyHandler(nil,"后台版本尚未同步，更新未完成"); return }
             appUpdater?.markLaunchReady()
-            replyHandler(true,nil)
-        case "guestWorkspace":
-            guard let active = body["active"] as? Bool else { replyHandler(nil,"客机画面参数无效"); return }
-            if active {
-                guard let aspect = body["aspect"] as? Double, aspect.isFinite, (0.5...4).contains(aspect) else { replyHandler(nil,"客机画面比例无效"); return }
-                setGuestWorkspace(GuestWorkspaceLayout(aspect: aspect))
-            } else { setGuestWorkspace(nil) }
             replyHandler(true,nil)
         case "appReference":
             let path: String
@@ -740,36 +712,6 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         let visible = !forceHidden && window.isVisible && !window.isMiniaturized && window.occlusionState.contains(.visible)
         webView.evaluateJavaScript("window.cageWindowVisible = \(visible ? "true" : "false"); window.dispatchEvent(new Event('cage-window-visibility'));", completionHandler: nil)
     }
-    private func setGuestWorkspace(_ layout: GuestWorkspaceLayout?) {
-        if let layout {
-            let opening = guestWorkspace == nil
-            if guestWorkspace == nil { workspacePreviousFrame = window.frame; workspacePreviousMinimum = window.minSize }
-            guestWorkspace = layout
-            guard !window.styleMask.contains(.fullScreen), let screen = window.screen else { return }
-            let available = window.contentRect(forFrameRect: screen.visibleFrame).size
-            let content = layout.fitted(width: opening ? available.width : window.contentLayoutRect.width, available: available)
-            let minimum = layout.fitted(width: 0, available: available)
-            window.contentMinSize = minimum
-            var frame = window.frameRect(forContentRect: NSRect(origin: .zero, size: content))
-            frame.origin.x = max(screen.visibleFrame.minX, min(window.frame.minX, screen.visibleFrame.maxX - frame.width))
-            frame.origin.y = max(screen.visibleFrame.minY, min(window.frame.maxY, screen.visibleFrame.maxY) - frame.height)
-            window.setFrame(frame, display: true)
-        } else if guestWorkspace != nil {
-            guestWorkspace = nil
-            if let minimum = workspacePreviousMinimum { window.minSize = minimum }
-            if let frame = workspacePreviousFrame, !window.styleMask.contains(.fullScreen) { window.setFrame(frame, display: true) }
-            workspacePreviousFrame = nil; workspacePreviousMinimum = nil
-        }
-    }
-
-    func windowWillResize(_ sender: NSWindow, to frameSize: NSSize) -> NSSize {
-        guard let layout = guestWorkspace, !sender.styleMask.contains(.fullScreen), let screen = sender.screen else { return frameSize }
-        let proposed = sender.contentRect(forFrameRect: NSRect(origin: .zero, size: frameSize)).size
-        let available = sender.contentRect(forFrameRect: screen.visibleFrame).size
-        let content = layout.resized(proposed: proposed, current: sender.contentLayoutRect.size, available: available)
-        return sender.frameRect(forContentRect: NSRect(origin: .zero, size: content)).size
-    }
-
     func windowDidChangeOcclusionState(_ notification: Notification) { publishWindowVisibility() }
     func windowDidMiniaturize(_ notification: Notification) { publishWindowVisibility() }
     func windowDidDeminiaturize(_ notification: Notification) { publishWindowVisibility() }

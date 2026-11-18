@@ -153,37 +153,6 @@ export function AccountAvatar({ account, large = false }) {
   );
 }
 
-export function MacOSAccountGate({ children }) {
-  const { account, act } = useAccount();
-  const [name, setName] = useState(account?.macos_guest_user || account?.username || "");
-  const [password, setPassword] = useState("");
-  const [confirmation, setConfirmation] = useState("");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  if (!account?.macos_account_host || account.macos_credentials_ready) return children;
-  async function submit(event) {
-    event.preventDefault();
-    if (busy) return;
-    if (password !== confirmation) { setError("两次密码不一致"); return; }
-    setBusy(true); setError("");
-    try { await act("prepare-macos", { username:name, password, confirm_password:confirmation }); setPassword(""); setConfirmation(""); }
-    catch (e) { setError(e.message); }
-    finally { setBusy(false); }
-  }
-  return <main className="account-gate"><div className="account-brand"><img src={logo} alt="" />Cage</div><section className="account-entry">
-    <h1>设置 Cage 与 macOS 共用账密</h1>
-    <p className="account-entry-intro">{account.trusted_local ? "先设置 Cage 用户名和密码，再继续客机安装。已有账户、文件和登录状态会保留。" : "输入当前 Cage 密码，确认用于 macOS 客机。已有客机保留用户名和用户目录。"}</p>
-    <form onSubmit={submit}><fieldset disabled={busy}>
-      <label className="account-field">用户名<input required value={name} onChange={event => setName(event.target.value)} maxLength={31} pattern="[a-z][a-z0-9_]{0,30}" readOnly={Boolean(account.macos_guest_user)} autoComplete="username" /></label>
-      <p className="field-help">小写字母开头，1–31 个小写字母、数字或下划线。密码使用 8–256 个英文键盘可输入的字符。</p>
-      <PasswordField label={account.trusted_local ? "设置密码" : "当前 Cage 密码"} value={password} onChange={setPassword} autoComplete={account.trusted_local ? "new-password" : "current-password"} />
-      <PasswordField label="确认密码" value={confirmation} onChange={setConfirmation} autoComplete={account.trusted_local ? "new-password" : "current-password"} />
-      {error && <p role="alert" className="account-error">{error}</p>}
-      <button className="primary account-submit" disabled={busy}>{busy ? "正在保存…" : "保存账密并继续"}</button>
-    </fieldset></form>
-  </section></main>;
-}
-
 function PasswordField({
   label,
   value,
@@ -317,14 +286,14 @@ export function AccountGate({ children }) {
           {creating
             ? "注册 Cage 账户"
             : account
-              ? account.initial_mac_setup ? "继续完成 macOS 设置" : `欢迎回来，${account.username}`
+              ? `欢迎回来，${account.username}`
               : "正在连接 Cage"}
         </h1>
         <p className="account-entry-intro">
           {creating
-            ? isRemoteClient() ? "在云端创建账户，保护这台主机上的工作与登录状态。" : "先注册用户名和密码，再选择客机系统并安装环境。macOS 客机会使用同一套账密。"
+            ? isRemoteClient() ? "在云端创建账户，保护这台主机上的工作与登录状态。" : "先注册用户名和密码，再选择客机系统并安装环境。"
             : account
-              ? account.initial_mac_setup ? "系统已安装。请输入 Cage 账户密码，解锁后继续完成虚拟 Mac 的系统授权。" : account.trusted_local ? "本机工作区" : "输入密码，继续你的工作。"
+              ? account.trusted_local ? "本机工作区" : "输入密码，继续你的工作。"
               : isRemoteClient() ? "正在读取云端账户…" : "正在读取本机账户…"}
         </p>
         {account?.background_running && (
@@ -342,20 +311,18 @@ export function AccountGate({ children }) {
           <form onSubmit={submit}>
             <fieldset disabled={busy}>
               {creating && (
-                <><label className="account-field">
+                <label className="account-field">
                   用户名
                   <input
                     autoFocus
                     autoComplete="username"
-                    maxLength={account.macos_account_host ? 31 : 40}
-                    pattern={account.macos_account_host ? "[a-z][a-z0-9_]{0,30}" : undefined}
+                    maxLength={40}
                     required
                     value={username}
                     onChange={(e) => setUsername(e.target.value)}
-                    placeholder={account.macos_account_host ? "例如：shihao" : "你希望怎样被称呼"}
+                    placeholder="你希望怎样被称呼"
                   />
                 </label>
-                {account.macos_account_host && <p className="field-help">与 macOS 客机共用：小写字母开头，1–31 个小写字母、数字或下划线。</p>}</>
               )}
               <PasswordField
                 label={creating ? "设置密码" : "账户密码"}
@@ -371,7 +338,6 @@ export function AccountGate({ children }) {
                   autoComplete="new-password"
                 />
               )}
-              {creating && account.macos_account_host && <p className="field-help">密码使用 8–256 个英文键盘可输入的字母、数字、空格或符号。安装中断后继续使用这套账密。</p>}
               {(error || connectionError) && (
                 <p className="account-error" role="alert">
                   {error || connectionError}
@@ -719,7 +685,7 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
         setOldPassword("");
         setPassword("");
         setConfirmation("");
-        setMessage(value.macos_password_pending ? "Cage 密码已修改。客机密码待同步，下次启动时自动重试；同步完成前客机可能仍需原密码。" : "密码已修改，应用登录状态保持不变");
+        setMessage("密码已修改，应用登录状态保持不变");
       } else {
         setName(value.username);
         setAvatar(value.avatar || "");
@@ -746,7 +712,6 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
       )}
     </>
   );
-  if (account.macos_account_host && account.guest_system === "macos" && !account.macos_credentials_ready) return <MacOSAccountGate />;
   return (
     <div className="account-settings">
       <form className="account-profile" onSubmit={(event) => save(event)}>
@@ -760,9 +725,7 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
           <input ref={file} type="file" accept="image/png,image/jpeg" hidden
             onChange={upload} aria-label="选择头像图片" />
           <input className="account-profile-name" aria-label="用户名" value={name} maxLength={40}
-            autoComplete="username" onChange={(e) => setName(e.target.value)} required
-            readOnly={account.macos_username_bound} />
-          {account.macos_username_bound && <p className="field-help">用户名已用于 macOS 客机，保留该名称以继续使用原账户和文件。</p>}
+            autoComplete="username" onChange={(e) => setName(e.target.value)} required />
           <div className="account-profile-actions">
             <button type="button" className="quiet-button" onClick={() => {
               setFeedbackTarget("password"); setError(""); setMessage(""); setPasswordOpen(true);
@@ -778,7 +741,7 @@ export function AccountSettings({ busy: environmentBusy, onDirty, onConfirm }) {
         <form className="account-password-dialog" onSubmit={(event) => save(event, true)}>
           <fieldset disabled={busy || environmentBusy}>
             <p className="field-help">
-              修改密码不会清除 Claude 的登录状态。{account.macos_credentials_ready ? "Cage 与 macOS 客机共用密码；客机关闭时会在下次启动后同步。" : "忘记密码时，可在登录页使用已保存的恢复密钥重置。"}
+              修改密码不会清除 Claude 的登录状态。忘记密码时，可在登录页使用已保存的恢复密钥重置。
             </p>
             {!account.trusted_local && <PasswordField label="当前密码" value={oldPassword} onChange={setOldPassword} />}
             <PasswordField label="新密码" value={password} onChange={setPassword} autoComplete="new-password" />
