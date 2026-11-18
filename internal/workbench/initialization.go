@@ -13,10 +13,6 @@ import (
 	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
-// Keep the authorization admitted by the middleware: locking and unlocking
-// while an entry request waits must not revive that request in a new epoch.
-type initializationEpochKey struct{}
-
 const initializationLockTimeout = 15 * time.Second
 
 var errInitializationCheckBusy = errors.New("后台检查仍在进行，尚未进入工作台，请稍后重试；持续出现时请导出诊断包")
@@ -56,7 +52,7 @@ func (s *Server) lockInitialization(ctx context.Context, wait bool) error {
 
 func (s *Server) writeInitialization(r *http.Request, record initializationRecord) error {
 	lifetime := s.lifetimeContext()
-	epoch, _ := r.Context().Value(initializationEpochKey{}).(context.Context)
+	epoch, _ := r.Context().Value(accountEpochKey{}).(context.Context)
 	if s.account == nil {
 		return errors.New("Cage 已锁定，请先登录")
 	}
@@ -102,7 +98,12 @@ func (s *Server) initializationState() (initializationView, error) {
 		if json.Unmarshal(data, &record) != nil || record.Version != 1 {
 			return initializationView{}, errors.New("初始化记录无法读取，请保留现有数据并导出诊断包")
 		}
-		return initializationView{Required: !record.Completed || s.macSetupPending(), Started: record.Started, Tracked: true, Prepared: s.environmentPrepared()}, nil
+		pending, err := guestos.LoadInstallation(s.profile)
+		if err != nil {
+			return initializationView{}, err
+		}
+		unboundMac := pending != nil && pending.System == guestos.MacOS && s.macosGuest == nil
+		return initializationView{Required: !record.Completed || s.macSetupPending() || unboundMac, Started: record.Started || unboundMac, Tracked: true, Prepared: s.environmentPrepared()}, nil
 	}
 	if !errors.Is(err, os.ErrNotExist) {
 		return initializationView{}, err

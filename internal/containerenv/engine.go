@@ -47,8 +47,9 @@ type engineContainer struct {
 		Pid     int
 	}
 	Config struct {
-		Labels map[string]string
-		Image  string
+		Hostname string
+		Labels   map[string]string
+		Image    string
 	}
 	HostConfig struct {
 		Privileged   bool
@@ -63,6 +64,7 @@ type engineContainer struct {
 		CapAdd       []string
 		Memory       int64
 		NanoCpus     int64
+		PidsLimit    *int64
 		Devices      []struct {
 			PathOnHost      string
 			PathInContainer string
@@ -250,6 +252,14 @@ func (r *Runtime) engineSecurity(ctx context.Context) (rootless, limited bool, e
 }
 
 func checkContainerConfiguration(container *engineContainer) error {
+	identity, err := containerIdentity(container)
+	if err != nil {
+		return err
+	}
+	hostname := "cage"
+	if identity != nil {
+		hostname = identity.Hostname
+	}
 	config := container.HostConfig
 	if config.Privileged || config.NetworkMode != "none" || (config.PidMode != "" && config.PidMode != "private") || config.IpcMode != "private" || config.CgroupnsMode != "private" {
 		return errors.New("容器必须使用独立命名空间和禁用默认网络，不能启用特权模式")
@@ -258,8 +268,8 @@ func checkContainerConfiguration(container *engineContainer) error {
 		return errors.New("容器不能直接挂载宿主目录")
 	}
 	for _, entry := range config.ExtraHosts {
-		if entry != "cage:127.0.1.1" {
-			return errors.New("容器只允许 Cage 主机名的固定回环地址")
+		if entry != hostname+":127.0.1.1" {
+			return errors.New("容器只允许当前主机名的固定回环地址")
 		}
 	}
 	for _, mount := range container.Mounts {
