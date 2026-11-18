@@ -153,7 +153,6 @@ try {
   try {
     const open = f.page.getByRole("button", { name: "确认文件夹并继续", exact: true });
     const dialog = f.page.getByRole("dialog", { name: "允许使用这个文件夹" });
-    const enter = f.page.getByRole("button", { name: "进入工作台", exact: true });
     const allow = dialog.getByRole("button", { name: "允许使用此文件夹", exact: true });
     await allow.waitFor();
     assert.equal(generation, 1, "setup presents the scoped authorization automatically");
@@ -191,7 +190,6 @@ try {
     await allow.focus();
     await f.page.keyboard.press("Enter");
     await dialog.waitFor({ state: "hidden" });
-    await enter.click();
     await f.page.getByRole("complementary", { name: "项目与终端" }).waitFor();
     assert.equal(checks, 1);
     assert.equal(confirmations.length, 2);
