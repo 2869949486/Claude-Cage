@@ -108,11 +108,7 @@ func TestNativeDownloadRelay(t *testing.T) {
 func nativeDownloadFixture(t *testing.T, system string, records []browserDownloadInfo, payload []byte) (*Server, string, string) {
 	t.Helper()
 	s := testServer(t)
-	if system == "macos" {
-		s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "cage"}
-	} else {
-		s.windowsGuest = &guestos.WindowsProfile{}
-	}
+	s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "cage"}
 	workspace, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -143,7 +139,7 @@ func nativeDownloadFixture(t *testing.T, system string, records []browserDownloa
 }
 
 func TestNativeDownloadsPublishHostCopiesAndPreserveSavedLocations(t *testing.T) {
-	for _, system := range []string{"macos", "windows-11"} {
+	for _, system := range []string{"macos"} {
 		t.Run(system, func(t *testing.T) {
 			ids := []string{uuid.NewString(), uuid.NewString()}
 			records := []browserDownloadInfo{
@@ -219,7 +215,7 @@ func TestNativeDownloadsPublishHostCopiesAndPreserveSavedLocations(t *testing.T)
 				t.Fatal(err)
 			}
 			s.ready = false
-			response := windowsBrowserRequestForTest(s, http.MethodGet, "/api/browser/files/downloads/"+ids[0]+"/content", nil)
+			response := desktopRequestForTest(s, http.MethodGet, "/api/browser/files/downloads/"+ids[0]+"/content", nil)
 			if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), payload) {
 				t.Fatalf("offline saved copy unavailable: %d", response.Code)
 			}
@@ -292,7 +288,7 @@ func TestNativeDownloadFailureRetryAndCancellation(t *testing.T) {
 			if mode == "account-lock" {
 				s.account.setKey(make([]byte, 32))
 			}
-			response := windowsBrowserRequestForTest(s, "POST", "/api/browser/download-retry", []byte(`{"id":"`+id+`"}`))
+			response := desktopRequestForTest(s, "POST", "/api/browser/download-retry", []byte(`{"id":"`+id+`"}`))
 			if response.Code != 200 {
 				t.Fatalf("retry refused: %d %s", response.Code, response.Body.String())
 			}
@@ -311,7 +307,7 @@ func TestNativeDownloadFailureRetryAndCancellation(t *testing.T) {
 func TestNativeBrowserFileSaveUsesProductionHostBridge(t *testing.T) {
 	item := browserDownloadInfo{ID: uuid.NewString(), Name: "download.bin", State: "saved", Path: "Downloads/download.bin"}
 	payload := bytes.Repeat([]byte{0, 255, 42}, 50000)
-	s, workspace, _ := nativeDownloadFixture(t, "windows-11", []browserDownloadInfo{item}, payload)
+	s, workspace, _ := nativeDownloadFixture(t, "macos", []browserDownloadInfo{item}, payload)
 	workload := httptest.NewServer(s.handler())
 	defer workload.Close()
 	endpoint, _ := url.Parse(workload.URL)
@@ -404,7 +400,7 @@ func TestNativeDownloadActualChromiumToHost(t *testing.T) {
 	var item browserDownloadInfo
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		response := windowsBrowserRequestForTest(s, "GET", "/api/browser/tabs", nil)
+		response := desktopRequestForTest(s, "GET", "/api/browser/tabs", nil)
 		if response.Code != 200 {
 			t.Fatalf("native tabs failed: %d %s", response.Code, response.Body.String())
 		}
@@ -434,7 +430,7 @@ func TestNativeDownloadActualChromiumToHost(t *testing.T) {
 	if err != nil || !bytes.Equal(actual, payload) {
 		t.Fatalf("downloaded host bytes differ: %v", err)
 	}
-	response := windowsBrowserRequestForTest(s, "GET", "/api/browser/files/downloads/"+item.ID+"/content", nil)
+	response := desktopRequestForTest(s, "GET", "/api/browser/files/downloads/"+item.ID+"/content", nil)
 	if response.Code != 200 || !bytes.Equal(response.Body.Bytes(), payload) {
 		t.Fatal("native HTTP content differs", response.Code)
 	}

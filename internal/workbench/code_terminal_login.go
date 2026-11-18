@@ -14,11 +14,7 @@ func (s *Server) startCodeLogin(input terminalRequest, expectedID string) (*term
 		return nil, errClaudeAccessLost
 	}
 	var err error
-	if s.windowsGuest != nil && s.windowsGuest.Remote() {
-		input.Workspace, err = s.remoteWindowsCLIWorkspace(input.Workspace)
-	} else {
-		input.Workspace, err = s.projectWorkspace(input.Workspace)
-	}
+	input.Workspace, err = s.projectWorkspace(input.Workspace)
 	if err != nil {
 		return nil, err
 	}
@@ -140,7 +136,7 @@ func (s *Server) acceptLoginHint(ctx context.Context, record *mobileRecord, subj
 	var reply struct {
 		OK bool `json:"ok"`
 	}
-	return s.windowsConversationInput(record, query) == nil && s.runCLIChannel(ctx, "account-binding", query, &reply) == nil && reply.OK
+	return s.runCLIChannel(ctx, "account-binding", query, &reply) == nil && reply.OK
 }
 
 // Ordinary monitor ticks compare a file version alongside the existing CLI

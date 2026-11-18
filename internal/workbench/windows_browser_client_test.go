@@ -141,6 +141,11 @@ func TestWindowsBrowserRelayHelper(t *testing.T) {
 	os.Exit(0)
 }
 
+func newWindowsBrowserClient(parent context.Context, _ string) *windowsBrowserClient {
+	ctx, cancel := context.WithCancel(parent)
+	return &windowsBrowserClient{ctx: ctx, cancel: cancel}
+}
+
 func fixtureWindowsBrowserClient(t *testing.T) *windowsBrowserClient {
 	client := newWindowsBrowserClient(context.Background(), "unused-test-profile")
 	client.start = func(ctx context.Context) (*exec.Cmd, error) {

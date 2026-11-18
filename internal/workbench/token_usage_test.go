@@ -42,7 +42,7 @@ func TestTokenUsagePrivacyPersistenceAndControls(t *testing.T) {
 		return tokenUsageSnapshot{Version: 1, UpdatedAt: time.Now().Unix(), Timezone: "UTC", Today: "2026-11-16", Days: days}, nil
 	}
 	for _, route := range []string{"/api/token-usage"} {
-		if !macOSWorkbenchRoute(route) || !windowsWorkbenchRoute(route) {
+		if !macOSWorkbenchRoute(route) {
 			t.Fatal("native route missing")
 		}
 	}

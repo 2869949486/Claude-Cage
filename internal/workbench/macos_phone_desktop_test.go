@@ -163,10 +163,10 @@ func TestMacOSPhoneDesktopHandlerHonorsRoomGateAndRevocation(t *testing.T) {
 	s.phones.record = &phoneRecord{}
 	s.phones.roomCtx, s.phones.roomProof = room, "current-room"
 	open := fmt.Sprintf(`{"id":%q,"width":390,"height":640}`, id)
-	if response := windowsPhoneRequest(t, s, "POST", "/api/mobile/desktop/open", open, "old-room"); response.Code != 403 {
+	if response := phoneRequestForTest(t, s, "POST", "/api/mobile/desktop/open", open, "old-room"); response.Code != 403 {
 		t.Fatalf("old room accepted: %d", response.Code)
 	}
-	if response := windowsPhoneRequest(t, s, "POST", "/api/mobile/desktop/open", open, "current-room"); response.Code != 409 {
+	if response := phoneRequestForTest(t, s, "POST", "/api/mobile/desktop/open", open, "current-room"); response.Code != 409 {
 		t.Fatalf("closed gate accepted: %d %s", response.Code, response.Body.String())
 	}
 	cfg, err := loadConfig(s.configPath)
@@ -198,7 +198,7 @@ func TestMacOSPhoneDesktopHandlerHonorsRoomGateAndRevocation(t *testing.T) {
 		if strings.HasSuffix(path, "open") {
 			method, body = "POST", open
 		}
-		response := windowsPhoneRequest(t, s, method, path, body, "current-room")
+		response := phoneRequestForTest(t, s, method, path, body, "current-room")
 		if response.Code != 200 {
 			t.Fatalf("native handler: %d %s", response.Code, response.Body.String())
 		}
@@ -206,11 +206,11 @@ func TestMacOSPhoneDesktopHandlerHonorsRoomGateAndRevocation(t *testing.T) {
 	if err := s.account.lockAccess(false); err != nil {
 		t.Fatal(err)
 	}
-	if response := windowsPhoneRequest(t, s, "GET", "/api/mobile/desktop/"+id+"/frame", "", "current-room"); response.Code != 423 {
+	if response := phoneRequestForTest(t, s, "GET", "/api/mobile/desktop/"+id+"/frame", "", "current-room"); response.Code != 423 {
 		t.Fatal("locked account returned a desktop frame")
 	}
 	cancel()
-	if response := windowsPhoneRequest(t, s, "GET", "/api/mobile/desktop/"+id+"/frame", "", "current-room"); response.Code != 403 {
+	if response := phoneRequestForTest(t, s, "GET", "/api/mobile/desktop/"+id+"/frame", "", "current-room"); response.Code != 403 {
 		t.Fatal("revoked phone retained frames")
 	}
 }

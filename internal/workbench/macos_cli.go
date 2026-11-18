@@ -19,7 +19,7 @@ func (s *Server) macOSLegacyWorkspace(record *mobileRecord) string {
 		return ""
 	}
 	root := path.Join("/Users", s.macosGuest.User, ".local/share/cage/workspace")
-	if record.GuestWorkspace != path.Clean(record.GuestWorkspace) || !cliWorkspaceWithin(record.GuestWorkspace, root, false) {
+	if record.GuestWorkspace != path.Clean(record.GuestWorkspace) || !cliWorkspaceWithin(record.GuestWorkspace, root) {
 		return ""
 	}
 	return root

@@ -16,7 +16,7 @@ import (
 )
 
 func (s *Server) linuxTemplate(script string) (string, error) {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return script, nil
 	}
 	p, err := guestprofile.Load(s.profile)
@@ -69,7 +69,7 @@ func (s *Server) guestProfileOptions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) hasGuestEnvironment(ctx context.Context) (bool, error) {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return true, nil
 	}
 	if containerenv.Configured(s.profile) {
@@ -91,8 +91,6 @@ func (s *Server) prepareGuestProfile(options *guestprofile.Options, system strin
 	switch system {
 	case guestos.MacOS:
 		platform = "darwin"
-	case guestos.Windows11:
-		platform = "windows"
 	}
 	if options != nil {
 		if err := options.Validate(); err != nil {

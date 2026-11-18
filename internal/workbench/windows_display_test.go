@@ -82,19 +82,6 @@ func TestWindowsRFBMatchesNoVNCPixelFormatAndZlibStream(t *testing.T) {
 	<-done
 }
 
-func TestWindowsGuestCommandKeyMapping(t *testing.T) {
-	for _, key := range []uint32{0xffe7, 0xffe8, 0xffeb, 0xffec} {
-		if windowsGuestKeysym(key, "mac") != 0xffe3 || windowsGuestKeysym(key, "windows") != key {
-			t.Fatal("host Command mapping changed the Windows host key")
-		}
-	}
-	for _, key := range []uint32{0xffe3, 0xffe4, 0xffe9, 'c'} {
-		if windowsGuestKeysym(key, "mac") != key {
-			t.Fatal("non-Command key changed")
-		}
-	}
-}
-
 func windowTestFrame(t *testing.T, width, height int) windowsWindowFrame {
 	t.Helper()
 	img := image.NewRGBA(image.Rect(0, 0, width, height))

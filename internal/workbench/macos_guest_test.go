@@ -92,7 +92,7 @@ func TestMacOSReadyBrowserRoutesUseNativeGuest(t *testing.T) {
 	s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "guestdev"}
 	s.ready = true
 	s.windowsBrowserControl = fixtureWindowsBrowserClient(t)
-	r := windowsBrowserRequestForTest(s, http.MethodGet, "/api/browser/tabs", nil)
+	r := desktopRequestForTest(s, http.MethodGet, "/api/browser/tabs", nil)
 	if r.Code != http.StatusOK || !json.Valid(r.Body.Bytes()) || s.browserControl != nil {
 		t.Fatalf("ready Mac browser failed to use the native transport: %d", r.Code)
 	}

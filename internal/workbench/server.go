@@ -62,9 +62,6 @@ type Server struct {
 	macosGuest                                       *guestos.MacOSProfile
 	screenSharing                                    macOSScreenSharing
 	macResources                                     macOSResourceObserver
-	windowsGuest                                     *guestos.WindowsProfile
-	windowsState                                     windowsGuestState
-	windowsProjectHistory                            map[string]string
 	clipboardFiles                                   map[string]clipboardFileSelection
 	clipboardRelease                                 func([]string)
 	clipboardCancel                                  context.CancelFunc
@@ -102,7 +99,6 @@ type Server struct {
 	nativeDownloads                                  map[string]*nativeDownload
 	nativeDownloadSlots                              chan struct{}
 	nativeDownloadRevision                           uint64
-	windowsNetwork                                   *windowsHostNetwork
 	op                                               sync.Mutex
 	profile, configPath, exe, origin, token, session string
 	mu                                               sync.Mutex
@@ -224,28 +220,12 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 	}
 	defer s.remote.close()
 	if workload {
-		if err = guestos.RecoverWindowsStorage(context.Background(), profile); err != nil {
+		if err = cage.RecoverStorage(context.Background(), profile, nil); err != nil {
 			s.failStorageRecovery(err)
 		}
 		s.macosGuest, err = guestos.LoadMacOSProfile(profile)
 		if err != nil {
 			return err
-		}
-		s.windowsGuest, err = guestos.LoadWindowsProfile(profile)
-		if err != nil {
-			return err
-		}
-		if s.macosGuest != nil && s.windowsGuest != nil {
-			return errors.New("一个配置只能绑定一个客机系统")
-		}
-		if s.windowsGuest != nil {
-			pending, err := guestos.WindowsCloneCleanupPending(profile)
-			if err != nil {
-				return err
-			}
-			if pending {
-				s.windowsGuest = nil
-			}
 		}
 		s.instanceID, err = ensureRemoteInstance(profile)
 		if err != nil {
@@ -266,10 +246,7 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 		}
 		if !s.storageRecoveryStatus().Required {
 			if err = s.prepareEnvironment(); err != nil {
-				if s.windowsGuest == nil {
-					return err
-				}
-				s.failStorageRecovery(err)
+				return err
 			}
 		}
 		// Invalid intent keeps the gate paused and its error visible in status.
@@ -285,10 +262,10 @@ func serve(configPath string, clientOnly bool, fullConfigPath string) (returned 
 		// A previously running VM cannot keep an unmanaged endpoint online.
 		if s.macosGuest != nil {
 			_ = s.closeProxyGate("控制服务已重新连接，外网等待重新检查")
-		} else if cfg, e := loadConfig(configPath); s.windowsGuest == nil && (e != nil || cfg.RequireManagedProxy(profile) != nil) {
+		} else if cfg, e := loadConfig(configPath); e != nil || cfg.RequireManagedProxy(profile) != nil {
 			_ = s.closeProxyGate("尚未配置有效节点，外网保持关闭")
 		}
-		if s.networkPaused && s.windowsGuest == nil {
+		if s.networkPaused {
 			_ = s.closeProxyGate("网络保持暂停，请手动恢复后再联网")
 		}
 		s.startMonitors()
@@ -484,11 +461,9 @@ func (s *Server) handler() http.Handler {
 			http.Error(w, "环境尚未就绪", 409)
 			return
 		}
-		// A Windows guest's browser takes the viewer's density with each size;
-		// one that predates it answers without a density and keeps its own.
 		// A Linux guest scrolls its page by the viewer's distance, outside the
-		// display stream. The native guests negotiate it inside theirs.
-		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale || s.windowsGuest != nil, "pixel_wheel": s.macosGuest == nil && s.windowsGuest == nil})
+		// display stream. A macOS guest negotiates it inside its own.
+		jsonReply(w, map[string]any{"password": s.credentials.VNCPassword, "display_scale": s.credentials.DisplayScale, "dynamic_scale": s.credentials.DynamicScale, "pixel_wheel": s.macosGuest == nil})
 	})
 	mux.HandleFunc("GET /api/vnc", s.vnc)
 	mux.HandleFunc("GET /api/desktop-instances", s.desktopCatalog)
@@ -584,10 +559,6 @@ func (s *Server) handler() http.Handler {
 			mux.ServeHTTP(w, r)
 			return
 		}
-		if s.windowsGuest != nil && (!windowsWorkbenchRoute(r.URL.Path) || s.windowsGuest.Remote() && strings.HasPrefix(r.URL.Path, "/api/projects/")) {
-			s.windowsUnavailable(w)
-			return
-		}
 		if s.macosGuest != nil && (!macOSWorkbenchRoute(r.URL.Path) || s.macSetupPending() && !macOSSetupRoute(r.URL.Path)) {
 			http.Error(w, "此功能尚未接入 macOS 客机", http.StatusConflict)
 			return
@@ -606,7 +577,7 @@ func (s *Server) handler() http.Handler {
 				http.Error(w, "请连接运行 Cage 环境的主机", http.StatusConflict)
 				return
 			}
-		} else if s.macosGuest == nil && s.windowsGuest == nil && s.routeRemote(w, r) {
+		} else if s.macosGuest == nil && s.routeRemote(w, r) {
 			return
 		}
 		ctx, finish, err := s.beginActivity(r.Context())
@@ -620,7 +591,7 @@ func (s *Server) handler() http.Handler {
 		bootstrapRoute := r.URL.Path == "/api/session" || r.URL.Path == "/api/launch" || r.URL.Path == "/api/handoff" || r.URL.Path == "/api/remote/manifest"
 		trustedDesktop := s.hasTrustedView(r)
 		phoneRoom := s.pairedPhoneRoom(r)
-		if (s.windowsGuest != nil || s.macosGuest != nil) && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !trustedDesktop && phoneRoom == nil && !s.hasRemoteWindowsView(r) {
+		if s.macosGuest != nil && strings.HasPrefix(r.URL.Path, "/api/") && !bootstrapRoute && !trustedDesktop && phoneRoom == nil {
 			http.Error(w, "请通过本机 Cage 窗口或当前配对手机打开客机", http.StatusForbidden)
 			return
 		}
@@ -694,9 +665,6 @@ func requestError(w http.ResponseWriter, err error) {
 	http.Error(w, err.Error(), http.StatusBadRequest)
 }
 func (s *Server) status(w http.ResponseWriter, r *http.Request) {
-	if s.windowsGuest != nil && !s.storageRecoveryStatus().Required {
-		s.refreshWindowsComponents()
-	}
 	projects, err := s.projectPaths()
 	if err != nil {
 		requestError(w, errors.New("无法读取项目列表，请检查项目配置"))
@@ -729,22 +697,9 @@ func (s *Server) status(w http.ResponseWriter, r *http.Request) {
 		"keyboard":         s.preferences.Keyboard, "auto_timezone": s.preferences.AutoTimezone, "job": s.jobs.snapshot(),
 		"location": s.location, "network_error": s.currentNetworkErrorLocked(), "can_restore": e == nil,
 		"safety": s.safety, "environment_update_required": s.guestUpdateRequired, "environment_update_error": s.guestUpdateError,
+		"abandoned_guests": abandonedGuests(s.profile),
 	}
-	if s.windowsGuest != nil {
-		view["guest_system"] = guestos.Windows11
-		if s.windowsGuest.Remote() {
-			view["guest_system"] = "windows-remote"
-			view["workspace"] = s.windowsState.Home
-			view["projects"] = []string{}
-			view["project_groups"] = []projectGroup{}
-			view["workload_ready"] = false
-		}
-		view["guest_capabilities"] = s.windowsCapabilitiesLocked()
-		view["location"] = nil
-		if s.safety.Gate == nil && view["network_error"] == "" {
-			view["network_error"] = "Windows 客机网络组件尚未连接，外网保持关闭"
-		}
-	} else if s.macosGuest != nil {
+	if s.macosGuest != nil {
 		view["guest_system"] = guestos.MacOS
 	} else if system, err := s.installedLinuxSystem(); err != nil {
 		view["guest_system_error"] = err.Error()
@@ -856,18 +811,10 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 			requestError(w, err)
 			return
 		}
-		if s.windowsGuest != nil || s.macosGuest != nil {
+		if s.macosGuest != nil {
 			http.Error(w, "已有客机不能替换创建配置", http.StatusConflict)
 			return
 		}
-	}
-	if s.windowsGuest != nil {
-		if input.System != "" && input.System != guestos.Windows11 {
-			http.Error(w, "此配置已绑定 Windows 客机", http.StatusConflict)
-			return
-		}
-		s.launch(w, "start", s.startWindowsGuest)
-		return
 	}
 	if s.macosGuest != nil {
 		if input.System != "" && input.System != guestos.MacOS {
@@ -893,7 +840,11 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 	}
-	if input.System == guestos.MacOS || input.System == guestos.Windows11 || input.CloneKey != "" {
+	if input.System == guestos.Windows11 {
+		http.Error(w, abandonedGuestMessage(guestos.Windows11), http.StatusConflict)
+		return
+	}
+	if input.System == guestos.MacOS || input.CloneKey != "" {
 		s.beginGuestInstall(w, r, input)
 		return
 	}
@@ -974,7 +925,7 @@ func (s *Server) requestStop(w http.ResponseWriter, logout bool) {
 		// Stopping the guest revokes its current grant. A user's saved pause
 		// remains distinct so the next Mac start can honor the same intent.
 		_ = s.revokeNetworkNow("正在停止环境", false)
-	} else if s.windowsGuest == nil {
+	} else {
 		_ = s.pauseNetworkNow("正在停止环境")
 	}
 	kind := "stop"

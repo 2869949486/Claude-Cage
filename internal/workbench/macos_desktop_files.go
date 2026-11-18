@@ -147,7 +147,7 @@ func (s *Server) macOSPasteDesktopImage(ctx context.Context, data []byte, window
 	cmd.Stdin = io.MultiReader(bytes.NewReader(append(header, '\n')), bytes.NewReader(data))
 	cmd.Stderr = io.Discard
 	var reply bytes.Buffer
-	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &reply, remaining: 65536}
+	cmd.Stdout = &boundedStatusWriter{buffer: &reply, remaining: 65536}
 	if cmd.Run() != nil {
 		return nil, errors.New("图片未能传入虚拟 Mac，请确认 Claude Desktop 已打开")
 	}

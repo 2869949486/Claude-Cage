@@ -475,9 +475,6 @@ func (s *Server) recoverClaudeLogin(ctx context.Context, accountID, target, sour
 	if recover := s.claudeAccounts.recoverLogin; recover != nil {
 		return recover(ctx, target, source, subject)
 	}
-	if s.windowsGuest != nil {
-		return claudeGuestSnapshot{}, errors.New("请从原账号入口重新登录")
-	}
 	if !validClaudeID(target) || !validClaudeID(source) || len(subject) != 64 || strings.Trim(subject, "0123456789abcdef") != "" {
 		return claudeGuestSnapshot{}, errors.New("Claude 登录恢复参数无效")
 	}

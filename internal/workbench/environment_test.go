@@ -34,8 +34,6 @@ func TestEnvironmentUpgradeSeparatesPrivateLegacyWorkspaceFromVMIdentity(t *test
 			s.preferences.Workspace = selected
 			if system == "macos" {
 				s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "guest"}
-			} else if system == "windows" {
-				s.windowsGuest = &guestos.WindowsProfile{}
 			}
 			if err := writePrivate(filepath.Join(s.profile, "environment.json"), map[string]string{"directory": legacy}); err != nil {
 				t.Fatal(err)

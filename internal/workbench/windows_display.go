@@ -16,12 +16,9 @@ import (
 	_ "image/png"
 	"io"
 	"net"
-	"net/http"
 	"os/exec"
 	"sync"
 	"time"
-
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 type windowsWindowFrame struct {
@@ -62,57 +59,8 @@ func transientWindowFrame(code string) bool {
 	return false
 }
 
-func requestDesktopFrame(ctx context.Context, request func(any, any) error, input map[string]any, output any) error {
-	for attempt := 0; ; attempt++ {
-		err := request(input, output)
-		var failure windowsWindowFailure
-		if attempt >= 5 || !errors.As(err, &failure) || !transientWindowFrame(failure.code) {
-			return err
-		}
-		timer := time.NewTimer(80 * time.Millisecond)
-		select {
-		case <-ctx.Done():
-			timer.Stop()
-			return ctx.Err()
-		case <-timer.C:
-		}
-	}
-}
-
 // release ends the guest connection that owns this viewer's held keys and
 // buttons and opens another.
-func desktopViewerRequest(ctx context.Context, request func(any, any) error, release func() error) func(map[string]any, any) error {
-	inputSuspended := false
-	return func(input map[string]any, output any) error {
-		if input["action"] == "frame" {
-			if inputSuspended {
-				delete(input, "after")
-			}
-			err := requestDesktopFrame(ctx, request, input, output)
-			if err == nil && !output.(*windowsWindowFrame).Unchanged {
-				inputSuspended = false
-			}
-			return err
-		}
-		isInput := input["action"] == "pointer" || input["action"] == "key" || input["action"] == "text"
-		if isInput && inputSuspended {
-			return nil
-		}
-		err := request(input, output)
-		var failure windowsWindowFailure
-		if isInput && errors.As(err, &failure) && failure.code == "desktop_target_changed" {
-			// The guest keeps keys and buttons held when it rejects an event:
-			// a dropped key-up would leave its key down. Release them, then
-			// drop the old event and queued input; never replay it on a popup.
-			if err := release(); err != nil {
-				return err
-			}
-			inputSuspended = true
-			return nil
-		}
-		return err
-	}
-}
 
 // A viewer's guest connection owns the keys and buttons it holds down, and
 // the guest releases them when that connection ends.
@@ -164,29 +112,6 @@ type nativeWindowConnection struct {
 	once    sync.Once
 }
 
-func (s *Server) windowsWindowConnection(ctx context.Context) (*nativeWindowConnection, error) {
-	if s.windowsGuest != nil && s.windowsGuest.Remote() {
-		return nil, errors.New(remoteWindowsDesktopMessage)
-	}
-	ctx, cancel := context.WithCancel(ctx)
-	cmd, err := guestos.WindowsRelayCommand(ctx, s.profile, "desktop")
-	if err != nil {
-		cancel()
-		return nil, err
-	}
-	return startWindowConnection(cmd, cancel)
-}
-
-const remoteWindowsDesktopMessage = "Windows 云端当前支持隔离 PowerShell、浏览器和 Claude CLI，尚未接通图形会话。Claude Desktop 和完整 Windows 桌面暂不可用；无需重新连接或安装应用。"
-
-func (s *Server) remoteWindowsDesktopUnavailable(w http.ResponseWriter) bool {
-	if s.windowsGuest == nil || !s.windowsGuest.Remote() {
-		return false
-	}
-	http.Error(w, remoteWindowsDesktopMessage, http.StatusNotImplemented)
-	return true
-}
-
 func startWindowConnection(cmd *exec.Cmd, cancel context.CancelFunc) (*nativeWindowConnection, error) {
 	input, err := cmd.StdinPipe()
 	if err != nil {
@@ -234,71 +159,6 @@ func (c *nativeWindowConnection) request(input any, output any) error {
 		return nil
 	}
 	return json.Unmarshal(c.scanner.Bytes(), output)
-}
-
-func (s *Server) windowsDesktopRequest(ctx context.Context, action string, input map[string]any, output any) error {
-	connection, err := s.windowsWindowConnection(ctx)
-	if err != nil {
-		return err
-	}
-	defer connection.Close()
-	if input == nil {
-		input = map[string]any{}
-	}
-	input["action"] = action
-	return connection.request(input, output)
-}
-
-// Windows renders the same RFB view used by Linux. The guest publishes only its
-// application client area; the controller never requests a desktop screenshot.
-func (s *Server) windowsDesktopVNC(w http.ResponseWriter, r *http.Request) {
-	if s.remoteWindowsDesktopUnavailable(w) {
-		return
-	}
-	ctx, cancel := context.WithCancel(r.Context())
-	defer cancel()
-	first, err := s.windowsWindowConnection(ctx)
-	if err != nil {
-		http.Error(w, "Windows 应用画面尚未连接", 502)
-		return
-	}
-	connection := &desktopViewerConnection{current: first}
-	defer connection.Close()
-	var frame windowsWindowFrame
-	if err = requestDesktopFrame(ctx, connection.request, map[string]any{"action": "frame"}, &frame); err != nil {
-		http.Error(w, err.Error(), 409)
-		return
-	}
-	local, remote := net.Pipe()
-	defer local.Close()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		defer remote.Close()
-		request := desktopViewerRequest(ctx, connection.request, func() error {
-			return connection.replace(func() (*nativeWindowConnection, error) { return s.windowsWindowConnection(ctx) })
-		})
-		_ = serveWindowsWindowRFB(remote, frame, func(input map[string]any, output any) error {
-			s.mu.Lock()
-			keyboard := s.preferences.Keyboard
-			s.mu.Unlock()
-			if input["action"] == "key" {
-				if key, ok := input["keysym"].(uint32); ok {
-					input["keysym"] = windowsGuestKeysym(key, keyboard)
-				}
-			}
-			return request(input, output)
-		})
-	}()
-	s.streamVNC(w, r, local, local, func() { cancel(); local.Close(); remote.Close(); connection.Close() })
-	<-done
-}
-
-func windowsGuestKeysym(key uint32, keyboard string) uint32 {
-	if keyboard == "mac" && (key == 0xffe7 || key == 0xffe8 || key == 0xffeb || key == 0xffec) {
-		return 0xffe3
-	}
-	return key
 }
 
 func nativeFrameImage(frame windowsWindowFrame) (image.Image, error) {
@@ -846,23 +706,4 @@ func windowRFBRect(width, height int, encoding int32) []byte {
 	binary.BigEndian.PutUint16(header[6:], uint16(height))
 	binary.BigEndian.PutUint32(header[8:], uint32(encoding))
 	return header
-}
-
-func (s *Server) windowsDesktopCredentials(w http.ResponseWriter, r *http.Request) {
-	if s.remoteWindowsDesktopUnavailable(w) {
-		return
-	}
-	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-	defer cancel()
-	var state claudeDesktopState
-	if err := s.windowsDesktopRequest(ctx, "status", nil, &state); err != nil || !state.Running {
-		http.Error(w, "Claude Desktop 尚未启动", 409)
-		return
-	}
-	density := state.DisplayScale
-	if density < 1 || density > 8 {
-		http.Error(w, "Claude Desktop 返回了无效的显示比例", 502)
-		return
-	}
-	jsonReply(w, map[string]any{"password": "", "display_scale": density})
 }

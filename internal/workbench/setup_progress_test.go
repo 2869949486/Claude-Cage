@@ -38,16 +38,10 @@ func TestSetupProgressParsesComponentNamesBeforeLogRedaction(t *testing.T) {
 	}
 }
 
-func TestWindowsInstallationInteractionStages(t *testing.T) {
-	for _, stage := range []string{"account", "oobe", "credentials", "media", "tools", "services"} {
-		progress := parseSetupProgress("CAGE_GUEST_STAGE windows-11 " + stage)
-		if progress == nil || progress.System != "windows-11" || progress.Operation != stage || progress.Label == "" {
-			t.Fatalf("Windows installation stage was lost: %s %+v", stage, progress)
-		}
-	}
-	for _, system := range []string{"macos", "debian-13", "ubuntu-22.04"} {
-		if parseSetupProgress("CAGE_GUEST_STAGE "+system+" oobe") != nil {
-			t.Fatalf("Windows interaction stage accepted for %s", system)
+func TestRemovedWindowsInstallationStagesAreIgnored(t *testing.T) {
+	for _, line := range []string{"CAGE_GUEST_STAGE windows-11 oobe", "CAGE_GUEST_STAGE windows-11 tools", "CAGE_GUEST_BYTES windows-11 download 1 10", "CAGE_GUEST_STAGE macos oobe"} {
+		if parseSetupProgress(line) != nil {
+			t.Fatalf("removed installation stage accepted: %s", line)
 		}
 	}
 }
@@ -116,7 +110,7 @@ func TestNativeInstallProgressKeepsSystemAndSeparatesVerification(t *testing.T) 
 			t.Errorf("invalid progress accepted: %s", line)
 		}
 	}
-	for _, system := range []string{"macos", "windows-11", "debian-12", "debian-13", "ubuntu-22.04", "ubuntu-24.04"} {
+	for _, system := range []string{"macos", "debian-12", "debian-13", "ubuntu-22.04", "ubuntu-24.04"} {
 		p := parseSetupProgress("CAGE_GUEST_BYTES " + system + " download 1 10")
 		if p == nil || p.Total != 10 || p.System != system {
 			t.Errorf("missing shared progress for %s", system)

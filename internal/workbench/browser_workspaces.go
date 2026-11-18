@@ -34,7 +34,7 @@ func (s *Server) browserStateForHost(body []byte) ([]byte, error) {
 			if json.Unmarshal(encoded, &item) != nil {
 				continue
 			}
-			if s.macosGuest != nil || s.windowsGuest != nil {
+			if s.macosGuest != nil {
 				item.Target = "browser"
 				mapped := s.nativeDownloadForHost(item)
 				record["name"], _ = json.Marshal(mapped.Name)
@@ -60,7 +60,7 @@ func (s *Server) browserStateForHost(body []byte) ([]byte, error) {
 				downloadsChanged = true
 			}
 		}
-		if s.macosGuest != nil || s.windowsGuest != nil {
+		if s.macosGuest != nil {
 			visible := make(map[string]bool, len(downloads))
 			for _, record := range downloads {
 				var id string
@@ -71,7 +71,7 @@ func (s *Server) browserStateForHost(body []byte) ([]byte, error) {
 			s.discardMissingNativeDownloads("browser", visible)
 		}
 	}
-	if !paths.Windows() && s.windowsGuest == nil && s.macosGuest == nil {
+	if !paths.Windows() && s.macosGuest == nil {
 		return body, nil
 	}
 	var tabs []map[string]json.RawMessage
@@ -91,19 +91,6 @@ func (s *Server) browserStateForHost(body []byte) ([]byte, error) {
 		} else {
 			byGuest[guestPath(hostPath)] = hostPath
 		}
-	}
-	if s.windowsGuest != nil {
-		allowed := map[string]bool{}
-		for _, hostPath := range authorized {
-			allowed[hostPath] = true
-		}
-		s.mu.Lock()
-		for guestPath, hostPath := range s.windowsProjectHistory {
-			if allowed[hostPath] {
-				byGuest[guestPath] = hostPath
-			}
-		}
-		s.mu.Unlock()
 	}
 	changed := downloadsChanged
 	for _, tab := range tabs {

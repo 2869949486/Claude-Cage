@@ -19,7 +19,6 @@ import (
 	"github.com/sylvinus/agent-vm/internal/cli"
 	"github.com/sylvinus/agent-vm/internal/containerenv"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 	"github.com/sylvinus/agent-vm/internal/guestprofile"
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostproxy"
@@ -43,7 +42,6 @@ cage container-configure --json  Configure a Linux container from JSON stdin
 cage init          Create a private profile; add and select nodes in Cage settings
 cage check         Verify proxy transport (no VM required)
 cage guest-os --json  Check host prerequisites for a same-system guest
-                     On Windows, add --vm-id GUID to inspect one Hyper-V VM
 cage proxy-start   Start Cage's bundled proxy core with the applied node
 cage proxy-stop    Stop Cage's core and close external networking
 cage setup         Build the isolated base VM through the specified proxy
@@ -177,15 +175,6 @@ func run() int {
 	}
 	store := diagnostics.New(filepath.Dir(path))
 	diagnostics.SetDefault(store)
-	if args[0] == "windows-network-host" {
-		if len(args) != 1 {
-			return fail(fmt.Errorf("windows-network-host takes its bound configuration from the profile"))
-		}
-		if err := workbench.ServeWindowsPacketNetwork(path); err != nil {
-			return fail(err)
-		}
-		return 0
-	}
 	if args[0] == "container-runtime" {
 		if len(args) != 2 {
 			return fail(fmt.Errorf("container-runtime prepare|start|stop|inspect"))
@@ -515,7 +504,7 @@ func run() int {
 	os.Unsetenv("CAGE_LIMA_CACHE_DIR")
 	os.Unsetenv("CAGE_LOGICAL_LIMA_HOME")
 	if !containerenv.Configured(profile) {
-		if err = guestos.RecoverWindowsStorage(context.Background(), profile); err != nil {
+		if err = cage.RecoverStorage(context.Background(), profile, nil); err != nil {
 			return fail(err)
 		}
 		lease, location, err := cage.AcquireStorageUse(profile)

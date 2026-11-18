@@ -19,21 +19,18 @@ import (
 func removeProjectRequest(t *testing.T, s *Server, path string, want int) {
 	t.Helper()
 	body, _ := json.Marshal(map[string]string{"workspace": path})
-	response := windowsBrowserRequestForTest(s, "POST", "/api/projects/remove", body)
+	response := desktopRequestForTest(s, "POST", "/api/projects/remove", body)
 	if response.Code != want {
 		t.Fatalf("remove status=%d want=%d body=%s", response.Code, want, response.Body.String())
 	}
 }
 
 func TestProjectRemovalPersistsRevocationAcrossGuests(t *testing.T) {
-	for _, system := range []string{"linux", "macos", "windows"} {
+	for _, system := range []string{"linux", "macos"} {
 		t.Run(system, func(t *testing.T) {
 			s := testServer(t)
 			if system == "macos" {
 				s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "guestdev"}
-			}
-			if system == "windows" {
-				s.windowsGuest = &guestos.WindowsProfile{}
 			}
 			root, _ := filepath.EvalSymlinks(t.TempDir())
 			other, _ := filepath.EvalSymlinks(t.TempDir())

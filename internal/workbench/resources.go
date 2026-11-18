@@ -8,19 +8,10 @@ import (
 	"github.com/docker/go-units"
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/containerenv"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 	"go.yaml.in/yaml/v3"
 )
 
 func (s *Server) instanceDir() string {
-	if s.windowsGuest != nil {
-		// The profile owns storage paths, while the server retains the bound
-		// VM/user identity across a migration. Relay calls load this file too.
-		if current, err := guestos.LoadWindowsProfile(s.profile); err == nil && current != nil && current.VMID == s.windowsGuest.VMID && current.GUIUserSID == s.windowsGuest.GUIUserSID {
-			return current.InstanceDirectory
-		}
-		return s.windowsGuest.InstanceDirectory
-	}
 	if s.macosGuest != nil {
 		return filepath.Join(s.profile, "state", "lima", s.macosGuest.Instance)
 	}
@@ -31,10 +22,6 @@ func (s *Server) instanceDir() string {
 }
 
 func (s *Server) resourceStatus(w http.ResponseWriter, r *http.Request) {
-	if s.windowsGuest != nil {
-		s.windowsResourceStatus(w, r)
-		return
-	}
 	if s.macosGuest != nil {
 		s.macOSResourceStatus(w, r)
 		return
@@ -97,10 +84,6 @@ func (s *Server) resourceStatus(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) applyResources(w http.ResponseWriter, r *http.Request) {
-	if s.windowsGuest != nil {
-		s.applyWindowsResources(w, r)
-		return
-	}
 	var input struct {
 		Allocation *cage.ResourceAllocation `json:"allocation"`
 	}

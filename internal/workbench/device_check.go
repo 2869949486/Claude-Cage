@@ -281,7 +281,7 @@ func (s *Server) deviceCheck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	report := deviceCheckReport{Target: in.Target, CheckedAt: time.Now(), Checks: []deviceCheckItem{}}
-	if s.macosGuest == nil && s.windowsGuest == nil {
+	if s.macosGuest == nil {
 		if data, e := s.guest(ctx, deviceSystemProbe); e == nil {
 			var machine deviceSystemObservation
 			if json.Unmarshal(data, &machine) == nil && publicDeviceText(machine.Hostname, 255) && publicDeviceText(machine.Username, 64) && publicDeviceText(machine.Home, 128) && publicDeviceText(machine.AudioName, 120) && publicDeviceText(machine.AudioDescription, 128) {
@@ -344,10 +344,6 @@ func (s *Server) deviceCheck(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) deviceDesktopState(ctx context.Context) (*claudeDesktopState, error) {
 	var state claudeDesktopState
-	if s.windowsGuest != nil {
-		err := s.windowsDesktopRequest(ctx, "status", nil, &state)
-		return &state, err
-	}
 	if s.macosGuest != nil {
 		data, err := s.guest(ctx, `test -d /Applications/Claude.app && printf 'installed\n'; /usr/bin/pgrep -x Claude >/dev/null && printf 'running\n'; /usr/bin/defaults read /Applications/Claude.app/Contents/Info CFBundleShortVersionString 2>/dev/null || true`)
 		if err != nil {

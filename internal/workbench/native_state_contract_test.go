@@ -11,14 +11,10 @@ import (
 )
 
 func TestNativeStatusExposesMaintenanceFailureAndRestoreRoute(t *testing.T) {
-	for _, system := range []string{guestos.MacOS, guestos.Windows11} {
+	for _, system := range []string{guestos.MacOS} {
 		t.Run(system, func(t *testing.T) {
 			s := testServer(t)
-			if system == guestos.MacOS {
-				s.macosGuest = &guestos.MacOSProfile{Instance: "mac"}
-			} else {
-				s.windowsGuest = &guestos.WindowsProfile{}
-			}
+			s.macosGuest = &guestos.MacOSProfile{Instance: "mac"}
 			cfg, err := loadConfig(s.configPath)
 			if err != nil {
 				t.Fatal(err)
@@ -30,7 +26,7 @@ func TestNativeStatusExposesMaintenanceFailureAndRestoreRoute(t *testing.T) {
 			}
 			s.guestUpdateRequired = true
 			s.guestUpdateError = "同步未完成，可保留原环境重试"
-			response := windowsBrowserRequestForTest(s, "GET", "/api/status", nil)
+			response := desktopRequestForTest(s, "GET", "/api/status", nil)
 			var state struct {
 				System         string `json:"guest_system"`
 				CanRestore     bool   `json:"can_restore"`
@@ -44,10 +40,10 @@ func TestNativeStatusExposesMaintenanceFailureAndRestoreRoute(t *testing.T) {
 			if state.System != system || !state.CanRestore || !state.UpdateRequired || state.UpdateError != s.guestUpdateError || !state.LocalStorage {
 				t.Fatalf("native state diverged from executable operations: %+v", state)
 			}
-			if storage := windowsBrowserRequestForTest(s, "GET", "/api/environment/storage", nil); storage.Code != http.StatusOK {
+			if storage := desktopRequestForTest(s, "GET", "/api/environment/storage", nil); storage.Code != http.StatusOK {
 				t.Fatal("advertised storage operation rejected by route", storage.Code, storage.Body.String())
 			}
-			response = windowsBrowserRequestForTest(s, "POST", "/api/restore", []byte(`{}`))
+			response = desktopRequestForTest(s, "POST", "/api/restore", []byte(`{}`))
 			if response.Code != http.StatusOK {
 				t.Fatal("advertised restore rejected by native route", response.Code, response.Body.String())
 			}

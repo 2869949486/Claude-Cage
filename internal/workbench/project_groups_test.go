@@ -54,18 +54,13 @@ func TestProjectGroupSaveReloadLegacyAndLaunchDirectories(t *testing.T) {
 	if err != nil || len(paths) != 3 || !slices.Contains(paths, other) {
 		t.Fatal(paths, err)
 	}
-	for _, platform := range []string{"linux", "macos", "windows"} {
+	for _, platform := range []string{"linux", "macos"} {
 		t.Run(platform, func(t *testing.T) {
-			s.macosGuest, s.windowsGuest = nil, nil
+			s.macosGuest = nil
 			expected := guestPath(b)
 			if platform == "macos" {
 				s.macosGuest = &guestos.MacOSProfile{User: "developer"}
 				expected = macOSProjectPath("developer", b)
-			}
-			if platform == "windows" {
-				s.windowsGuest = &guestos.WindowsProfile{}
-				expected = `C:\Users\dev\Projects\backend`
-				s.projectShares[b].windowsProject = &windowsProjectBinding{ID: "binding", Grant: "grant", Path: expected}
 			}
 			actual, err := s.projectAdditionalDirectories(a)
 			if err != nil || !slices.Equal(actual, []string{expected}) {

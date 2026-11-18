@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 )
 
 // windowsBrowserClient owns a viewer's authenticated relay connection. The GUI
@@ -34,24 +33,6 @@ type windowsBrowserClient struct {
 type windowsBrowserFailure struct{ code, message string }
 
 func (e windowsBrowserFailure) Error() string { return e.message }
-
-func newWindowsBrowserClient(parent context.Context, profile string) *windowsBrowserClient {
-	ctx, cancel := context.WithCancel(parent)
-	return &windowsBrowserClient{ctx: ctx, cancel: cancel, start: func(ctx context.Context) (*exec.Cmd, error) {
-		binding, err := guestos.LoadWindowsProfile(profile)
-		if err != nil {
-			return nil, err
-		}
-		if binding == nil {
-			return nil, errors.New("此配置尚未绑定 客机")
-		}
-		operation := "browser"
-		if binding.Remote() {
-			operation = "headless-browser"
-		}
-		return guestos.WindowsRelayCommand(ctx, profile, operation)
-	}}
-}
 
 // A modern guest service owns the browser. Its viewers use separate relay
 // connections so cancellation also releases each viewer's held input.

@@ -36,9 +36,6 @@ func macOSLocale(raw string) string {
 }
 
 func (s *Server) guestSettingsOK(v guestObservation, cfg cage.Config) bool {
-	if s.windowsGuest != nil {
-		return windowsGuestSettingsMatch(v, cfg)
-	}
 	if s.macosGuest == nil {
 		return guestSettingsMatch(v, cfg)
 	}
@@ -48,18 +45,6 @@ func (s *Server) guestSettingsOK(v guestObservation, cfg cage.Config) bool {
 }
 
 func (s *Server) browserSettingsIssue(v browserObservation, cfg cage.Config) string {
-	if s.windowsGuest != nil {
-		if !strings.HasPrefix(v.Platform, "Win") {
-			return "客机浏览器没有报告 Windows 平台"
-		}
-		if effectiveWindowsZone(v.Timezone) != effectiveWindowsZone(cfg.Timezone) || effectiveWindowsZone(v.ExpectedTimezone) != effectiveWindowsZone(cfg.Timezone) {
-			return "客机浏览器实际时区与配置不符"
-		}
-		if !strings.EqualFold(v.Language, cfg.BrowserLanguage) {
-			return "客机浏览器实际语言与配置不符"
-		}
-		return ""
-	}
 	if s.macosGuest == nil {
 		return browserSettingsMismatch(v, cfg)
 	}

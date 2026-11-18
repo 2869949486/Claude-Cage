@@ -175,7 +175,7 @@ func TestAgentNoImplicitStartAndUnknownInput(t *testing.T) {
 		t.Fatal("read created profile")
 	}
 	for _, path := range []string{"/api/agent/settings", "/api/agent/jobs/012345abcdef"} {
-		if !macOSWorkbenchRoute(path) || !windowsWorkbenchRoute(path) {
+		if !macOSWorkbenchRoute(path) {
 			t.Fatal("missing native platform route", path)
 		}
 	}
@@ -214,14 +214,11 @@ func TestAgentRejectsOtherConfigFileInSameProfile(t *testing.T) {
 }
 
 func TestAgentNativeDiagnosticExport(t *testing.T) {
-	for _, system := range []string{"linux", "macos", "windows"} {
+	for _, system := range []string{"linux", "macos"} {
 		t.Run(system, func(t *testing.T) {
 			s := agentTestController(t)
 			if system == "macos" {
 				s.macosGuest = &guestos.MacOSProfile{Instance: "test", User: "test"}
-			}
-			if system == "windows" {
-				s.windowsGuest = &guestos.WindowsProfile{}
 			}
 			s.account.lock()
 			path := filepath.Join(t.TempDir(), "diagnostics.zip")

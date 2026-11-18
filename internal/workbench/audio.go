@@ -58,10 +58,6 @@ func (s *Server) audio(w http.ResponseWriter, r *http.Request) {
 			s.macOSAudioStatus(w, r)
 			return
 		}
-		if s.windowsGuest != nil {
-			s.windowsAudioStatus(w, r)
-			return
-		}
 		jsonReply(w, audioFormat)
 		return
 	}
@@ -78,10 +74,6 @@ func (s *Server) audio(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	if s.macosGuest != nil {
 		s.macOSAudioCapture(w, r, ctx, cancel)
-		return
-	}
-	if s.windowsGuest != nil {
-		s.windowsAudioCapture(w, r, ctx, cancel)
 		return
 	}
 	command, renderErr := s.linuxTemplate(audioCaptureCommand)

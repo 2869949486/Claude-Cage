@@ -105,7 +105,7 @@ func TestNativeGuestsDoNotRequireLinuxEvidence(t *testing.T) {
 	cfg := cage.DefaultConfig()
 	v := guestObservation{TZ: cfg.Timezone, SystemTimezone: cfg.Timezone, LocaleValid: true,
 		ProcessLocale: "en-US", SystemLocale: "en-US", SystemLanguage: "en-US"}
-	for _, s := range []*Server{{windowsGuest: &guestos.WindowsProfile{}}, {macosGuest: &guestos.MacOSProfile{}}} {
+	for _, s := range []*Server{{macosGuest: &guestos.MacOSProfile{}}} {
 		if !s.guestSettingsOK(v, cfg) {
 			t.Fatal("native settings require Linux time observations")
 		}

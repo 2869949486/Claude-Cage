@@ -22,9 +22,6 @@ func macLoginPreferences(reuse bool) string {
 
 func (s *Server) syncLoginPreferences(ctx context.Context, reuse bool) error {
 	// The Windows controller receives the mode with each workbench login request.
-	if s.windowsGuest != nil {
-		return nil
-	}
 	script := linuxLoginPreferences(reuse)
 	if s.macosGuest != nil {
 		script = macLoginPreferences(reuse)

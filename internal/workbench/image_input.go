@@ -59,7 +59,7 @@ func (s *Server) pasteInputStart(w http.ResponseWriter, r *http.Request) {
 		jsonReply(w, map[string]any{"available": true, "transfer": id})
 		return
 	}
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		data, err := s.nativeBrowserClient().request(ctx, "POST", "/paste-start", map[string]any{"id": input.ID, "length": 0})
 		var result struct {
 			Transfer string `json:"transfer"`
@@ -93,7 +93,7 @@ func (s *Server) pasteInputCancel(w http.ResponseWriter, r *http.Request) {
 	if input.Target == "desktop" && browserFileID.MatchString(input.Transfer) {
 		body, _ := json.Marshal(map[string]string{"id": input.Transfer})
 		_, _ = s.guestFiles(ctx, "desktop", "POST", "/cancel", bytes.NewReader(body), "")
-	} else if input.Target == "browser" && validInputToken(input.Transfer) && (s.macosGuest != nil || s.windowsGuest != nil) {
+	} else if input.Target == "browser" && validInputToken(input.Transfer) && (s.macosGuest != nil) {
 		_, _ = s.nativeBrowserClient().request(ctx, "POST", "/paste-cancel", map[string]string{"transfer": input.Transfer})
 	}
 	jsonReply(w, map[string]bool{"ok": true})
@@ -119,7 +119,7 @@ func (s *Server) textInput(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		if !validInputToken(input.Transfer) {
 			http.Error(w, "粘贴目标尚未绑定，请重新点击输入框", http.StatusConflict)
 			return
@@ -205,7 +205,7 @@ func (s *Server) imageInput(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	if input.Target == "browser" {
-		if input.Context != "" && s.macosGuest == nil && s.windowsGuest == nil {
+		if input.Context != "" && s.macosGuest == nil {
 			state, checkErr := s.browserAction(ctx, "ime", &browserInput{Target: "browser", ID: input.ID, Mode: "status"})
 			var current struct {
 				Available bool   `json:"available"`
@@ -263,14 +263,6 @@ func (s *Server) guestImage(ctx context.Context, target string, data []byte, win
 			return nil, errors.New("图片保存路径无效")
 		}
 		return result, nil
-	}
-	if s.windowsGuest != nil {
-		if target == "terminal" {
-			return s.windowsSaveAttachment(ctx, "image.png", bytes.NewReader(data))
-		}
-		var result map[string]any
-		err := s.windowsDesktopRequest(ctx, "paste-image", map[string]any{"png": base64.StdEncoding.EncodeToString(data)}, &result)
-		return result, err
 	}
 	script := "sudo -H -u cage /usr/local/bin/cage-image-input save"
 	if target == "desktop" {

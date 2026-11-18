@@ -44,7 +44,7 @@ type guestInstallView struct {
 
 func (s *Server) guestInstallView() (guestInstallView, error) {
 	v := guestInstallView{}
-	if !s.localVMStorage() || s.macosGuest != nil || s.windowsGuest != nil {
+	if !s.localVMStorage() || s.macosGuest != nil {
 		return v, nil
 	}
 	pending, err := guestos.LoadInstallation(s.profile)
@@ -66,7 +66,7 @@ func (s *Server) guestInstallView() (guestInstallView, error) {
 		v.System = guestos.MacOS
 		v.HostMatchOnly = runtime.GOARCH == "amd64"
 	case runtime.GOOS == "windows" && runtime.GOARCH == "amd64":
-		v.System = guestos.Windows11
+		// No host-matched guest; only the catalog Linux systems apply.
 	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
 		identity, hostErr := hostimage.Host(context.Background())
 		if hostErr != nil {
@@ -93,18 +93,7 @@ func (s *Server) guestInstallView() (guestInstallView, error) {
 		if err != nil {
 			return v, err
 		}
-		win, err := guestos.LoadWindowsProfile(s.profile)
-		if err != nil {
-			return v, err
-		}
-		v.Activate = (pending.System == guestos.MacOS && mac != nil) || (pending.System == guestos.Windows11 && win != nil)
-		if pending.System == guestos.Windows11 && win != nil {
-			cleanup, err := guestos.WindowsCloneCleanupPending(s.profile)
-			if err != nil {
-				return v, err
-			}
-			v.Activate = !cleanup
-		}
+		v.Activate = pending.System == guestos.MacOS && mac != nil
 	}
 	if v.System == "" {
 		return v, nil
@@ -128,13 +117,6 @@ func (s *Server) guestInstallation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if r.Method == http.MethodGet {
-		if v.System == guestos.Windows11 && v.Available && v.Pending == nil {
-			check := guestos.Inspect(r.Context())
-			if !check.HostCheckPassed {
-				v.Available = false
-				v.Reason = check.Detail
-			}
-		}
 		jsonReply(w, v)
 		return
 	}
@@ -161,35 +143,7 @@ func (s *Server) guestInstallation(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "客户机尚未完成安装", http.StatusConflict)
 		return
 	}
-	if v.Pending != nil && v.Pending.System == guestos.Windows11 {
-		owner, err := s.installedWindowsVMOwner(*v.Pending)
-		if err != nil {
-			s.op.Unlock()
-			requestError(w, err)
-			return
-		}
-		s.handoffWithVMOwnerLocked(w, owner)
-		return
-	}
 	s.handoffLocked(w)
-}
-
-func (s *Server) installedWindowsVMOwner(install guestos.Installation) (string, error) {
-	binding, err := guestos.LoadWindowsProfile(s.profile)
-	if err != nil || binding == nil || install.System != guestos.Windows11 || install.ID == uuid.Nil {
-		return "", errors.New("Windows 安装绑定尚未确认，请继续原安装；原磁盘和账户已保留")
-	}
-	state, err := cage.StoragePhysicalPath(filepath.Join(s.profile, "state"))
-	if err != nil {
-		return "", err
-	}
-	expected := filepath.Join(state, "windows-"+strings.ReplaceAll(install.ID.String(), "-", ""))
-	receipt, err := os.ReadFile(filepath.Join(s.profile, "windows-install-vm.txt"))
-	id, parseErr := uuid.Parse(strings.TrimSpace(string(receipt)))
-	if err != nil || parseErr != nil || id != binding.VMID || !strings.EqualFold(filepath.Clean(binding.InstanceDirectory), filepath.Clean(expected)) {
-		return "", errors.New("Windows 安装记录与原客机不匹配，请核对原环境；现有数据已保留")
-	}
-	return "windows/" + binding.VMID.String() + "/Running", nil
 }
 
 func (s *Server) resumePendingMacOSInstall(w http.ResponseWriter, r *http.Request, id uuid.UUID) {
@@ -203,7 +157,7 @@ func (s *Server) resumePendingMacOSInstall(w http.ResponseWriter, r *http.Reques
 		http.Error(w, "请先准备与原客机身份匹配的恢复入口", http.StatusConflict)
 		return
 	}
-	if !s.hasTrustedView(r) || s.macosGuest != nil || s.windowsGuest != nil || !s.localVMStorage() {
+	if !s.hasTrustedView(r) || s.macosGuest != nil || !s.localVMStorage() {
 		http.Error(w, "请在本机 Cage 窗口恢复原 macOS 安装", http.StatusForbidden)
 		return
 	}
@@ -227,6 +181,10 @@ func guestInstallFailureMessage(system string, err error) error {
 }
 
 func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, in guestInstallRequest, guiAuthorize bool, recoveryUser string) {
+	if in.System == guestos.Windows11 {
+		http.Error(w, abandonedGuestMessage(guestos.Windows11), http.StatusConflict)
+		return
+	}
 	if in.System == guestos.MacOS && !s.account.view().MacOSCredentialsReady {
 		http.Error(w, "请先注册或确认 Cage 账密，再安装 macOS 客机", http.StatusConflict)
 		return
@@ -323,12 +281,6 @@ func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, i
 				}
 			}
 		}
-		if install.System == guestos.Windows11 {
-			check := guestos.Inspect(s.operationContext())
-			if !check.HostCheckPassed {
-				return errors.New(check.Detail)
-			}
-		}
 		if err := s.prepareGuestProfile(in.GuestProfile, in.System); err != nil {
 			return err
 		}
@@ -407,20 +359,15 @@ func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, i
 		}
 		s.setMessage("正在安装所选客户机系统…")
 		s.jobs.execution().setSetupProgress(&SetupProgress{Phase: "packages", System: install.System, Label: "正在安装 " + guestProgressName(install.System) + " 系统"})
-		var cmd *exec.Cmd
-		if install.System == guestos.MacOS {
-			cmd = exec.CommandContext(s.operationContext(), s.exe, "guest-os", "macos", "install")
-			cmd.Env = append(os.Environ(), cage.ConfigEnv+"="+s.configPath, "CAGE_MACOS_ACCOUNT="+credential.Username)
-			if guiAuthorize {
-				cmd.Env = append(cmd.Env, "CAGE_MACOS_GUI_AUTHORIZE=1")
-			}
-			cmd.Stdin = strings.NewReader(credential.Password)
-		} else {
-			cmd, err = guestos.WindowsInstallCommand(s.operationContext(), s.profile, filepath.Join(filepath.Dir(s.exe), "guest-os"), install)
-			if err != nil {
-				return err
-			}
+		if install.System != guestos.MacOS {
+			return errors.New(abandonedGuestMessage(install.System))
 		}
+		cmd := exec.CommandContext(s.operationContext(), s.exe, "guest-os", "macos", "install")
+		cmd.Env = append(os.Environ(), cage.ConfigEnv+"="+s.configPath, "CAGE_MACOS_ACCOUNT="+credential.Username)
+		if guiAuthorize {
+			cmd.Env = append(cmd.Env, "CAGE_MACOS_GUI_AUTHORIZE=1")
+		}
+		cmd.Stdin = strings.NewReader(credential.Password)
 		cmd.Stdout = s.jobs.execution()
 		cmd.Stderr = s.jobs.execution()
 		if err := cmd.Run(); err != nil {

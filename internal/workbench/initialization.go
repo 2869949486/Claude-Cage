@@ -51,7 +51,7 @@ func (s *Server) initializationState() (initializationView, error) {
 	if err != nil {
 		return initializationView{}, err
 	}
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return initializationView{Required: s.macSetupPending()}, nil
 	}
 	return initializationView{Required: pending != nil || !s.environmentPrepared(), Started: pending != nil}, nil

@@ -32,7 +32,7 @@ func TestTailnetBoundaries(t *testing.T) {
 		t.Fatal(w.Code)
 	}
 	for _, path := range []string{"/api/tailscale", "/api/tailscale/login", "/api/tailscale/add-key"} {
-		if !macOSWorkbenchRoute(path) || !windowsWorkbenchRoute(path) {
+		if !macOSWorkbenchRoute(path) {
 			t.Fatal(path)
 		}
 	}
@@ -97,7 +97,7 @@ func TestTailnetServicePortContract(t *testing.T) {
 			t.Fatalf("bad input accepted: %d %s", w.Code, body)
 		}
 	}
-	if !macOSWorkbenchRoute("/api/tailscale/open-service") || !windowsWorkbenchRoute("/api/tailscale/open-service") {
+	if !macOSWorkbenchRoute("/api/tailscale/open-service") {
 		t.Fatal("native hosts must expose the same service route")
 	}
 }

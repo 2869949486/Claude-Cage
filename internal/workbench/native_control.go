@@ -3,7 +3,6 @@ package workbench
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"sync"
 	"time"
 )
@@ -13,7 +12,7 @@ const (
 	nativeControlRetry = 10 * time.Second
 )
 
-// nativeControl carries idempotent polls to a macOS or Windows guest over one
+// nativeControl carries idempotent polls to a macOS guest over one
 // connection. Opening one per poll costs an SSH key exchange or a relay
 // process with its pairing handshake, while file requests, caret status and
 // application status arrive every second or two. Requests that change guest
@@ -113,43 +112,6 @@ func (n *nativeControl) close() {
 	}
 	n.drop()
 	n.retryAt = time.Time{}
-}
-
-// windowsDesktopQuick is windowsDesktopRequest for polls that read guest
-// state: they share one relay connection instead of starting one each.
-func (s *Server) windowsDesktopQuick(ctx context.Context, action string, input map[string]any, output any) error {
-	request := map[string]any{}
-	for key, value := range input {
-		request[key] = value
-	}
-	request["action"] = action
-	line, err := json.Marshal(request)
-	if err == nil {
-		open := func() (*nativeWindowConnection, error) { return s.windowsWindowConnection(s.lifetimeContext()) }
-		if reply, ok := s.nativeControl.exchange(ctx, open, append(line, '\n')); ok {
-			return decodeWindowsWindowReply(reply, output)
-		}
-	}
-	if ctx.Err() != nil {
-		return ctx.Err()
-	}
-	return s.windowsDesktopRequest(ctx, action, input, output)
-}
-
-func decodeWindowsWindowReply(data []byte, output any) error {
-	var status struct {
-		Error string `json:"error"`
-	}
-	if json.Unmarshal(data, &status) != nil {
-		return errors.New("客机应用返回了无效响应")
-	}
-	if status.Error != "" {
-		return windowsWindowFailure{code: status.Error}
-	}
-	if output == nil {
-		return nil
-	}
-	return json.Unmarshal(data, output)
 }
 
 // macOSWindowQuick is macOSWindowCall for polls that read guest state: they

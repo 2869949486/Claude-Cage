@@ -95,13 +95,6 @@ func (s *Server) projectAdditionalDirectories(workspace string) ([]string, error
 			return nil, err
 		}
 		directory := s.cliWorkspace(folder)
-		if s.windowsGuest != nil {
-			binding, err := s.windowsProjectForHost(folder)
-			if err != nil {
-				return nil, err
-			}
-			directory = binding.Path
-		}
 		directories = append(directories, directory)
 	}
 	return directories, nil

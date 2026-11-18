@@ -249,9 +249,6 @@ func (s *Server) switchClaudeAccount(ctx context.Context, id string, input claud
 			return fail(errors.New("原会话连接尚未就绪，请先打开原会话"))
 		}
 		query := map[string]any{"cli_id": sw.Source.CLIID, "config": sw.Source.Config, "connection": sw.Connection, "workspace": record.GuestWorkspace, "target_cli_id": sw.TargetID, "switch_id": sw.ID}
-		if err := s.windowsConversationInput(record, query); err != nil {
-			return fail(err)
-		}
 		err = s.runCLIChannel(ctx, "account-switch", query, &result)
 		if err != nil {
 			return fail(err)
@@ -259,7 +256,7 @@ func (s *Server) switchClaudeAccount(ctx context.Context, id string, input claud
 		if result.Error != "" {
 			return fail(errors.New(result.Error))
 		}
-		if !strings.HasPrefix(result.Transcript, "/") && !(s.windowsGuest != nil && windowsCLIAbsolutePath(result.Transcript)) {
+		if !strings.HasPrefix(result.Transcript, "/") {
 			return fail(errors.New("原会话历史未确认，未启动目标账号"))
 		}
 		if old := s.terminals.get(record.TerminalID); old != nil {
@@ -284,9 +281,6 @@ func (s *Server) switchClaudeAccount(ctx context.Context, id string, input claud
 			Running bool `json:"running"`
 		}
 		query := map[string]any{"cli_id": record.CLIID, "config": record.GuestConfig, "account": record.Account.GuestID}
-		if err := s.windowsConversationInput(record, query); err != nil {
-			return fail(err)
-		}
 		if err := s.runCLIChannel(ctx, "active", query, &state); err != nil {
 			return fail(err)
 		}
@@ -350,9 +344,6 @@ func (s *Server) cancelClaudeSwitch(ctx context.Context, id, requestID string) e
 		Error string `json:"error"`
 	}
 	query := map[string]any{"cli_id": sw.Source.CLIID, "connection": sw.Connection, "switch_id": sw.ID}
-	if err := s.windowsConversationInput(record, query); err != nil {
-		return err
-	}
 	if err := s.runCLIChannel(ctx, "account-switch-cancel", query, &response); err != nil {
 		return err
 	}

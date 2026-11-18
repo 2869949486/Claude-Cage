@@ -73,7 +73,7 @@ func (s *Server) diagnosticExport(w http.ResponseWriter, r *http.Request) {
 		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 		defer cancel()
 		var err error
-		if s.macosGuest != nil || s.windowsGuest != nil {
+		if s.macosGuest != nil {
 			guest, err = s.nativeGuestDiagnostics(ctx)
 		} else {
 			guest, err = s.guest(ctx, `sudo python3 - <<'CAGE_DIAGNOSTIC_JOURNAL'

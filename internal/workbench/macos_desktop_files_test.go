@@ -131,26 +131,26 @@ func TestMacOSDesktopAttachmentsUsePrivateNativeOperations(t *testing.T) {
 		return 0, true
 	})
 	s := guest.s
-	missingTarget := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/start", []byte(`{"target":"desktop","kind":"paste"}`))
+	missingTarget := desktopRequestForTest(s, http.MethodPost, "/api/input/files/start", []byte(`{"target":"desktop","kind":"paste"}`))
 	if missingTarget.Code == http.StatusOK {
 		t.Fatal("attachment without an observed window was accepted")
 	}
-	start := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/start", []byte(`{"target":"desktop","kind":"paste","pid":100,"window":7}`))
+	start := desktopRequestForTest(s, http.MethodPost, "/api/input/files/start", []byte(`{"target":"desktop","kind":"paste","pid":100,"window":7}`))
 	if start.Code != http.StatusOK || !strings.Contains(start.Body.String(), id) {
 		t.Fatalf("start failed: %d %s", start.Code, start.Body.String())
 	}
 	content := []byte{0, 255, 128, 1, 2, 3}
-	upload := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/desktop/"+id+"?name=%E8%B5%84%E6%96%99.bin", content)
+	upload := desktopRequestForTest(s, http.MethodPost, "/api/input/files/desktop/"+id+"?name=%E8%B5%84%E6%96%99.bin", content)
 	if upload.Code != http.StatusOK || strings.Contains(upload.Body.String(), "/tmp/") {
 		t.Fatalf("upload failed or exposed private path: %d %s", upload.Code, upload.Body.String())
 	}
 	for _, action := range []string{"finish", "cancel"} {
-		response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/"+action, []byte(`{"target":"desktop","id":"`+id+`"}`))
+		response := desktopRequestForTest(s, http.MethodPost, "/api/input/files/"+action, []byte(`{"target":"desktop","id":"`+id+`"}`))
 		if response.Code != http.StatusOK {
 			t.Fatalf("%s failed: %s", action, response.Body.String())
 		}
 	}
-	poll := windowsBrowserRequestForTest(s, http.MethodGet, "/api/input/files/desktop/requests", nil)
+	poll := desktopRequestForTest(s, http.MethodGet, "/api/input/files/desktop/requests", nil)
 	if poll.Code != http.StatusOK || !strings.Contains(poll.Body.String(), `"kind":"chooser"`) {
 		t.Fatalf("chooser poll failed: %d %s", poll.Code, poll.Body.String())
 	}
@@ -158,12 +158,12 @@ func TestMacOSDesktopAttachmentsUsePrivateNativeOperations(t *testing.T) {
 	if err := png.Encode(&picture, image.NewRGBA(image.Rect(0, 0, 3, 2))); err != nil {
 		t.Fatal(err)
 	}
-	prepared := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/paste/start", []byte(`{"target":"desktop","pid":100,"window":7}`))
+	prepared := desktopRequestForTest(s, http.MethodPost, "/api/input/paste/start", []byte(`{"target":"desktop","pid":100,"window":7}`))
 	if prepared.Code != http.StatusOK || !strings.Contains(prepared.Body.String(), id) {
 		t.Fatalf("image preparation failed: %d %s", prepared.Code, prepared.Body.String())
 	}
 	body, _ := json.Marshal(map[string]any{"target": "desktop", "png": base64.StdEncoding.EncodeToString(picture.Bytes()), "transfer": id, "pid": 100, "window": 7})
-	response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/image", body)
+	response := desktopRequestForTest(s, http.MethodPost, "/api/input/image", body)
 	if response.Code != http.StatusOK {
 		t.Fatalf("image failed: %d %s", response.Code, response.Body.String())
 	}
@@ -178,7 +178,7 @@ func TestMacOSDesktopAttachmentsUsePrivateNativeOperations(t *testing.T) {
 	}
 	rejectAdd = true
 	mu.Unlock()
-	failed := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/desktop/"+id+"?name=%E8%B5%84%E6%96%99.bin", content)
+	failed := desktopRequestForTest(s, http.MethodPost, "/api/input/files/desktop/"+id+"?name=%E8%B5%84%E6%96%99.bin", content)
 	mu.Lock()
 	defer mu.Unlock()
 	if failed.Code == http.StatusOK || !discarded {

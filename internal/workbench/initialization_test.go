@@ -72,11 +72,6 @@ func TestInitializationPersistsBeforeDiskCreationAndDoesNotResetExisting(t *test
 	if read().Required {
 		t.Fatal("existing Linux installation forced to reinstall")
 	}
-	s.windowsGuest = &guestos.WindowsProfile{}
-	if next, err := s.initializationState(); err != nil || next.Required {
-		t.Fatalf("existing Windows installation: %+v %v", next, err)
-	}
-	s.windowsGuest = nil
 	s.macosGuest = &guestos.MacOSProfile{}
 	if next, err := s.initializationState(); err != nil || next.Required {
 		t.Fatalf("existing Mac installation: %+v %v", next, err)
@@ -94,8 +89,10 @@ func TestInitializationCompletionRequiresReadyGuestAndCurrentNetworkEvidence(t *
 	if w := initializationRequest(s, "complete", true); w.Code == 200 {
 		t.Fatal("unready guest accepted")
 	}
-	s.windowsGuest = &guestos.WindowsProfile{}
-	s.windowsState.Running = true
+	marker := filepath.Join(s.instanceDir(), "cage-running.json")
+	if err := writePrivate(marker, map[string]int{"pid": os.Getpid()}); err != nil {
+		t.Fatal(err)
+	}
 	s.ready = true
 	if w := initializationRequest(s, "complete", true); w.Code == 200 {
 		t.Fatal("missing network report accepted")
@@ -127,7 +124,9 @@ func TestInitializationCompletionRequiresReadyGuestAndCurrentNetworkEvidence(t *
 		t.Fatal(w.Code, w.Body.String())
 	}
 	s.ready = false
-	s.windowsState.Running = false
+	if err := os.Remove(marker); err != nil {
+		t.Fatal(err)
+	}
 	if view, err := s.initializationState(); err != nil || view.Required {
 		t.Fatalf("completed stopped environment lost initialization: %+v %v", view, err)
 	}

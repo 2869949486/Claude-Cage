@@ -52,9 +52,6 @@ func (s *Server) sshTarget() string {
 }
 
 func (s *Server) environmentPrepared() bool {
-	if s.windowsGuest != nil {
-		return true
-	}
 	if containerenv.Configured(s.profile) {
 		environment, err := containerenv.Load(s.profile)
 		if err != nil {
@@ -75,9 +72,6 @@ func (s *Server) sshCommandWithForwarding(ctx context.Context, args ...string) *
 	return s.sshCommandOptions(ctx, true, args...)
 }
 func (s *Server) sshCommandOptions(ctx context.Context, maintenance bool, args ...string) *exec.Cmd {
-	if s.windowsGuest != nil {
-		return &exec.Cmd{Err: errors.New("Windows 客机不支持 Linux SSH 控制脚本")}
-	}
 	if s.macosGuest != nil {
 		return s.macOSSSHCommand(ctx, args...)
 	}
@@ -101,9 +95,6 @@ func (s *Server) guest(ctx context.Context, script string) ([]byte, error) {
 }
 
 func (s *Server) guestControl(ctx context.Context, script, diagnosticSource string) ([]byte, error) {
-	if s.windowsGuest != nil {
-		return nil, errors.New("Windows 客机不支持 Linux 控制脚本")
-	}
 	// SSH enters the user's default shell. Run control scripts in Bash so
 	// zsh initialization cannot change their redirection or error behavior.
 	command := "exec /bin/bash --noprofile --norc -c " + shellescape.Quote(script)
@@ -138,9 +129,6 @@ func (s *Server) guestControl(ctx context.Context, script, diagnosticSource stri
 func (s *Server) attach() error {
 	if err := s.requireStorageReady(); err != nil {
 		return err
-	}
-	if s.windowsGuest != nil {
-		return s.attachWindowsGuest()
 	}
 	if s.macosGuest != nil {
 		return s.attachMacOSGuest()
@@ -241,7 +229,7 @@ func (s *Server) monitor(ctx context.Context) {
 				ready := s.ready
 				token := s.credentials.Token
 				s.mu.Unlock()
-				if !ready || s.macosGuest != nil || s.windowsGuest != nil {
+				if !ready || s.macosGuest != nil {
 					_ = s.attach()
 				} else {
 					ctx, cancel := s.controlContext()
@@ -348,9 +336,6 @@ func (s *Server) startEnvironment(syncTimezone bool) error {
 	}
 	if s.macosGuest != nil {
 		return s.startMacOSGuest()
-	}
-	if s.windowsGuest != nil {
-		return s.startWindowsGuest()
 	}
 	if err := s.requireCurrentLinuxTransferMount(); err != nil {
 		return err
@@ -524,9 +509,6 @@ func (s *Server) stopEnvironment() (returned error) {
 			returned = managedproxy.Stop(s.profile)
 		}
 	}()
-	if s.windowsGuest != nil {
-		return s.stopWindowsGuest()
-	}
 	if s.macosGuest != nil {
 		return s.stopMacOSGuest()
 	}
@@ -578,9 +560,7 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 		resumeVersion = execution.pauseVersion
 	}
 	wasReady := vmAlive(s.profile, s.environmentDir())
-	if s.windowsGuest != nil {
-		wasReady = s.windowsState.Running
-	} else if s.macosGuest != nil {
+	if s.macosGuest != nil {
 		wasReady = macOSInstanceRunning(s.instanceDir(), s.macosGuest.Backend)
 	}
 	s.mu.Unlock()
@@ -608,14 +588,6 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 		}
 	}
 	if changed {
-		if s.windowsGuest != nil && wasReady && (old.Timezone != v.Config.Timezone || old.Locale != v.Config.Locale) {
-			if err := s.closeProxyGate("正在应用 Windows 系统设置，外网等待重新检查"); err != nil {
-				return err
-			}
-			if err := s.applyWindowsGuestSettings(s.operationContext(), v.Config); err != nil {
-				return err
-			}
-		}
 		if err := s.resumeNetworkIntentAt(resumeVersion); err != nil {
 			return err
 		}
@@ -814,11 +786,6 @@ func vmAlive(profile, workspace string) bool {
 	return processExists(record.PID) && cage.ProcessStartMatches(record.PID, record.Started)
 }
 func (s *Server) vmRunning() bool {
-	if s.windowsGuest != nil {
-		s.mu.Lock()
-		defer s.mu.Unlock()
-		return s.windowsState.Running
-	}
 	if s.macosGuest != nil {
 		return macOSInstanceRunning(s.instanceDir(), s.macosGuest.Backend)
 	}

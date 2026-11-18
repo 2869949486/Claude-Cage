@@ -127,9 +127,6 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	stop := context.AfterFunc(epoch, cancel)
 	defer func() { stop(); cancel() }()
-	if s.windowsGuest != nil {
-		return s.windowsCLIRequest(ctx, map[string]any{"action": "channel", "mode": mode, "input": input}, output)
-	}
 	data, err := json.Marshal(input)
 	if err != nil {
 		return err
@@ -141,7 +138,7 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = 2 * time.Second
 	var result bytes.Buffer
-	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &result, remaining: 4 << 20}
+	cmd.Stdout = &boundedStatusWriter{buffer: &result, remaining: 4 << 20}
 	err = cmd.Run()
 	if err != nil || json.Unmarshal(result.Bytes(), output) != nil {
 		failure := "guest_response"
@@ -189,20 +186,7 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 	}
 	workspaces := make(map[string]string, len(paths))
 	for _, path := range paths {
-		if s.windowsGuest != nil {
-			if s.windowsGuest.Remote() {
-				if home, err := s.remoteWindowsCLIWorkspace(path); err == nil {
-					workspaces[home] = home
-				}
-				continue
-			}
-			binding, err := s.windowsProjectForHost(path)
-			if err == nil {
-				workspaces[binding.Path] = path
-			}
-		} else {
-			workspaces[s.cliWorkspace(path)] = path
-		}
+		workspaces[s.cliWorkspace(path)] = path
 	}
 	var found []terminalConversation
 	if err := s.runCLIChannel(ctx, "discover", map[string]any{"accounts": accounts, "workspaces": workspaces}, &found); err != nil {
@@ -227,7 +211,7 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 	for _, item := range found {
 		var workspace, matched string
 		for guest, path := range workspaces {
-			if cliWorkspaceWithin(item.Workspace, guest, s.windowsGuest != nil) && len(guest) > len(matched) {
+			if cliWorkspaceWithin(item.Workspace, guest) && len(guest) > len(matched) {
 				workspace, matched = path, guest
 			}
 		}
@@ -250,7 +234,7 @@ func (s *Server) discoverTerminalConversations(ctx context.Context, paths []stri
 			record.Account.GuestID = "default"
 			for _, account := range list.Accounts {
 				config := strings.ReplaceAll(item.Config, "\\", "/")
-				if strings.Contains(config, "/claude-accounts/"+account.guestID()+"/") || s.windowsGuest != nil && strings.HasSuffix(strings.ToLower(config), "/accounts/"+account.guestID()+"/config") {
+				if strings.Contains(config, "/claude-accounts/"+account.guestID()+"/") {
 					record.Account = claudeSelection{ID: account.ID, GuestID: account.guestID(), Subject: claudeIdentityHash(account.Email, account.Organization)}
 				}
 			}
@@ -301,18 +285,12 @@ func (s *Server) readTerminalConversation(ctx context.Context, id string, observ
 	if observation != nil && record.Launcher == "claude" {
 		input["login_stamp"] = observation.stamp
 	}
-	if err := s.windowsConversationInput(record, input); err != nil {
-		return mobileSession{}, err
-	}
 	if err := s.runCLIChannel(ctx, "view", input, &current); err != nil {
 		return mobileSession{}, err
 	}
 	root := s.cliWorkspace(record.Workspace)
 	if legacy := s.macOSLegacyWorkspace(record); legacy != "" {
 		root = legacy
-	}
-	if s.windowsGuest != nil {
-		root = record.GuestWorkspace
 	}
 	if current.Workspace == "" && !current.HasHistory && record.TerminalID != "" {
 		if record.Switch != nil && record.Switch.Phase == "starting" && !current.Running {
@@ -333,7 +311,7 @@ func (s *Server) readTerminalConversation(ctx context.Context, id string, observ
 		}
 		return record.snapshot(), nil
 	}
-	if !cliWorkspaceWithin(current.Workspace, root, s.windowsGuest != nil) {
+	if !cliWorkspaceWithin(current.Workspace, root) {
 		return mobileSession{}, errors.New("终端的项目已变化，请重新读取会话列表")
 	}
 	if terminal := s.terminals.get(record.TerminalID); terminal != nil && current.Connection != "" && current.Workspace != "" {
@@ -447,9 +425,6 @@ func (s *Server) terminalConversationAction(ctx context.Context, id string, inpu
 		return mobileSession{}, errors.New("此会话已归档，请先撤销归档")
 	}
 	input["cli_id"], input["connection"] = record.CLIID, record.Connection
-	if err := s.windowsConversationInput(record, input); err != nil {
-		return mobileSession{}, err
-	}
 	var response struct {
 		OK    bool   `json:"ok"`
 		Error string `json:"error"`
@@ -564,7 +539,7 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 		if legacyWorkspace != "" {
 			root = legacyWorkspace
 		}
-		if !cliWorkspaceWithin(record.GuestWorkspace, root, false) {
+		if !cliWorkspaceWithin(record.GuestWorkspace, root) {
 			return "", nil, errors.New("会话目录不在已授权的 macOS 项目内")
 		}
 		payload["project_subdir"] = strings.TrimPrefix(strings.TrimPrefix(record.GuestWorkspace, root), "/")
@@ -574,28 +549,6 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 	record.ConnectionNotice = ""
 	if legacyWorkspace != "" {
 		record.ConnectionNotice = macOSLegacyWorkspaceNotice
-	}
-	if s.windowsGuest != nil {
-		if s.windowsGuest.Remote() {
-			home, err := s.remoteWindowsCLIWorkspace(workspace)
-			if err != nil {
-				return "", nil, err
-			}
-			record.GuestWorkspace = home
-			if err := writePrivate(mobileRecordPath(s.profile, id), record); err != nil {
-				return "", nil, err
-			}
-			return string(data), record, nil
-		}
-		binding, err := s.windowsProjectForHost(workspace)
-		if err != nil {
-			return "", nil, err
-		}
-		record.GuestWorkspace = binding.Path
-		if err := writePrivate(mobileRecordPath(s.profile, id), record); err != nil {
-			return "", nil, err
-		}
-		return string(data), record, nil
 	}
 	body := s.cliHelperCommand("launch", string(data)) + "; exec bash -i"
 	directory := record.GuestWorkspace

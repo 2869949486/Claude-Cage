@@ -44,23 +44,16 @@ func TestDesktopInstanceNeverFallsBackToNativeDefault(t *testing.T) {
 	if w := request(s, "POST", "/api/desktop-instances/"+id+"/stop", s.origin, "{}", false); w.Code != 401 {
 		t.Fatalf("unauthenticated stop: %d", w.Code)
 	}
-	for _, platform := range []string{"macos", "windows"} {
-		if platform == "macos" {
-			s.macosGuest = &guestos.MacOSProfile{}
-		} else {
-			s.macosGuest = nil
-			s.windowsGuest = &guestos.WindowsProfile{}
-		}
-		r := httptest.NewRequest("GET", "/api/desktop-instances/"+id+"/vnc", nil)
-		r.SetPathValue("id", id)
-		r.SetPathValue("action", "vnc")
-		w := httptest.NewRecorder()
-		s.accountDesktop(w, r)
-		if w.Code != http.StatusNotImplemented {
-			t.Fatalf("%s account display: got %d", platform, w.Code)
-		}
+	s.macosGuest = &guestos.MacOSProfile{}
+	r := httptest.NewRequest("GET", "/api/desktop-instances/"+id+"/vnc", nil)
+	r.SetPathValue("id", id)
+	r.SetPathValue("action", "vnc")
+	w := httptest.NewRecorder()
+	s.accountDesktop(w, r)
+	if w.Code != http.StatusNotImplemented {
+		t.Fatalf("macOS account display: got %d", w.Code)
 	}
-	if !macOSWorkbenchRoute("/api/desktop-instances") || !windowsWorkbenchRoute("/api/desktop-instances") {
+	if !macOSWorkbenchRoute("/api/desktop-instances") {
 		t.Fatal("native platform cannot query capabilities")
 	}
 }
@@ -81,11 +74,6 @@ func TestBoundAccountProbeUsesSubscriptionAndGuestCapability(t *testing.T) {
 			t.Fatal("default profile took another subscription's route")
 		}
 	}
-	s.windowsGuest = &guestos.WindowsProfile{}
-	if _, err := s.readWindowsClaudeAccount(t.Context(), "usage", "default", claudeIdentityHash(first.Email, "")); err != errUnsupportedAccountNetwork {
-		t.Fatal("expected to stop before the native CLI used the shared route", err)
-	}
-	s.windowsGuest = nil
 	s.macosGuest = &guestos.MacOSProfile{}
 	if _, err := s.readClaudeGuestSnapshot(t.Context(), "default"); err != errUnsupportedAccountNetwork {
 		t.Fatal("native identity discovery used a bound default profile", err)

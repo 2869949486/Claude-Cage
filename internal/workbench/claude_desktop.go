@@ -40,9 +40,6 @@ print(json.dumps({'installed':installed,'version':package[1] if installed else '
 CAGE_DESKTOP_STATE`
 
 func (s *Server) claudeDesktopStatus(w http.ResponseWriter, r *http.Request) {
-	if s.remoteWindowsDesktopUnavailable(w) {
-		return
-	}
 	if !s.vmRunning() {
 		http.Error(w, "请先启动 Cage 环境", 409)
 		return
@@ -52,13 +49,6 @@ func (s *Server) claudeDesktopStatus(w http.ResponseWriter, r *http.Request) {
 	b, err := s.desktopStatus.read(ctx, s.lifetimeContext(), func(ctx context.Context) ([]byte, error) {
 		ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 		defer cancel()
-		if s.windowsGuest != nil {
-			var result claudeDesktopState
-			if err := s.windowsDesktopQuick(ctx, "status", nil, &result); err != nil {
-				return nil, err
-			}
-			return json.Marshal(result)
-		}
 		return s.guestQuick(ctx, claudeDesktopSnapshot)
 	})
 	var state claudeDesktopState
@@ -84,9 +74,6 @@ func (s *Server) claudeDesktopAction(w http.ResponseWriter, r *http.Request) {
 	if !readJSON(w, r, &input) {
 		return
 	}
-	if s.remoteWindowsDesktopUnavailable(w) {
-		return
-	}
 	if !s.vmRunning() {
 		http.Error(w, "请先启动 Cage 环境", 409)
 		return
@@ -94,15 +81,6 @@ func (s *Server) claudeDesktopAction(w http.ResponseWriter, r *http.Request) {
 	s.launch(w, "claude-desktop-"+action, func() error {
 		s.desktopStatus.invalidate()
 		defer s.desktopStatus.invalidate()
-		if s.windowsGuest != nil {
-			if action == "update" {
-				return errors.New("请使用 Claude Desktop 应用内的更新入口")
-			}
-			if action == "install" {
-				return errors.New("Windows 客机的自动安装尚未接通，请保留已有官方应用")
-			}
-			return s.windowsDesktopRequest(s.operationContext(), action, nil, nil)
-		}
 		switch action {
 		case "install", "update":
 			s.mu.Lock()
@@ -212,10 +190,6 @@ func (s *Server) runDesktopScript(script string, timeout time.Duration) error {
 }
 
 func (s *Server) claudeDesktopCredentials(w http.ResponseWriter, r *http.Request) {
-	if s.windowsGuest != nil {
-		s.windowsDesktopCredentials(w, r)
-		return
-	}
 	ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
 	defer cancel()
 	b, err := s.guestQuick(ctx, `set -eu
@@ -246,9 +220,6 @@ func validDisplayDensity(scale float64) bool {
 }
 
 func (s *Server) claudeDesktopResize(w http.ResponseWriter, r *http.Request) {
-	if s.remoteWindowsDesktopUnavailable(w) {
-		return
-	}
 	var input struct {
 		Width  int     `json:"width"`
 		Height int     `json:"height"`
@@ -259,16 +230,6 @@ func (s *Server) claudeDesktopResize(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.Width < 320 || input.Height < 240 || input.Width > 8192 || input.Height > 8192 || !validDisplayDensity(input.Scale) {
 		http.Error(w, "画面尺寸无效", 400)
-		return
-	}
-	if s.windowsGuest != nil {
-		ctx, cancel := context.WithTimeout(r.Context(), 8*time.Second)
-		defer cancel()
-		if err := s.windowsDesktopRequest(ctx, "resize", map[string]any{"width": input.Width, "height": input.Height}, nil); err != nil {
-			http.Error(w, err.Error(), 502)
-			return
-		}
-		jsonReply(w, map[string]bool{"ok": true})
 		return
 	}
 	scale := ""
@@ -334,10 +295,6 @@ done`, scale, wid, hei, wid, hei, float64((wid+32)*(hei+8)*60)/1000000, wid, wid
 }
 
 func (s *Server) claudeDesktopVNC(w http.ResponseWriter, r *http.Request) {
-	if s.windowsGuest != nil {
-		s.windowsDesktopVNC(w, r)
-		return
-	}
 	if !s.vmRunning() {
 		http.Error(w, "环境尚未启动", 409)
 		return

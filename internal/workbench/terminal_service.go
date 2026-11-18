@@ -294,9 +294,6 @@ func (s *Server) createTerminalLocked(input terminalRequest) (*terminalSession, 
 	if input.LoginProxyNode != nil && (input.Kind != "claude-login" || input.ClaudeAccountID != "" || *input.LoginProxyNode != "" && !s.accountDesktopsSupported()) {
 		return nil, errors.New("仅可为新增的 Linux 账号选择代理节点")
 	}
-	if s.windowsGuest != nil {
-		return s.createWindowsTerminal(input)
-	}
 	var sharedRecord *mobileRecord
 	if input.sharedID != "" {
 		s.mobileCLI.mu.Lock()
@@ -524,18 +521,12 @@ func (s *Server) selectTerminalClaudeAccount(command, requested string, login bo
 }
 
 func (s *Server) readClaudeGuestSnapshot(ctx context.Context, id string) (claudeGuestSnapshot, error) {
-	if s.windowsGuest != nil {
-		return s.readWindowsClaudeAccount(ctx, "snapshot", id, "")
-	}
 	return s.readClaudeGuestReport(ctx, id, claudeSnapshotCommand(id))
 }
 
 func (s *Server) readClaudeGuestUsage(ctx context.Context, id, subject string) (claudeGuestSnapshot, error) {
 	if _, err := hex.DecodeString(subject); err != nil || len(subject) != 64 {
 		return claudeGuestSnapshot{}, errors.New("Claude 账号身份无效")
-	}
-	if s.windowsGuest != nil {
-		return s.readWindowsClaudeAccount(ctx, "usage", id, subject)
 	}
 	return s.readClaudeReportForSubject(ctx, id, subject, claudeGuestReportCommand(id, subject))
 }

@@ -38,8 +38,6 @@ func HasNativeWorkbenchKit(executable, system string) bool {
 	switch system {
 	case MacOS:
 		files = []string{"prepare-macos-media.sh", "provision-macos-workbench.sh", "project/cage-sshfs", "native-browser/macos-native-browser.mjs", "cage-finish-initial-setup", "cage-guest-check"}
-	case Windows11:
-		files = []string{"new-windows-guest.ps1", "setup-windows-guest.ps1", "windows-host-image.ps1", "complete-windows-guest.ps1", "install-windows-host-manager.ps1", "payload/Cage.HyperVManager.exe", "payload/Cage.GuestClipboard.exe"}
 	default:
 		return false
 	}

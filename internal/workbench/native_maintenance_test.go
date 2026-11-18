@@ -207,14 +207,10 @@ func TestNativeMaintenanceTransfersToExistingMacIdentity(t *testing.T) {
 }
 
 func TestNativeMaintenanceRejectsLiveTerminalsBeforeJob(t *testing.T) {
-	for _, system := range []string{guestos.MacOS, guestos.Windows11} {
+	for _, system := range []string{guestos.MacOS} {
 		t.Run(system, func(t *testing.T) {
 			s := testServer(t)
-			if system == guestos.MacOS {
-				s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "cage"}
-			} else {
-				s.windowsGuest = &guestos.WindowsProfile{}
-			}
+			s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "cage"}
 			s.terminals.sessions = map[string]*terminalSession{"active": {}}
 			for _, route := range []string{"/api/environment/update", "/api/environment/tools"} {
 				response := nativeMaintenanceRequest(s, "POST", route, "{}")

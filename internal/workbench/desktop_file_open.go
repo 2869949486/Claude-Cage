@@ -62,14 +62,8 @@ func resolveProjectFilePath(guest string, projects []string) (string, error) {
 }
 
 func (s *Server) resolveDesktopProjectFile(guest string, projects []string) (string, error) {
-	if s.macosGuest == nil && s.windowsGuest == nil {
+	if s.macosGuest == nil {
 		return resolveProjectFilePath(guest, projects)
-	}
-	if s.windowsGuest != nil {
-		guest = strings.ReplaceAll(guest, "\\", "/")
-		if !windowsCLIAbsolutePath(guest) || strings.Contains(guest[2:], ":") {
-			return "", errors.New("文件位置无效")
-		}
 	}
 	if pathpkg.Clean(guest) != guest || strings.ContainsAny(guest, "\x00\\") {
 		return "", errors.New("文件位置无效")
@@ -78,18 +72,8 @@ func (s *Server) resolveDesktopProjectFile(guest string, projects []string) (str
 		if isClientMountPath(project) {
 			continue
 		}
-		var root string
-		if s.macosGuest != nil {
-			root = macOSProjectPath(s.macosGuest.User, project)
-		} else {
-			binding, err := s.windowsProjectForHost(project)
-			if err != nil {
-				continue
-			}
-			root = strings.ReplaceAll(binding.Path, "\\", "/")
-		}
-		root = strings.TrimRight(root, "/")
-		if !cliWorkspaceWithin(guest, root, s.windowsGuest != nil) {
+		root := strings.TrimRight(macOSProjectPath(s.macosGuest.User, project), "/")
+		if !cliWorkspaceWithin(guest, root) {
 			continue
 		}
 		mapped := strings.TrimRight(guestPath(project), "/") + guest[len(root):]
@@ -135,7 +119,7 @@ func (s *Server) desktopFileOpenAction(w http.ResponseWriter, r *http.Request) {
 		err = errors.New(message)
 	} else if action != "open" && action != "reveal" {
 		err = errors.New("文件打开操作无效")
-	} else if download != "" && (s.macosGuest != nil || s.windowsGuest != nil) {
+	} else if download != "" && (s.macosGuest != nil) {
 		var saved browserDownloadInfo
 		saved, err = s.downloadInfo(ctx, download)
 		if err == nil && saved.State != "saved" {

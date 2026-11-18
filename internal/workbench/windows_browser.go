@@ -32,7 +32,10 @@ func (s *Server) nativeBrowserClient() *windowsBrowserClient {
 				return s.macOSSSHCommand(ctx, "-T", s.sshTarget(), "--", command), nil
 			}}
 		} else {
-			s.windowsBrowserControl = newWindowsBrowserClient(s.lifetimeContextLocked(), s.profile)
+			ctx, cancel := context.WithCancel(s.lifetimeContextLocked())
+			s.windowsBrowserControl = &windowsBrowserClient{ctx: ctx, cancel: cancel, start: func(context.Context) (*exec.Cmd, error) {
+				return nil, errors.New("此配置尚未绑定原生客机")
+			}}
 		}
 	}
 	return s.windowsBrowserControl
@@ -281,17 +284,11 @@ func (s *Server) nativeBrowserFile(w http.ResponseWriter, r *http.Request, metho
 func (s *Server) nativeBrowserVNC(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithCancel(r.Context())
 	defer cancel()
-	var client *windowsBrowserClient
+	client := s.nativeBrowserClient()
 	release := func() {}
 	// Whether this viewer's guest connection is its own, so that ending it
 	// releases only this viewer's held input.
-	ownConnection := s.macosGuest == nil
-	if s.macosGuest != nil {
-		client = s.nativeBrowserClient()
-	} else {
-		client = newWindowsBrowserClient(ctx, s.profile)
-		release = client.close
-	}
+	ownConnection := false
 	defer func() { release() }()
 	var current windowsWindowFrame
 	inputSuspended := false
@@ -322,14 +319,6 @@ func (s *Server) nativeBrowserVNC(w http.ResponseWriter, r *http.Request) {
 			}
 			input["kind"] = input["action"]
 			delete(input, "action")
-			s.mu.Lock()
-			keyboard := s.preferences.Keyboard
-			s.mu.Unlock()
-			if input["kind"] == "key" && s.windowsGuest != nil {
-				if key, ok := input["keysym"].(uint32); ok {
-					input["keysym"] = windowsGuestKeysym(key, keyboard)
-				}
-			}
 			// An older macOS guest runs its browser on the shared connection.
 			// Ending that one would close the browser, so the display
 			// reconnects there as before.

@@ -31,12 +31,12 @@ func TestMacOSResourceSaveUsesGuestMinimumAndPreservesOtherData(t *testing.T) {
 	}
 	network, _ := os.ReadFile(s.configPath)
 	for _, body := range []string{`{"allocation":{"memory_gib":2,"cpus":2}}`, `{"allocation":{"memory_gib":4,"cpus":1}}`, `{"allocation":{"memory_gib":13,"cpus":2}}`} {
-		response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(body))
+		response := desktopRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(body))
 		if response.Code == 200 {
 			t.Fatalf("accepted invalid macOS allocation %s", body)
 		}
 	}
-	response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(`{"allocation":{"memory_gib":6,"cpus":3}}`))
+	response := desktopRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(`{"allocation":{"memory_gib":6,"cpus":3}}`))
 	if response.Code != 200 {
 		t.Fatalf("save failed %d %s", response.Code, response.Body.String())
 	}
@@ -50,7 +50,7 @@ func TestMacOSResourceSaveUsesGuestMinimumAndPreservesOtherData(t *testing.T) {
 			t.Fatalf("save changed unrelated file %s", filename)
 		}
 	}
-	response = windowsBrowserRequestForTest(s, http.MethodGet, "/api/environment/resources", nil)
+	response = desktopRequestForTest(s, http.MethodGet, "/api/environment/resources", nil)
 	var status struct {
 		Runtime     string
 		Policy      string `json:"memory_policy"`
@@ -62,7 +62,7 @@ func TestMacOSResourceSaveUsesGuestMinimumAndPreservesOtherData(t *testing.T) {
 		t.Fatalf("status mismatch %s", response.Body.String())
 	}
 	s.op.Lock()
-	response = windowsBrowserRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(`{"allocation":{"automatic":true}}`))
+	response = desktopRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(`{"allocation":{"automatic":true}}`))
 	s.op.Unlock()
 	if response.Code != 409 {
 		t.Fatal("resource save raced lifecycle operation")
@@ -71,7 +71,7 @@ func TestMacOSResourceSaveUsesGuestMinimumAndPreservesOtherData(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.networkPaused = true
-	response = windowsBrowserRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(`{}`))
+	response = desktopRequestForTest(s, http.MethodPost, "/api/environment/resources", []byte(`{}`))
 	if response.Code != 200 {
 		t.Fatal(response.Code, response.Body.String())
 	}
@@ -127,7 +127,7 @@ func TestMacOSResourcesReadThroughBoundSSHAndDiscardFailures(t *testing.T) {
 	}
 	read := func() map[string]any {
 		t.Helper()
-		response := windowsBrowserRequestForTest(s, http.MethodGet, "/api/environment/resources", nil)
+		response := desktopRequestForTest(s, http.MethodGet, "/api/environment/resources", nil)
 		var status map[string]any
 		if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &status) != nil {
 			t.Fatalf("resource HTTP response %d %s", response.Code, response.Body.String())

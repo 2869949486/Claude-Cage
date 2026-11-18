@@ -70,7 +70,7 @@ func (h *hostTools) close() {
 // lock whenever the environment is known to be reachable, so a forward that
 // dropped is replaced on the next check.
 func (s *Server) ensureHostTools() {
-	if s.windowsGuest != nil || s.macosGuest != nil || containerenv.Configured(s.profile) {
+	if s.macosGuest != nil || containerenv.Configured(s.profile) {
 		return
 	}
 	s.mu.Lock()

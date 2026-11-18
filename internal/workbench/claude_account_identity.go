@@ -185,10 +185,5 @@ func (s *Server) archiveDefaultIfAvailable(ctx context.Context, list *claudeAcco
 }
 
 func (s *Server) archiveGuestLogin(ctx context.Context, source, target, subject string) (claudeGuestSnapshot, error) {
-	if s.windowsGuest != nil {
-		var reading claudeGuestSnapshot
-		err := s.windowsCLIRequest(ctx, map[string]any{"action": "account", "mode": "archive-login", "account": target, "source": source, "subject": subject}, &reading)
-		return reading, err
-	}
 	return s.readClaudeReportForSubject(ctx, source, subject, "exec /usr/local/bin/cage-claude-account archive-login "+target+" "+source+" "+subject)
 }

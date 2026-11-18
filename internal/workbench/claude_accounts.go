@@ -447,12 +447,6 @@ func (s *Server) readClaudeGuestQuotas(ctx context.Context, ids []string) (map[s
 	// server-controlled deadline; keep completed chunks when a later one fails.
 	readings := make(map[string]claudeGuestQuota)
 	for chunk := range slices.Chunk(ids, 96) {
-		if s.windowsGuest != nil {
-			if err := s.windowsCLIRequest(ctx, map[string]any{"action": "account", "mode": "quotas", "ids": chunk}, &readings); err != nil {
-				return readings, err
-			}
-			continue
-		}
 		data, err := s.guest(ctx, "exec /usr/local/bin/cage-claude-account quotas "+strings.Join(chunk, " "))
 		if err != nil {
 			return readings, err

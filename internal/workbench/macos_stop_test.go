@@ -46,7 +46,7 @@ func TestMacOSExplicitStopReleasesProxyAfterGuestStops(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(managedproxy.Dir(s.profile), "managed-service.plist"), []byte("isolated test service"), 0600); err != nil {
 				t.Fatal(err)
 			}
-			response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/stop", []byte(`{}`))
+			response := desktopRequestForTest(s, http.MethodPost, "/api/stop", []byte(`{}`))
 			job := awaitJobIdle(t, &s.jobs)
 			if response.Code != http.StatusOK || (job.Error != "") != failGuest {
 				t.Fatalf("stop response %d, job %+v", response.Code, job)
@@ -105,7 +105,7 @@ func TestMacOSStopStartPreservesUserNetworkIntent(t *testing.T) {
 				t.Fatal("fixture did not require a fresh network check")
 			}
 			for _, route := range []string{"/api/stop", "/api/start"} {
-				response := windowsBrowserRequestForTest(s, http.MethodPost, route, []byte(`{}`))
+				response := desktopRequestForTest(s, http.MethodPost, route, []byte(`{}`))
 				job := awaitJobIdle(t, &s.jobs)
 				wantCheck := route == "/api/start" && !paused
 				if response.Code != http.StatusOK || wantCheck && !strings.Contains(job.Error, checkFailure.Error()) || !wantCheck && job.Error != "" {

@@ -1,12 +1,10 @@
 package workbench
 
 import (
-	"bytes"
 	"context"
 	_ "embed"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -30,11 +28,7 @@ type nativeComponentSnapshot struct {
 }
 
 func (s *Server) nativeComponentKit() (string, string) {
-	system := guestos.Windows11
-	if s.macosGuest != nil {
-		system = guestos.MacOS
-	}
-	return filepath.Join(filepath.Dir(s.exe), "guest-os"), system
+	return filepath.Join(filepath.Dir(s.exe), "guest-os"), guestos.MacOS
 }
 
 func (s *Server) readNativeComponents(ctx context.Context) (nativeComponentSnapshot, error) {
@@ -47,17 +41,7 @@ func (s *Server) readNativeComponents(ctx context.Context) (nativeComponentSnaps
 		}
 		return snapshot, json.Unmarshal(data, &snapshot)
 	}
-	cmd, err := guestos.WindowsRelayCommand(ctx, s.profile, "versions")
-	if err != nil {
-		return snapshot, err
-	}
-	var data bytes.Buffer
-	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &data, remaining: 64 << 10}
-	cmd.Stderr = io.Discard
-	if err = cmd.Run(); err != nil {
-		return snapshot, err
-	}
-	return snapshot, json.Unmarshal(data.Bytes(), &snapshot)
+	return snapshot, errors.New("此配置尚未绑定原生客机")
 }
 
 func (s *Server) nativeEnvironmentVersions(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +96,7 @@ func (s *Server) nativeEnvironmentVersions(w http.ResponseWriter, r *http.Reques
 }
 
 func (s *Server) nativeMaintenancePreflight() error {
-	if s.macosGuest == nil && s.windowsGuest == nil {
+	if s.macosGuest == nil {
 		return nil
 	}
 	if s.terminals.hasLive() || len(s.mobileCLI.activeAccounts()) != 0 {
@@ -156,22 +140,13 @@ func (s *Server) maintainNativeComponents(tools bool) error {
 	s.guestUpdateError = "原生组件更新尚未完成，可以保留当前环境重试。"
 	s.mu.Unlock()
 	s.closeWindowsBrowser()
-	s.closeWindowsNetwork()
 	s.closeProjectShares()
 	s.setMessage("正在更新原生客机组件，保留系统磁盘、账户和项目数据…")
-	var command *exec.Cmd
-	if system == guestos.MacOS {
-		command = exec.CommandContext(s.operationContext(), s.exe, "guest-os", "macos", "update-components", "--manifest", file.Name())
-		if tools {
-			command.Args = append(command.Args, "--tools")
-		}
-		command.Env = append(os.Environ(), cage.ConfigEnv+"="+s.configPath)
-	} else {
-		command, err = guestos.WindowsMaintenanceCommand(s.operationContext(), s.profile, kit, file.Name(), tools)
-		if err != nil {
-			return err
-		}
+	command := exec.CommandContext(s.operationContext(), s.exe, "guest-os", "macos", "update-components", "--manifest", file.Name())
+	if tools {
+		command.Args = append(command.Args, "--tools")
 	}
+	command.Env = append(os.Environ(), cage.ConfigEnv+"="+s.configPath)
 	command.Stdout, command.Stderr = s.jobs.execution(), s.jobs.execution()
 	if err = command.Run(); err != nil {
 		return executionFailure("更新原生客机组件", err, s.jobs.snapshot().Log)

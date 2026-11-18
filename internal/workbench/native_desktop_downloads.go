@@ -29,13 +29,6 @@ func (s *Server) nativeDesktopDownloadRequest(ctx context.Context, method, path 
 	if err != nil {
 		return nil, err
 	}
-	if s.windowsGuest != nil {
-		var reply map[string]any
-		if err = s.windowsDesktopRequest(ctx, request["action"].(string), request, &reply); err != nil {
-			return nil, windowsDesktopFileFailure(err)
-		}
-		return json.Marshal(reply)
-	}
 	data, err := json.Marshal(request)
 	if err != nil {
 		return nil, err
@@ -67,13 +60,9 @@ func (d *nativeDesktopDownload) Close() error {
 func (s *Server) openNativeDesktopDownload(ctx context.Context, id string) (io.ReadCloser, int64, string, error) {
 	var connection *nativeWindowConnection
 	var err error
-	if s.windowsGuest != nil {
-		connection, err = s.windowsWindowConnection(ctx)
-	} else {
-		transport, cancel := context.WithCancel(ctx)
-		cmd := s.sshCommand(transport, "-T", s.sshTarget(), "--", macOSWindowSocketCommand)
-		connection, err = startWindowConnection(cmd, cancel)
-	}
+	transport, cancel := context.WithCancel(ctx)
+	cmd := s.sshCommand(transport, "-T", s.sshTarget(), "--", macOSWindowSocketCommand)
+	connection, err = startWindowConnection(cmd, cancel)
 	if err != nil {
 		return nil, 0, "", err
 	}

@@ -16,7 +16,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -116,12 +115,12 @@ func serveDesktopDownloadFixture(input io.Reader, output io.Writer, directory st
 }
 
 func TestNativeDesktopDownloadAcknowledgesOnlySavedHostReceipts(t *testing.T) {
-	for _, system := range []string{"macos", "windows"} {
+	for _, system := range []string{"macos"} {
 		t.Run(system, func(t *testing.T) {
 			s, record, _, directory := nativeDesktopDownloadFixture(t, system)
 			poll := func() {
 				t.Helper()
-				response := windowsBrowserRequestForTest(s, http.MethodGet, "/api/input/files/desktop/requests", nil)
+				response := desktopRequestForTest(s, http.MethodGet, "/api/input/files/desktop/requests", nil)
 				if response.Code != http.StatusOK {
 					t.Fatalf("poll failed: %d %s", response.Code, response.Body.String())
 				}
@@ -192,13 +191,7 @@ func nativeDesktopDownloadFixture(t *testing.T, system string) (*Server, browser
 		})
 		s = guest.s
 	} else {
-		s = testServer(t)
-		binding := guestos.WindowsProfile{Version: 1, VMID: uuid.New(), GUIUserSID: "S-1-5-21-1-2-3-1001", GUIUser: "Guest", InstanceDirectory: filepath.Join(s.profile, "unused-vm"), PairingFile: filepath.Join(s.profile, "unused-pair"), RelayExecutable: os.Args[0]}
-		if err := guestos.BindWindowsProfile(s.profile, binding); err != nil {
-			t.Fatal(err)
-		}
-		s.windowsGuest = &binding
-		t.Setenv("CAGE_TEST_NATIVE_DESKTOP_DOWNLOAD", directory)
+		t.Fatal("unsupported guest system", system)
 	}
 	workspace, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
@@ -233,10 +226,10 @@ func nativeDesktopDownloadFixture(t *testing.T, system string) (*Server, browser
 }
 
 func TestNativeDesktopDownloadUsesProducerAndOneStreamingConnection(t *testing.T) {
-	for _, system := range []string{"macos", "windows"} {
+	for _, system := range []string{"macos"} {
 		t.Run(system, func(t *testing.T) {
 			s, record, payload, directory := nativeDesktopDownloadFixture(t, system)
-			response := windowsBrowserRequestForTest(s, http.MethodGet, "/api/browser/files/downloads/"+record.ID+"/content", nil)
+			response := desktopRequestForTest(s, http.MethodGet, "/api/browser/files/downloads/"+record.ID+"/content", nil)
 			if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), payload) {
 				t.Fatalf("download failed: %d, %d bytes", response.Code, response.Body.Len())
 			}
@@ -265,7 +258,7 @@ func TestNativeDesktopDownloadUsesProducerAndOneStreamingConnection(t *testing.T
 			if err := os.Remove(filepath.Join(directory, "payload")); err != nil {
 				t.Fatal(err)
 			}
-			response = windowsBrowserRequestForTest(s, http.MethodGet, "/api/browser/files/downloads/"+record.ID+"/content", nil)
+			response = desktopRequestForTest(s, http.MethodGet, "/api/browser/files/downloads/"+record.ID+"/content", nil)
 			if response.Code != http.StatusOK || !bytes.Equal(response.Body.Bytes(), payload) {
 				t.Fatal("saved Desktop file depended on the running guest")
 			}
@@ -274,7 +267,7 @@ func TestNativeDesktopDownloadUsesProducerAndOneStreamingConnection(t *testing.T
 }
 
 func TestNativeDesktopDownloadFailureRetriesThroughFileEntry(t *testing.T) {
-	for _, system := range []string{"macos", "windows"} {
+	for _, system := range []string{"macos"} {
 		t.Run(system, func(t *testing.T) {
 			s, record, payload, directory := nativeDesktopDownloadFixture(t, system)
 			failure := filepath.Join(directory, "fail-read")
@@ -300,7 +293,7 @@ func TestNativeDesktopDownloadFailureRetriesThroughFileEntry(t *testing.T) {
 				t.Fatal(err)
 			}
 			body := []byte(fmt.Sprintf(`{"target":"desktop","id":%q}`, record.ID))
-			response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/download-retry", body)
+			response := desktopRequestForTest(s, http.MethodPost, "/api/input/files/download-retry", body)
 			if response.Code != http.StatusOK {
 				t.Fatalf("retry failed: %d %s", response.Code, response.Body.String())
 			}
@@ -317,12 +310,12 @@ func TestNativeDesktopDownloadFailureRetriesThroughFileEntry(t *testing.T) {
 }
 
 func TestNativeDesktopOpenDownloadClaimsTheSavedHostFile(t *testing.T) {
-	for _, system := range []string{"macos", "windows"} {
+	for _, system := range []string{"macos"} {
 		t.Run(system, func(t *testing.T) {
 			s, record, payload, _ := nativeDesktopDownloadFixture(t, system)
 			openID := uuid.NewString()
 			body, _ := json.Marshal(map[string]string{"id": openID, "stage": "claim"})
-			response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/desktop/open", body)
+			response := desktopRequestForTest(s, http.MethodPost, "/api/input/files/desktop/open", body)
 			var opened desktopFileOpen
 			if response.Code != http.StatusOK || json.Unmarshal(response.Body.Bytes(), &opened) != nil {
 				t.Fatalf("open claim failed: %d %s", response.Code, response.Body.String())
@@ -339,7 +332,7 @@ func TestNativeDesktopOpenDownloadClaimsTheSavedHostFile(t *testing.T) {
 				t.Fatal("open did not use the producer's download identity", err)
 			}
 			body, _ = json.Marshal(map[string]string{"id": openID, "stage": "complete"})
-			response = windowsBrowserRequestForTest(s, http.MethodPost, "/api/input/files/desktop/open", body)
+			response = desktopRequestForTest(s, http.MethodPost, "/api/input/files/desktop/open", body)
 			if response.Code != http.StatusOK {
 				t.Fatal("open completion failed", response.Body.String())
 			}

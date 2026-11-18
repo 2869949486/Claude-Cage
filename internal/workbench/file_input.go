@@ -88,41 +88,6 @@ func (s *Server) guestFiles(ctx context.Context, target, method, path string, bo
 		input.Files = nil
 		return s.macOSDesktopFileCall(ctx, input)
 	}
-	if s.windowsGuest != nil && target == "terminal" {
-		return s.windowsSaveAttachment(ctx, name, body)
-	}
-	if s.windowsGuest != nil && target == "desktop" {
-		parsed, err := url.Parse(path)
-		if err != nil {
-			return nil, errors.New("Windows 文件操作无效")
-		}
-		if method == "POST" && parsed.Path == "/upload" {
-			return s.windowsUploadAttachment(ctx, name, parsed.Query().Get("id"), body)
-		}
-		var action string
-		switch {
-		case method == "GET" && parsed.Path == "/requests":
-			action = "files-poll"
-		case method == "POST" && (parsed.Path == "/start" || parsed.Path == "/finish" || parsed.Path == "/finish-image" || parsed.Path == "/cancel" || parsed.Path == "/directory" || parsed.Path == "/download-retry" || parsed.Path == "/download-ack" || parsed.Path == "/open-claim" || parsed.Path == "/open-complete"):
-			action = "files-" + strings.TrimPrefix(parsed.Path, "/")
-		default:
-			return nil, errors.New("Windows 原生文件选择框与桌面下载尚未接通")
-		}
-		input := map[string]any{}
-		if body != nil {
-			data, readErr := io.ReadAll(io.LimitReader(body, 65537))
-			if readErr != nil || len(data) > 65536 || json.Unmarshal(data, &input) != nil {
-				return nil, errors.New("Windows 文件操作无效")
-			}
-		}
-		var result map[string]any
-		request := s.windowsDesktopRequest
-		if action == "files-poll" {
-			request = s.windowsDesktopQuick
-		}
-		err = request(ctx, action, input, &result)
-		return result, windowsDesktopFileFailure(err)
-	}
 	asWorkUser, err := s.linuxTemplate("sudo -H -u cage ")
 	if err != nil {
 		return nil, err
@@ -266,7 +231,7 @@ func (s *Server) fileInputAction(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if action == "download-retry" && (s.macosGuest != nil || s.windowsGuest != nil) {
+	if action == "download-retry" && (s.macosGuest != nil) {
 		if handled, err := s.retryNativeDownload(input.ID); handled {
 			if err != nil {
 				requestError(w, err)
@@ -292,13 +257,6 @@ func (s *Server) fileInputAction(w http.ResponseWriter, r *http.Request) {
 		body, _ = json.Marshal(map[string]string{"id": input.ID, "path": guestPath(workspace)})
 		if s.macosGuest != nil {
 			body, _ = json.Marshal(map[string]string{"id": input.ID, "path": macOSProjectPath(s.macosGuest.User, workspace)})
-		} else if s.windowsGuest != nil {
-			project, err := s.windowsProjectForHost(workspace)
-			if err != nil {
-				requestError(w, err)
-				return
-			}
-			body, _ = json.Marshal(map[string]string{"id": input.ID, "project_id": project.ID, "grant": project.Grant})
 		}
 	}
 	if input.Target == "terminal" {
@@ -346,7 +304,7 @@ func (s *Server) desktopFileRequests(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) acknowledgeDesktopDownloads(ctx context.Context, result map[string]any) {
-	if result["downloadAck"] != true || (s.macosGuest == nil && s.windowsGuest == nil) {
+	if result["downloadAck"] != true || (s.macosGuest == nil) {
 		return
 	}
 	var ids []string
@@ -384,7 +342,7 @@ func (s *Server) rememberDesktopDownloads(result map[string]any) {
 			continue
 		}
 		item["target"] = "desktop"
-		if s.macosGuest != nil || s.windowsGuest != nil {
+		if s.macosGuest != nil {
 			data, err := json.Marshal(item)
 			var native browserDownloadInfo
 			if err != nil || json.Unmarshal(data, &native) != nil {
@@ -400,7 +358,7 @@ func (s *Server) rememberDesktopDownloads(result map[string]any) {
 		downloads = append(downloads, item)
 	}
 	result["downloads"] = downloads
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		s.discardMissingNativeDownloads("desktop", visible)
 	}
 }
@@ -467,9 +425,6 @@ func (s *Server) fileInputUpload(w http.ResponseWriter, r *http.Request) {
 	if target == "terminal" {
 		path, _ := result["path"].(string)
 		valid := s.linuxPathHasPrefix(path, "/home/cage/.local/share/cage/attachments/files/") && !strings.ContainsAny(path, "\x00\r\n")
-		if s.windowsGuest != nil {
-			valid = validWindowsAttachmentPath(path, name)
-		}
 		if s.macosGuest != nil {
 			valid = s.validMacOSAttachmentPath(path, name)
 		}

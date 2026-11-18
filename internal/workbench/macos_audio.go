@@ -18,7 +18,7 @@ func (s *Server) macOSAudioStatus(w http.ResponseWriter, r *http.Request) {
 	cmd.Stdin = strings.NewReader("{\"action\":\"audio-status\"}\n")
 	cmd.Stderr = io.Discard
 	var data bytes.Buffer
-	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &data, remaining: 4096}
+	cmd.Stdout = &boundedStatusWriter{buffer: &data, remaining: 4096}
 	var status struct {
 		Supported bool   `json:"supported"`
 		Available bool   `json:"available"`

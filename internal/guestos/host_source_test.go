@@ -64,33 +64,6 @@ func TestLegacyInstallationOmitsSource(t *testing.T) {
 	}
 }
 
-func TestWindowsCloneCleanupTracksRetainedCredential(t *testing.T) {
-	profile := t.TempDir()
-	source := hostimage.Plan{
-		Host:    hostimage.Identity{System: Windows11, Version: "25H2", Edition: "Professional", Language: "zh-CN", Arch: "amd64"},
-		Version: "25H2", Build: "26200.8", Format: "esd", Path: filepath.Join(profile, "system.esd"),
-	}
-	install := Installation{Version: 1, ID: uuid.New(), System: Windows11, EditorTerms: true, Source: source}
-	if err := SaveInstallation(profile, install); err != nil {
-		t.Fatal(err)
-	}
-	path := filepath.Join(profile, "windows-setup-"+strings.ReplaceAll(install.ID.String(), "-", "")+".dpapi")
-	if err := os.WriteFile(path, []byte("encrypted-fixture"), 0600); err != nil {
-		t.Fatal(err)
-	}
-	pending, err := WindowsCloneCleanupPending(profile)
-	if err != nil || !pending {
-		t.Fatalf("retained credential bypassed cleanup: %v %v", pending, err)
-	}
-	if err := os.Remove(path); err != nil {
-		t.Fatal(err)
-	}
-	pending, err = WindowsCloneCleanupPending(profile)
-	if err != nil || pending {
-		t.Fatalf("completed cleanup still blocks activation: %v %v", pending, err)
-	}
-}
-
 func TestLinuxCloneKeepsItsChoiceAfterBaseInstallation(t *testing.T) {
 	for _, name := range []string{"base-building", "base"} {
 		t.Run(name, func(t *testing.T) {

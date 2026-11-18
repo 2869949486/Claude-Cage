@@ -51,7 +51,7 @@ os.execv(sys.executable,[sys.executable,"-I",str(p),sys.argv[1]])`
 		cmd.Stdin = bytes.NewReader(data)
 	}
 	var buf bytes.Buffer
-	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &buf, remaining: 1 << 20}
+	cmd.Stdout = &boundedStatusWriter{buffer: &buf, remaining: 1 << 20}
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
 		return errors.New("Desktop Code connector unavailable")
@@ -72,7 +72,7 @@ type desktopCodexEndpoint struct{ Grant, Session string }
 
 func (s *Server) monitorDesktopCodex(ctx context.Context) {
 	// Local Linux guests use the same private SSH transport on supported hosts.
-	if s.windowsGuest != nil || s.macosGuest != nil || containerenv.Configured(s.profile) {
+	if s.macosGuest != nil || containerenv.Configured(s.profile) {
 		return
 	}
 	ticker := time.NewTicker(5 * time.Second)

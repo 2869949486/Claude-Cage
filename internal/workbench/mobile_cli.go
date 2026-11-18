@@ -88,9 +88,6 @@ func (s *Server) mobileRunner(prefix []string, accountID string) cliconversation
 // launcher are fixed on the first accepted turn, including subsequent resumes.
 func (s *Server) prepareMobileLaunch(record *mobileRecord) (claudeSelection, string, cliconversation.Runner, error) {
 	var empty cliconversation.Runner
-	if s.windowsGuest != nil {
-		return claudeSelection{}, "", empty, errWindowsLegacyMobile
-	}
 	s.mu.Lock()
 	ready, closing, update, configured := s.ready, s.closing, s.guestUpdateRequired, claudeTerminalCommand(s.preferences)
 	s.mu.Unlock()

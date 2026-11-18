@@ -21,7 +21,6 @@ import (
 	"github.com/google/uuid"
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/clipboardfiles"
-	"github.com/sylvinus/agent-vm/internal/guestos"
 	"github.com/sylvinus/agent-vm/internal/transfermeta"
 )
 
@@ -70,25 +69,6 @@ type clipboardHello struct {
 // The profile chooses the transport. A guest file selection can never choose
 // an executable, account, remote command or host path.
 func (s *Server) clipboardCommand(ctx context.Context, operation string, selection clipboardFileSelection) (*exec.Cmd, string, error) {
-	win, err := guestos.LoadWindowsProfile(s.profile)
-	if err != nil {
-		return nil, "", err
-	}
-	if win != nil {
-		if s.macosGuest != nil {
-			return nil, "", errors.New("客机绑定冲突")
-		}
-		args := []string{}
-		if operation == "export" {
-			args = append(args, "--paths-stdin")
-		}
-		cmd, err := guestos.WindowsRelayCommand(ctx, s.profile, operation, args...)
-		if err == nil && operation == "export" {
-			data, _ := json.Marshal(selection.Paths)
-			cmd.Stdin = bytes.NewReader(data)
-		}
-		return cmd, "guest", err
-	}
 	if s.macosGuest != nil {
 		if operation != "stream" && operation != "import" && operation != "export" && operation != "upload" && operation != "request" {
 			return nil, "", errors.New("剪贴板操作无效")

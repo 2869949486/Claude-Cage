@@ -84,7 +84,7 @@ func (s *Server) browserUpload(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) proxyBrowserFile(w http.ResponseWriter, r *http.Request, token, method, path string, body io.Reader, length int64) {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		s.nativeBrowserFile(w, r, method, path, body, length)
 		return
 	}
@@ -137,7 +137,7 @@ func (s *Server) downloadInfo(ctx context.Context, id string) (browserDownloadIn
 	if err != nil {
 		return browserDownloadInfo{}, err
 	}
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		if item.State != "saved" && !(item.State == "failed" && item.Retryable) {
 			item.Path = ""
 			return item, nil

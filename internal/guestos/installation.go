@@ -37,21 +37,6 @@ const installRecord = "guest-install.json"
 const LinuxImageSource = "linux-image"
 const Ubuntu2204 = "ubuntu-22.04"
 
-// Older installers could publish the binding before removing the temporary
-// credential. Keep those profiles in setup until their original cleanup runs.
-func WindowsCloneCleanupPending(profile string) (bool, error) {
-	install, err := LoadInstallation(profile)
-	if err != nil || install == nil || install.Source.Host.System != Windows11 {
-		return false, err
-	}
-	path := filepath.Join(profile, "windows-setup-"+strings.ReplaceAll(install.ID.String(), "-", "")+".dpapi")
-	_, err = os.Lstat(path)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	return err == nil, err
-}
-
 func (i Installation) Validate() error {
 	if i.Version != 1 || i.ID == uuid.Nil || (i.System != MacOS && i.System != Windows11 && !hostimage.IsLinux(i.System)) {
 		return errors.New("客户机安装记录无效")

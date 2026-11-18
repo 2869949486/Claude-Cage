@@ -24,19 +24,16 @@ func TestProjectAuthorizationProtectsCredentialsAcrossGuests(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, system := range []string{"linux", "macos", "windows"} {
+	for _, system := range []string{"linux", "macos"} {
 		t.Run(system, func(t *testing.T) {
 			s := testServer(t)
 			s.ready = true
 			if system == "macos" {
 				s.macosGuest = &guestos.MacOSProfile{Instance: "mac", User: "guestdev"}
 			}
-			if system == "windows" {
-				s.windowsGuest = &guestos.WindowsProfile{}
-			}
 			for _, directory := range []string{credentials, siblingState} {
 				body, _ := json.Marshal(map[string]any{"workspace": directory, "add": true})
-				response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/projects/open", body)
+				response := desktopRequestForTest(s, http.MethodPost, "/api/projects/open", body)
 				if response.Code != http.StatusBadRequest || !strings.Contains(response.Body.String(), "共享") {
 					t.Fatalf("credential project admission: status=%d body=%s", response.Code, response.Body.String())
 				}
@@ -44,7 +41,7 @@ func TestProjectAuthorizationProtectsCredentialsAcrossGuests(t *testing.T) {
 				if err != nil || slices.Contains(paths, directory) || len(s.projectShares) != 0 {
 					t.Fatalf("rejected project retained a grant or connection: %v", err)
 				}
-				response = windowsBrowserRequestForTest(s, http.MethodGet, "/api/projects/directories?path="+url.QueryEscape(directory), nil)
+				response = desktopRequestForTest(s, http.MethodGet, "/api/projects/directories?path="+url.QueryEscape(directory), nil)
 				if response.Code == http.StatusOK {
 					var listing struct{ Selectable bool }
 					if json.Unmarshal(response.Body.Bytes(), &listing) != nil || listing.Selectable {

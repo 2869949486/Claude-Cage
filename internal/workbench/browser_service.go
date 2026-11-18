@@ -85,7 +85,7 @@ func (s *Server) browserClient() *browserClient {
 }
 
 func (s *Server) guestAPI(ctx context.Context, token, method, path string, body []byte) ([]byte, error) {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return s.nativeBrowserAPI(ctx, method, path, body)
 	}
 	return s.browserClient().request(ctx, token, method, path, body)
@@ -108,7 +108,7 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 	var body []byte
 	if input != nil {
 		method = http.MethodPost
-		if action == "download-retry" && (s.macosGuest != nil || s.windowsGuest != nil) {
+		if action == "download-retry" && (s.macosGuest != nil) {
 			if handled, err := s.retryNativeDownload(input.ID); handled {
 				return []byte(`{"ok":true}`), err
 			}
@@ -138,7 +138,7 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 		if action == "wheel" {
 			// Only the Linux guest's controller scrolls a page by a distance.
 			// The native displays take it inside their own display stream.
-			if s.macosGuest != nil || s.windowsGuest != nil || !validWheel(input) {
+			if s.macosGuest != nil || !validWheel(input) {
 				return nil, browserInputError{errors.New("滚动位置或距离无效")}
 			}
 			body, _ := json.Marshal(map[string]int{"x": input.X, "y": input.Y, "deltaX": input.DeltaX, "deltaY": input.DeltaY})
@@ -188,14 +188,6 @@ func (s *Server) browserAction(ctx context.Context, action string, input *browse
 					return nil, browserInputError{errors.New("请先打开并授权本机项目")}
 				}
 				input.Workspace = filepath.Base(macOSProjectPath(s.macosGuest.User, workspace))
-			} else if s.windowsGuest != nil {
-				project, err := s.windowsProjectForHost(workspace)
-				if err != nil {
-					return nil, browserInputError{err}
-				}
-				input.Workspace = project.Path
-				input.ProjectID = project.ID
-				input.ProjectGrant = project.Grant
 			}
 		}
 		body, _ = json.Marshal(input)
@@ -242,7 +234,7 @@ func (s *Server) subscribeBrowser(ctx context.Context) (io.ReadCloser, error) {
 	if !ready {
 		return nil, errBrowserNotReady
 	}
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return s.subscribeNativeBrowser(ctx), nil
 	}
 	return s.browserClient().events(ctx, token)

@@ -34,9 +34,8 @@ func (surface phoneSurface) label() string {
 
 type phoneSurfaceState struct {
 	op            sync.Mutex
-	session       *phoneSurfaceSession        // guarded by op
-	nativeBrowser *windowsBrowserClient       // Native guest phone browser, guarded by op
-	nativeDesktop *windowsPhoneDesktopSession // Windows shared app window, guarded by op
+	session       *phoneSurfaceSession  // guarded by op
+	nativeBrowser *windowsBrowserClient // Native guest phone browser, guarded by op
 }
 
 func (p *mobilePairing) surface(kind phoneSurface) *phoneSurfaceState {
@@ -201,13 +200,10 @@ func (s *Server) retirePhoneSurface(surface phoneSurface, b *phoneSurfaceSession
 }
 
 func (s *Server) phoneSurfaceGuest(ctx context.Context, surface phoneSurface, token, op string, input phoneSurfaceInput) ([]byte, int, error) {
-	if surface == phoneDesktop && s.windowsGuest != nil {
-		return s.windowsPhoneDesktop(ctx, token, op, input)
-	}
 	if surface == phoneDesktop && s.macosGuest != nil {
 		return s.macOSPhoneDesktop(ctx, token, op, input)
 	}
-	if surface == phoneBrowser && (s.windowsGuest != nil || s.macosGuest != nil) {
+	if surface == phoneBrowser && s.macosGuest != nil {
 		client := s.phones.browser.nativeBrowser
 		if client == nil {
 			return nil, 410, nil
@@ -345,13 +341,10 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 		s.mu.Lock()
 		token := s.credentials.Token
 		s.mu.Unlock()
-		if surface == phoneDesktop && (s.macosGuest != nil || s.windowsGuest != nil) {
+		if surface == phoneDesktop && s.macosGuest != nil {
 			token = randomToken()
 		}
 		b = &phoneSurfaceSession{id: input.ID, token: token, ctx: sessionCtx, cancel: cancel, stopEpoch: context.AfterFunc(epoch, cancel)}
-		if surface == phoneBrowser && s.windowsGuest != nil {
-			state.nativeBrowser = newWindowsBrowserClient(s.lifetimeContext(), s.profile)
-		}
 		if surface == phoneBrowser && s.macosGuest != nil {
 			state.nativeBrowser = s.macOSPhoneBrowserClient(s.lifetimeContext())
 		}
@@ -476,12 +469,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 			}
 			http.Error(w, "画面或焦点已变化，请查看最新画面后再操作", 409)
 		case 410:
-			var native windowsWindowFailure
-			if surface == phoneDesktop && errors.As(err, &native) && native.code == "requires_gui_login" {
-				http.Error(w, "请在电脑的 Cage 中解锁已绑定的 Windows 客机账户，再从手机重新打开 Claude Desktop。", 410)
-			} else {
-				http.Error(w, surface.label()+"会话已结束，请重新打开", 410)
-			}
+			http.Error(w, surface.label()+"会话已结束，请重新打开", 410)
 		case 404:
 			http.Error(w, "当前客机未提供"+surface.label()+"，请在电脑上更新环境", 409)
 		case 403:
@@ -491,7 +479,7 @@ func (s *Server) phoneSurfaceRequest(surface phoneSurface, w http.ResponseWriter
 				http.Error(w, "客机拒绝此次访问", 403)
 			}
 		case 426:
-			http.Error(w, "请在电脑的 Cage 中更新 Windows 客机组件，再从手机打开 Claude Desktop。", http.StatusUpgradeRequired)
+			http.Error(w, "请在电脑的 Cage 中更新客机组件，再从手机打开 Claude Desktop。", http.StatusUpgradeRequired)
 		case 501:
 			if surface == phoneDesktop {
 				http.Error(w, "请先在电脑的 Cage 中安装 Claude Desktop，再从手机打开", 501)

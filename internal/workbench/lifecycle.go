@@ -81,7 +81,7 @@ func (s *Server) startMonitors() {
 		defer s.monitors.Done()
 		// macOS performs both probes from the same tick. Its periodic SSH
 		// attestation otherwise races this loop for the lifecycle lock.
-		if s.macosGuest == nil && (s.windowsGuest == nil || s.windowsGuest.NetworkPairingFile != "") {
+		if s.macosGuest == nil {
 			s.monitorNetwork(ctx)
 		}
 	}()
@@ -142,10 +142,6 @@ func (s *Server) closeService() error {
 		s.closeProjectShares()
 		s.closeHostTools()
 		s.closeWindowsBrowser()
-		if s.windowsGuest != nil {
-			s.closeErr = s.closeProxyGate("控制服务正在退出，外网保持关闭")
-		}
-		s.closeWindowsNetwork()
 		s.mu.Lock()
 		browser := s.browserControl
 		s.ready = false
@@ -156,9 +152,7 @@ func (s *Server) closeService() error {
 		}
 		s.controlSession.close()
 		s.nativeControl.close()
-		if s.windowsGuest == nil {
-			s.closeErr = s.closeProxyGate("控制服务正在退出，外网保持关闭")
-		}
+		s.closeErr = s.closeProxyGate("控制服务正在退出，外网保持关闭")
 		s.closeErr = errors.Join(s.closeErr, managedproxy.Stop(s.profile))
 		if s.controlPublished {
 			if err := os.Remove(filepath.Join(s.profile, "control.json")); err != nil && !os.IsNotExist(err) {

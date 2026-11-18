@@ -398,7 +398,7 @@ func TestMacOSDefaultWorkspaceUsesApprovedSharedProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	body, _ := json.Marshal(map[string]any{"workspace": guest.hostPath, "activate": true})
-	response := windowsBrowserRequestForTest(s, http.MethodPost, "/api/projects/open", body)
+	response := desktopRequestForTest(s, http.MethodPost, "/api/projects/open", body)
 	var pending struct{ Workspace, Approval string }
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &pending) != nil || pending.Approval == "" || pending.Workspace != guest.hostPath {
 		t.Fatalf("default workspace bypassed project approval: %d %s", response.Code, response.Body.String())
@@ -407,7 +407,7 @@ func TestMacOSDefaultWorkspaceUsesApprovedSharedProject(t *testing.T) {
 		t.Fatal("unapproved share was accepted")
 	}
 	guest.approved.Store(true)
-	response = windowsBrowserRequestForTest(s, http.MethodPost, "/api/projects/open", body)
+	response = desktopRequestForTest(s, http.MethodPost, "/api/projects/open", body)
 	if response.Code != 200 || strings.Contains(response.Body.String(), "approval") || s.projectShares[guest.hostPath].detach == nil {
 		t.Fatalf("approved default workspace failed: %d %s", response.Code, response.Body.String())
 	}
@@ -420,7 +420,7 @@ func TestMacOSDefaultWorkspaceUsesApprovedSharedProject(t *testing.T) {
 			fields["action"] = "editor"
 		}
 		input, _ := json.Marshal(fields)
-		response = windowsBrowserRequestForTest(s, http.MethodPost, route, input)
+		response = desktopRequestForTest(s, http.MethodPost, route, input)
 		if response.Code != 200 {
 			t.Fatalf("default editor %s: %d %s", route, response.Code, response.Body.String())
 		}
@@ -548,7 +548,7 @@ func TestMacOSProjectOpenRestoresPendingApprovalWindow(t *testing.T) {
 	}
 	body, _ := json.Marshal(map[string]any{"workspace": guest.hostPath, "add": false})
 	open := func() *httptest.ResponseRecorder {
-		return windowsBrowserRequestForTest(s, http.MethodPost, "/api/projects/open", body)
+		return desktopRequestForTest(s, http.MethodPost, "/api/projects/open", body)
 	}
 	response := open()
 	var pending struct{ Workspace, Approval string }

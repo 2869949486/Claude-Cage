@@ -30,7 +30,7 @@ func (s *Server) refreshInstalledTailnet() error {
 }
 
 func (s *Server) installTailnet() error {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return errTailnetNativeInstall
 	}
 	if !s.vmRunning() {

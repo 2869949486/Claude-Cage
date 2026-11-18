@@ -45,7 +45,7 @@ type toolVersion struct {
 
 // Version commands run only for this explicit request, never in status polling.
 func (s *Server) environmentVersions(w http.ResponseWriter, r *http.Request) {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		s.nativeEnvironmentVersions(w, r)
 		return
 	}
@@ -140,7 +140,7 @@ func (s *Server) updateEnvironmentTools(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) synchronizeEnvironment() error {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return s.maintainNativeComponents(false)
 	}
 	if !s.vmRunning() {
@@ -179,7 +179,7 @@ func (s *Server) toolsNetworkAllowedLocked() bool {
 	return !s.closing
 }
 func (s *Server) upgradeEnvironmentTools() error {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return s.maintainNativeComponents(true)
 	}
 	if !s.vmRunning() {

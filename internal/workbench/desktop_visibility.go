@@ -78,7 +78,7 @@ func (d *displayViewDemand) reset() {
 func (s *Server) updateDesktopVisibility(show bool) error {
 	// Linux uses a dedicated virtual X display. Native Windows/macOS capture
 	// already follows viewer lifetime and retains its ordinary guest windows.
-	if s.windowsGuest != nil || s.macosGuest != nil || !s.vmRunning() {
+	if s.macosGuest != nil || !s.vmRunning() {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(s.lifetimeContext(), 5*time.Second)
@@ -95,7 +95,7 @@ func (s *Server) updateDesktopVisibility(show bool) error {
 }
 
 func (s *Server) acquireDesktopView() (func(), error) {
-	if s.windowsGuest != nil || s.macosGuest != nil {
+	if s.macosGuest != nil {
 		return func() {}, nil
 	}
 	return s.desktopViews.acquire(s.changeDesktopVisibility)
@@ -109,7 +109,7 @@ func (s *Server) changeDesktopVisibility(show bool) error {
 }
 
 func (s *Server) changeBrowserVisibility(show bool) error {
-	if s.macosGuest != nil || s.windowsGuest != nil {
+	if s.macosGuest != nil {
 		return nil
 	}
 	s.mu.Lock()

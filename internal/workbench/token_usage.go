@@ -216,17 +216,13 @@ func tokenUsageCommand() string {
 func (s *Server) readTokenUsage(ctx context.Context, cutoff float64, scan bool) (tokenUsageSnapshot, error) {
 	var result tokenUsageSnapshot
 	input := map[string]any{"cutoff": cutoff, "scan": scan}
-	if s.windowsGuest != nil {
-		err := s.windowsCLIRequest(ctx, map[string]any{"action": "token-usage", "input": input}, &result)
-		return result, err
-	}
 	ctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	data, _ := json.Marshal(input)
 	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec "+tokenUsageCommand())
 	cmd.Stdin = strings.NewReader(string(data))
 	var output bytes.Buffer
-	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &output, remaining: 4 << 20}
+	cmd.Stdout = &boundedStatusWriter{buffer: &output, remaining: 4 << 20}
 	cmd.WaitDelay = 2 * time.Second
 	if err := cmd.Run(); err != nil {
 		return result, err
