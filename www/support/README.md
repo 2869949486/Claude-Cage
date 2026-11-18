@@ -22,3 +22,13 @@ bash www/support/build-corpus.sh origin/main /tmp/corpus.tar.gz
 首次安装时创建空的 `/opt/cage-support/rules.md`，并将 `TOKEN_LINK_API_KEY` 写入仅 root 可读的 `/etc/cage-support/model.env`。服务调用 `api.token-link.shop` 的 `deepseek-flash`。将同目录的 systemd 单元安装到 `/etc/systemd/system/`。
 
 HTTPS 入口 `https://token-link.shop/cage-support/ask` 将该路径改写为 `/ask` 并转发至 `127.0.0.1:18152`。代理必须用连接对端 IP 覆盖 `X-Real-IP`。服务每个来源 IP 每小时接受 20 次请求，全部访客每天合计 600 次，同时处理 5 个问题。计数以 UTC 整点和自然日为界，服务重启会重置计数。
+
+## 通过飞书补充答案
+
+访客的问题需要维护者补充产品口径时，官网保存一条通用问题摘要，机器人将它私发给指定维护者。访客需要补充版本或错误原文时，助手会在网页继续追问。
+
+在飞书中引用机器人的原问题，回复可直接公开的文字答案，或单独发送 `答 问题编号 答案`。服务器每 30 秒检查一次该私聊，保存维护者答复后，同类提问即可引用。再次引用原问题可以更正答案，引用后回复“忽略”可以跳过问题或撤下已有答案。
+
+服务使用独立的 Linux 用户 `cage-support`，其主目录为 `/var/lib/cage-support`。用这个用户配置飞书 CLI 的专用机器人，安装 CLI 到 `/opt/cage-support/lark-cli`。在 `/etc/cage-support/feishu.env` 中设置 `SUPPORT_FEISHU_OWNER=ou_…`，取值是维护者在该应用下的 open_id。机器人需要向该用户单聊发消息和读取这段单聊历史的权限。回复按应用身份、私聊、发言人和原问题匹配。
+
+问题、答复和读取进度保存在 `/var/lib/cage-support/knowledge/`。更新服务时保留此目录。暂时断网时问题留在队列，连接恢复后继续投递并补读回复。
