@@ -76,8 +76,11 @@ func (s *Server) prepareCLIConnection(terminal *terminalSession, id string) {
 					var response struct {
 						OK bool `json:"ok"`
 					}
-					if err := s.runCLIChannel(ctx, "rpc", map[string]string{"cli_id": record.CLIID, "connection": record.Connection, "action": "resume"}, &response); err != nil || !response.OK {
+					if err := s.runCLIChannel(ctx, "rpc", map[string]string{"cli_id": record.CLIID, "connection": record.Connection, "action": "resume", "resume_prompt": cliResumePrompt, "account_resume_prompt": claudeAccountResumePrompt}, &response); err != nil || !response.OK {
 						continue
+					}
+					if !isClientMountPath(record.Workspace) {
+						s.serveCodexChannel(terminal, record, s.codexWindow())
 					}
 					return
 				}

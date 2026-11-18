@@ -34,7 +34,7 @@ var cliChannelEncoded = func() string {
 			helper.WriteString(line + "\n")
 		}
 	}
-	bundle := []byte(strings.Join([]string{helper.String(), cliResumePrompt, claudeAccountResumePrompt}, "\x00"))
+	bundle := []byte(helper.String())
 	var compressed bytes.Buffer
 	writer, _ := gzip.NewWriterLevel(&compressed, gzip.BestCompression)
 	_, _ = writer.Write(bundle)
@@ -96,15 +96,12 @@ func cliChannelCommand(mode, argument string) string {
 d=pathlib.Path.home()/".local/share/cage/cli-channel-code"
 d.mkdir(parents=True,exist_ok=True,mode=0o700)
 n="%x"
-a=gzip.decompress(base64.b85decode("%s")).decode().split("\0")
-for s,v in zip((".py",".resume.md",".account-resume.md"),a):
- p=d/(n+s)
- if not p.exists():
-  with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
-   f.write(v.encode())
-   t=f.name
-  os.replace(t,p)
 p=d/(n+".py")
+if not p.exists():
+ with tempfile.NamedTemporaryFile(dir=d,delete=False) as f:
+  f.write(gzip.decompress(base64.b85decode("%s")))
+  t=f.name
+ os.replace(t,p)
 os.execv(sys.executable,[sys.executable,"-I",str(p),*sys.argv[1:]])
 `, sha256.Sum256([]byte(cliChannelHelper+cliResumePrompt+claudeAccountResumePrompt)), cliChannelEncoded)
 	return shellescape.QuoteCommand([]string{"python3", "-I", "-c", bootstrap, mode, argument})
@@ -132,8 +129,10 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 	var stderr fileControlStderr
 	cmd.Stderr = &stderr
 	cmd.WaitDelay = 2 * time.Second
-	result, err := cmd.Output()
-	if err != nil || len(result) > 4<<20 || json.Unmarshal(result, output) != nil {
+	var result bytes.Buffer
+	cmd.Stdout = &boundedWindowsStatusWriter{buffer: &result, remaining: 4 << 20}
+	err = cmd.Run()
+	if err != nil || json.Unmarshal(result.Bytes(), output) != nil {
 		failure := "guest_response"
 		message := "电脑未能读取会话状态，聊天记录已保留。"
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
@@ -150,7 +149,7 @@ func (s *Server) runCLIChannel(ctx context.Context, mode string, input any, outp
 		}
 		// Record transport and protocol evidence without terminal output,
 		// prompts, account paths or raw SSH/Python error messages.
-		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=%s failure=%s exit=%d elapsed_ms=%d context=%v output_bytes=%d stderr_bytes=%d", mode, failure, exit, time.Since(started).Milliseconds(), ctx.Err(), len(result), len(stderr.data)))
+		_ = diagnostics.New(s.profile).Record("warn", "cli-channel", fmt.Sprintf("operation=%s failure=%s exit=%d elapsed_ms=%d context=%v output_bytes=%d stderr_bytes=%d", mode, failure, exit, time.Since(started).Milliseconds(), ctx.Err(), result.Len(), len(stderr.data)))
 		return errors.New(message)
 	}
 	return nil
@@ -508,6 +507,9 @@ func (s *Server) prepareTerminalConversation(workspace string, selection claudeS
 		record.Connection = record.Switch.ID
 	}
 	payload := map[string]any{"id": record.Connection, "session_id": record.CLIID, "prefix": prefix, "config": record.GuestConfig}
+	if s.codexWindow() != "" && !isClientMountPath(workspace) {
+		payload["codex_enabled"] = true
+	}
 	if len(directories) > 0 {
 		payload["additional_directories"] = directories
 	}

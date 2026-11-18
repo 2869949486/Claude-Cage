@@ -232,7 +232,7 @@ def launch_ccs_parent(request, channel):
     with channel['state_file'](connection) as state:
         if channel['live'](state.get('pid')) and not state.get('closed'):
             raise ValueError('目标会话已有进程，未重复启动')
-        state.update(cli_id=sid, config=str(Path(env.get('CLAUDE_CONFIG_DIR') or Path.home()/'.claude')),
+        state.update(codex_enabled=request.get("codex_enabled") is True, cli_id=sid, config=str(Path(env.get('CLAUDE_CONFIG_DIR') or Path.home()/'.claude')),
                      workspace=str(Path.cwd()), closed=False, busy=False, channel_pid=None,
                      pid=os.getpid(), updated_at=__import__('time').time(), native_ccs_pending=True)
     child = CliProcess(args, env)

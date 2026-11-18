@@ -80,8 +80,11 @@ def save(path, value):
 
 
 @contextlib.contextmanager
-def state_file(connection):
+def state_file(connection, readonly=False):
     folder = ROOT / identifier(connection)
+    if readonly:
+        yield read_json(folder / "state.json", {})
+        return
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     with (folder / "lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -744,7 +747,7 @@ def launch(request):
     with state_file(connection) as state:
         if live(state.get("pid")) and not state.get("closed"):
             raise ValueError("目标会话已有进程，未重复启动")
-        state.update(cli_id=session_id, config=str(config_directory("default")),
+        state.update(codex_enabled=request.get("codex_enabled") is True, cli_id=session_id, config=str(config_directory("default")),
                      workspace=str(Path.cwd()), pid=os.getpid(), closed=False, updated_at=time.time(), approvals=[], busy=False,
                      channel_pid=None, pending_send=None, display=None, stopped=False,
                      requests=previous.get("requests", {}), sent=previous.get("sent", []))
@@ -796,7 +799,7 @@ def rpc(request):
     connection = identifier(request["connection"])
     os.chdir(ROOT / connection)
     with socket.socket(socket.AF_UNIX) as client:
-        client.settimeout(5)
+        client.settimeout(12 if request.get("action") == "codex-read" else 5)
         client.connect("rpc")
         client.sendall(json.dumps(request).encode() + b"\n")
         with client.makefile("rb") as stream:
@@ -812,17 +815,27 @@ def serve(connection):
             sys.stdout.write(json.dumps({"jsonrpc": "2.0", **message}) + "\n")
             sys.stdout.flush()
 
+    mailbox = None
+    if read_json(ROOT / connection / "state.json", {}).get("codex_enabled"):
+        factory = client_runtime().get("CodexMailbox")
+        if factory:
+            mailbox = factory()
+
     class Handler(socketserver.StreamRequestHandler):
         def handle(self):
             self.connection.settimeout(5)
             try:
                 request = json.loads(self.rfile.readline(72 << 10))
-                with state_file(connection) as state:
+                action = request["action"]
+                delegate = mailbox and action in ("codex-read", "codex-done")
+                with state_file(connection, readonly=delegate) as state:
                     if request["cli_id"] != state.get("cli_id") or state.get("closed"):
                         raise ValueError("终端已切换会话，请重新读取列表")
-                    action = request["action"]
                     if state.get("account_switch"):
                         raise ValueError("此会话正在切换账号，请等待交接完成")
+                    if delegate:
+                        self.wfile.write(json.dumps(mailbox.exchange(request)).encode() + b"\n")
+                        return
                     if action == "send":
                         request_id = identifier(request["request_id"])
                         text = request["text"]
@@ -864,7 +877,7 @@ def serve(connection):
                             # inject the same continuation twice.
                             save(ROOT / connection / "state.json", state)
                             emit({"method": "notifications/claude/channel", "params": {
-                                "content": Path(__file__).with_suffix(".account-resume.md" if state.get("account_resume") else ".resume.md").read_text(encoding="utf-8"),
+                                "content": request.get("account_resume_prompt" if state.get("account_resume") else "resume_prompt") or Path(__file__).with_suffix(".account-resume.md" if state.get("account_resume") else ".resume.md").read_text(encoding="utf-8"),
                                 "meta": {"resume": "true"}}})
                     else:
                         raise ValueError("unsupported operation")
@@ -896,7 +909,15 @@ def serve(connection):
                 method = message.get("method")
                 if method == "initialize":
                     emit({"id": message["id"], "result": {"protocolVersion": "2024-11-05", "serverInfo": {"name": "session", "version": "1"},
-                          "capabilities": {"experimental": {"claude/channel": {}, "claude/channel/permission": {}}}}})
+                          "capabilities": {**({"tools": {}} if mailbox else {}), "experimental": {"claude/channel": {}, "claude/channel/permission": {}}}}})
+                elif mailbox and method == "tools/list":
+                    emit({"id": message["id"], "result": {"tools": mailbox.tools}})
+                elif mailbox and method == "tools/call":
+                    try:
+                        result = {"content": [{"type": "text", "text": json.dumps(mailbox.call(message["params"]), ensure_ascii=False)}]}
+                    except (KeyError, TypeError, ValueError) as error:
+                        result = {"isError": True, "content": [{"type": "text", "text": str(error)}]}
+                    emit({"id": message["id"], "result": result})
                 elif method == "notifications/initialized":
                     with state_file(connection) as state:
                         state["channel_pid"] = os.getpid()
