@@ -76,31 +76,37 @@ type decision struct {
 	Question string `json:"question"`
 }
 
-func complete(ctx context.Context, key string, messages []message) (decision, error) {
+func modelJSON(ctx context.Context, key string, messages []message, output any) error {
 	body, _ := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": messages, "response_format": map[string]string{"type": "json_object"}, "max_tokens": 1800, "stream": false, "thinking": map[string]string{"type": "disabled"}})
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.token-link.shop/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return decision{}, err
+		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return decision{}, err
+		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return decision{}, fmt.Errorf("model status %d", resp.StatusCode)
+		return fmt.Errorf("model status %d", resp.StatusCode)
 	}
 	var result struct{ Choices []struct{ Message message } }
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return decision{}, err
+		return err
 	}
 	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		return decision{}, errors.New("empty model response")
+		return errors.New("empty model response")
 	}
+	return json.Unmarshal([]byte(result.Choices[0].Message.Content), output)
+}
+func complete(ctx context.Context, key string, messages []message) (decision, error) {
 	var reply decision
-	if err := json.Unmarshal([]byte(result.Choices[0].Message.Content), &reply); err != nil || strings.TrimSpace(reply.Answer) == "" {
+	if err := modelJSON(ctx, key, messages, &reply); err != nil {
+		return decision{}, err
+	}
+	if strings.TrimSpace(reply.Answer) == "" {
 		return decision{}, errors.New("invalid answer JSON")
 	}
 	return reply, nil
@@ -133,7 +139,7 @@ func main() {
 			if cli == "" {
 				cli = "lark-cli"
 			}
-			go (feishu{learned, owner, cli}).run()
+			go (feishu{store: learned, owner: owner, cli: cli, confirms: directAnswerCheck(key)}).run()
 		}
 	}
 	mux := http.NewServeMux()
