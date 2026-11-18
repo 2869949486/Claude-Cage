@@ -73,7 +73,7 @@ func (s *Server) openProject(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "请选择项目文件夹", 400)
 		return
 	}
-	if !s.op.TryLock() {
+	if !s.lockProjectOperation(r.Context()) {
 		w.Header().Set("X-Cage-Recovery", "project-operation-busy")
 		http.Error(w, "另一个操作仍在进行，请稍候", 409)
 		return
@@ -159,7 +159,7 @@ func (p *projectShare) close() {
 
 // The local SFTP server owns the host authorization boundary for both macOS
 // and Linux mounts. The remote shell receives only that directory's byte stream.
-func startProjectTransport(cmd *exec.Cmd, path string, transforms ...reversesshfs.ReadTransform) (*projectShare, error) {
+func startProjectTransport(cmd *exec.Cmd, path string) (*projectShare, error) {
 	output, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -174,13 +174,9 @@ func startProjectTransport(cmd *exec.Cmd, path string, transforms ...reversesshf
 		_ = share.transport.Close()
 		return nil, err
 	}
-	transform := reversesshfs.ReadTransform(sharedReadView)
-	if len(transforms) > 0 {
-		transform = transforms[0]
-	}
 	go func() {
 		defer close(share.done)
-		_ = reversesshfs.ServeConfined(share.transport, path, false, nil, transform)
+		_ = reversesshfs.ServeConfined(share.transport, path, false, nil)
 		share.stop()
 		_ = cmd.Wait()
 	}()
@@ -257,7 +253,7 @@ func (s *Server) ensureProjectShare(path string) (returned error) {
 	s.mu.Unlock()
 	script := "exec sshfs " + shellescape.Quote(":"+filepath.ToSlash(path)) + " " + quoted + " -o " + projectShareOptions(cache)
 	cmd := s.sshCommand(s.lifetimeContext(), "-T", s.sshTarget(), "--", script)
-	share, err := startProjectTransport(cmd, path, s.sharedReadView)
+	share, err := startProjectTransport(cmd, path)
 	if err != nil {
 		return err
 	}

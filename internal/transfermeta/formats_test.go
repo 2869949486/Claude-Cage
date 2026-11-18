@@ -341,7 +341,7 @@ func TestFLACLanguageAndSamples(t *testing.T) {
 }
 
 func TestExplicitOriginalPolicy(t *testing.T) {
-	for name, data := range map[string][]byte{"archive.7z": []byte("unknown archive"), "broken.pdf": []byte("%PDF-1.7 broken"), "broken.jpg": []byte("jpeg bytes")} {
+	for name, data := range map[string][]byte{"clip.mkv": []byte("unknown media"), "broken.pdf": []byte("%PDF-1.7 broken"), "broken.jpg": []byte("jpeg bytes")} {
 		if p, err := Prepare(name, bytes.NewReader(data), int64(len(data))); err == nil || p != nil {
 			t.Fatal("original allowed without consent", name)
 		}
@@ -367,10 +367,10 @@ func TestExplicitOriginalPolicy(t *testing.T) {
 
 func TestOfficePartialConsentWarning(t *testing.T) {
 	data := makeZip(t, map[string]string{
-		"word/document.xml":          "readable content",
-		"docProps/core.xml":          `<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"><cp:keywords>Country=CN</cp:keywords></cp:coreProperties>`,
-		"word/media/photo.png":       string(pngWithMetadata(t)),
-		"word/embeddings/archive.7z": "original private container",
+		"word/document.xml":        "readable content",
+		"docProps/core.xml":        `<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties"><cp:keywords>Country=CN</cp:keywords></cp:coreProperties>`,
+		"word/media/photo.png":     string(pngWithMetadata(t)),
+		"word/embeddings/clip.mkv": "original private container",
 	})
 	p, err := Prepare("document.docx", bytes.NewReader(data), int64(len(data)), Options{AllowUnclean: true})
 	if err != nil {
@@ -382,7 +382,7 @@ func TestOfficePartialConsentWarning(t *testing.T) {
 		t.Fatal(err)
 	}
 	entries := readZipEntries(t, out)
-	if !p.Unclean || string(entries["word/embeddings/archive.7z"]) != "original private container" || bytes.Contains(entries["word/media/photo.png"], []byte("GPSLatitude")) || bytes.Contains(entries["docProps/core.xml"], []byte("Country=CN")) {
+	if !p.Unclean || string(entries["word/embeddings/clip.mkv"]) != "original private container" || bytes.Contains(entries["word/media/photo.png"], []byte("GPSLatitude")) || bytes.Contains(entries["docProps/core.xml"], []byte("Country=CN")) {
 		t.Fatal("partial cleanup or original warning lost")
 	}
 }

@@ -177,6 +177,9 @@ func SanitizeBytes(name string, data []byte, options ...Options) ([]byte, error)
 }
 
 func detectFormat(name string, head []byte) format {
+	if len(head) == 0 {
+		return formatUnknown // an empty file carries no metadata
+	}
 	if len(head) >= 3 && head[0] == 0xFF && head[1] == 0xD8 && head[2] == 0xFF {
 		return formatJPEG
 	}
@@ -201,7 +204,7 @@ func detectFormat(name string, head []byte) format {
 	if bytes.HasPrefix(head, []byte("fLaC")) {
 		return formatFLAC
 	}
-	if bytes.HasPrefix(head, []byte("ID3")) {
+	if id3v2Header(head) {
 		return formatMP3
 	}
 	if len(head) >= 8 {

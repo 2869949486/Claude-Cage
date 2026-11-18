@@ -104,7 +104,8 @@ func TestBlockedMedia(t *testing.T) {
 		{"photo.heic", []byte("heic")}, {"photo.avif", []byte("avif")}, {"renamed.bin", []byte{0, 0, 0, 24, 'f', 't', 'y', 'p', 'a', 'v', 'i', 'f'}},
 		{"audio.mp3", []byte("ID3")}, {"renamed.bin", []byte("fLaC")}, {"renamed.bin", []byte("OggS")},
 		{"movie.mp4", []byte("video")}, {"renamed.bin", []byte{0x1a, 0x45, 0xdf, 0xa3}},
-		{"archive.zip", []byte("PK\x03\x04")}, {"archive.tar", []byte("archive")}, {"renamed.bin", []byte{0x1f, 0x8b}},
+		{"renamed.bin", []byte("RIFF\x10\x00\x00\x00AVI LIST")}, {"renamed.bin", []byte("FORM\x10\x00\x00\x00AIFFCOMM")},
+		{"renamed.bin", []byte("8BPS")}, {"renamed.bin", []byte{'I', 'I', 43, 0}},
 	}
 	for _, tc := range cases {
 		if out, err := SanitizeBytes(tc.name, tc.data); !errors.Is(err, ErrUnsupported) || out != nil {
@@ -236,5 +237,38 @@ func TestSignatureInSource(t *testing.T) {
 	clean, err := SanitizeBytes("source.go", data)
 	if err != nil || !bytes.Equal(clean, data) {
 		t.Fatal("source code was mistaken for a PDF")
+	}
+}
+
+// Files without capture-device metadata must reach the guest unchanged by
+// default: archives, legacy documents, icons, and text that merely starts
+// with bytes resembling a media signature.
+func TestOrdinaryFilesPassThrough(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"archive.zip", []byte("PK\x03\x04archive")}, {"gradle-wrapper.jar", []byte("PK\x03\x04jar")},
+		{"archive.tar", []byte("archive")}, {"package.tgz", []byte{0x1f, 0x8b, 8, 0}}, {"renamed.bin", []byte{0x1f, 0x8b}},
+		{"logo.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg"/>`)}, {"favicon.ico", []byte{0, 0, 1, 0, 1, 0}},
+		{"legacy.doc", []byte{0xd0, 0xcf, 0x11, 0xe0}}, {"image.bmp", []byte("BM\x36\x00")},
+		{"notes.txt", []byte{0xff, 0xfe, 'h', 0, 'i', 0}}, {"cars.csv", []byte("BMW,320i\n")},
+		{"schema.txt", []byte("FORM fields\n")}, {"tags.md", []byte("ID3 tags are text\n")},
+		{"script.ps", []byte("%!PS-Adobe")}, {"empty.png", nil},
+	} {
+		out, err := SanitizeBytes(tc.name, tc.data)
+		if err != nil || !bytes.Equal(out, tc.data) {
+			t.Errorf("%s: byte policy changed or rejected an ordinary file: %v", tc.name, err)
+		}
+		p, err := Prepare(tc.name, bytes.NewReader(tc.data), int64(len(tc.data)))
+		if err != nil {
+			t.Errorf("%s: stream policy rejected an ordinary file: %v", tc.name, err)
+			continue
+		}
+		got, err := io.ReadAll(p.Body)
+		if err != nil || !bytes.Equal(got, tc.data) || p.Unclean {
+			t.Errorf("%s: stream policy changed an ordinary file", tc.name)
+		}
+		_ = p.Close()
 	}
 }

@@ -31,7 +31,7 @@ type bufferedProjectOutput struct {
 	io.Closer
 }
 
-func startWindowsProjectTransport(cmd *exec.Cmd, hostPath string, binding windowsProjectBinding, transforms ...reversesshfs.ReadTransform) (*projectShare, error) {
+func startWindowsProjectTransport(cmd *exec.Cmd, hostPath string, binding windowsProjectBinding) (*projectShare, error) {
 	output, err := cmd.StdoutPipe()
 	if err != nil {
 		return nil, err
@@ -85,13 +85,9 @@ func startWindowsProjectTransport(cmd *exec.Cmd, hostPath string, binding window
 	admitted = true
 	binding.Path = started.Path
 	share := &projectShare{cmd: cmd, transport: projectTransport{bufferedProjectOutput{reader, output}, input}, done: make(chan struct{}), windowsProject: &binding}
-	transform := reversesshfs.ReadTransform(sharedReadView)
-	if len(transforms) > 0 {
-		transform = transforms[0]
-	}
 	go func() {
 		defer close(share.done)
-		_ = reversesshfs.ServeConfinedVirtual(share.transport, hostPath, false, nil, transform)
+		_ = reversesshfs.ServeConfinedVirtual(share.transport, hostPath, false, nil)
 		share.stop()
 		_ = cmd.Wait()
 	}()
@@ -153,7 +149,7 @@ func (s *Server) ensureWindowsProjectShare(hostPath string) error {
 	if err != nil {
 		return err
 	}
-	share, err := startWindowsProjectTransport(cmd, hostPath, binding, s.sharedReadView)
+	share, err := startWindowsProjectTransport(cmd, hostPath, binding)
 	if err != nil {
 		return err
 	}

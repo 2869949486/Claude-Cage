@@ -33,8 +33,8 @@ func TestBrowserUploadExplicitOriginal(t *testing.T) {
 		}
 		return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(body))}, nil
 	}))
-	data := []byte("opaque archive with GPS=31.23;country=CN")
-	path := "/api/browser/files/uploads/" + testBrowserFileID + "?name=archive.7z&allow_unclean=true"
+	data := []byte("opaque media with GPS=31.23;country=CN")
+	path := "/api/browser/files/uploads/" + testBrowserFileID + "?name=clip.mkv&allow_unclean=true"
 	call := func(name string, payload []byte) *httptest.ResponseRecorder {
 		r := httptest.NewRequest("POST", s.origin+name, bytes.NewReader(payload))
 		r.Host = "localhost:17777"
