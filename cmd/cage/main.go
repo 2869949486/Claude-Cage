@@ -445,6 +445,12 @@ func run() int {
 		}
 		return 0
 	}
+	if args[0] == "display-spike" {
+		if err := displaySpike(path, args[1:]); err != nil {
+			return fail(err)
+		}
+		return 0
+	}
 	if args[0] == "prepare-update" {
 		stop, returnJSON := false, false
 		for _, argument := range args[1:] {

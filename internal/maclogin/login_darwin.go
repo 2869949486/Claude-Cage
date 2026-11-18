@@ -102,6 +102,17 @@ func (s *loginSession) close() {
 }
 
 func (s *loginSession) handle(in request) reply {
+	// Feasibility spike. X and Y carry the window size and Shift asks the
+	// guest display to follow it.
+	if in.Action == "direct-open" || in.Action == "direct-close" {
+		direct, ok := s.surface.(interface {
+			Direct(open bool, width, height int, reconfigure bool) bool
+		})
+		if !ok || s.token != "" || !direct.Direct(in.Action == "direct-open", in.X, in.Y, in.Shift) {
+			return reply{Error: "direct display unavailable"}
+		}
+		return reply{}
+	}
 	if in.Maintenance != "" || (s.maintenance != "" && in.Action != "open") {
 		return s.handleMaintenance(in)
 	}
