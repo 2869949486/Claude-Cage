@@ -138,3 +138,79 @@ try {
     Assert-Check ([IO.File]::ReadAllText($disk) -ceq 'existing personal disk fixture') 'Cleanup changed the retained disk.'
 } finally { [IO.Directory]::Delete($directory, $true) }
 Write-Output 'Passed manual ISO account/OOBE XML, retained manual choices, clone parity and elevated installer progress forwarding.'
+
+# Exercise the real firmware reader and boot wait with host-local substitutes.
+& {
+    $target = [guid]::NewGuid()
+    $since = Get-Date
+    function New-BootEvent($Id, $VMId, $Time) {
+        [pscustomobject]@{ Id=$Id; TimeCreated=$Time; Properties=@(@{Value='Windows'}, @{Value=$VMId.ToString('B')}) }
+    }
+    $events = @((New-BootEvent 18601 ([guid]::NewGuid()) $since), (New-BootEvent 18603 $target $since), (New-BootEvent 18601 $target $since.AddMinutes(-2)))
+    function Get-WinEvent($FilterHashtable) {
+        Assert-Check ($FilterHashtable.LogName -ceq 'Microsoft-Windows-Hyper-V-Worker-Admin' -and $FilterHashtable.ProviderName -ceq 'Microsoft-Windows-Hyper-V-Chipset') 'Wrong firmware event source.'
+        $events | Where-Object { $_.TimeCreated -ge $FilterHashtable.StartTime -and $FilterHashtable.Id -contains $_.Id }
+    }
+    Assert-Check ((Get-CageWindowsBootEvent $target $since) -eq 18603) 'A different VM masked the boot failure.'
+    Assert-Check ($null -eq (Get-CageWindowsBootEvent $target $since.AddSeconds(1))) 'A previous boot supplied evidence.'
+
+    $keys = [Collections.Generic.List[uint32]]::new()
+    $vm = [pscustomobject]@{ Id=$target; Heartbeat='NoContact'; State='Running'; Uptime=[timespan]::FromSeconds(10) }
+    function Hyper-V\Get-VM($Id) { Assert-Check ($Id -eq $target) 'Polled a different VM.'; $vm }
+    function Get-CimInstance($Namespace, $ClassName, $Filter) {
+        Assert-Check ($Namespace -eq 'root/virtualization/v2' -and $ClassName -eq 'Msvm_Keyboard' -and $Filter -eq "SystemName='$target'") 'Selected a different keyboard.'
+        [pscustomobject]@{ SystemName=$target }
+    }
+    function Invoke-CimMethod($InputObject, $MethodName, $Arguments) {
+        Assert-Check ($InputObject.SystemName -eq $target -and $MethodName -eq 'TypeKey') 'Wrong virtual keyboard input.'
+        $keys.Add($Arguments.keyCode)
+        [pscustomobject]@{ ReturnValue=0 }
+    }
+
+    $instance = Join-Path ([IO.Path]::GetTempPath()) ('cage-boot-'+$target)
+    $null = [IO.Directory]::CreateDirectory($instance)
+    $disk = Join-Path $instance 'system.vhdx'
+    [IO.File]::WriteAllBytes($disk, [byte[]]@())
+    try {
+        $events = @()
+        $vm.Heartbeat = 'OkApplicationsHealthy'
+        Wait-CageWindowsISOBoot $target $since $disk 0 $false -TimeoutSeconds 0
+        $vm.Heartbeat = 'NoContact'
+
+        # Run the production statements that choose whether to press a key and open Setup.
+        $statements = $ast.EndBlock.Statements
+        $start = ($statements | Where-Object { $_.Extent.Text.StartsWith('$manualISO =') }).Extent.StartOffset
+        $end = ($statements | Where-Object { $_.Extent.Text.Contains("Write-Output 'CAGE_GUEST_STAGE windows-11 oobe'") -and $_.Extent.StartOffset -gt $start } | Select-Object -Last 1).Extent.EndOffset
+        $boot = [scriptblock]::Create($ast.Extent.Text.Substring($start, $end - $start))
+        $fromHost=$false; $published=$false; $IsoPath='fixture.iso'; $receipt=Join-Path $instance 'receipt'
+        function Hyper-V\Get-VMHardDiskDrive { process { [pscustomobject]@{Path=$disk} } }
+        function Hyper-V\Get-VMDvdDrive { process { [pscustomobject]@{Path=$IsoPath} } }
+        function Hyper-V\Get-VHD { [pscustomobject]@{Attached=$false} }
+        function Hyper-V\Mount-VHD { [pscustomobject]@{DiskNumber=1} }
+        function Hyper-V\Dismount-VHD {}
+        function Get-Disk { [pscustomobject]@{PartitionStyle=$partitionStyle} }
+        function Hyper-V\Start-VM { $vm.State='Running'; $vm }
+        function Start-Process {}
+        function Start-Sleep { $events.Add((New-BootEvent 18601 $target (Get-Date))) }
+        foreach ($scenario in @('new disk','retained RAW','retained GPT')) {
+            $createdNow=$scenario -eq 'new disk'; $readyToProvision=!$createdNow
+            $partitionStyle=if ($scenario -eq 'retained GPT') { 'GPT' } else { 'RAW' }
+            $expectSetup=$partitionStyle -eq 'RAW'
+            $vm.State='Off'; $keys.Clear()
+            $events=[Collections.Generic.List[object]]::new()
+            $stages = @(& $boot)
+            Assert-Check (($keys.Count -gt 0) -eq $expectSetup) "Wrong DVD prompt key behaviour for $scenario."
+            Assert-Check (($stages -contains 'CAGE_GUEST_STAGE windows-11 oobe') -eq $expectSetup) "Wrong OOBE handoff for $scenario."
+        }
+        [IO.File]::Delete($receipt)
+        $vm.State='Running'; $readyToProvision=$false
+        $productionWait = (Get-Command Wait-CageWindowsISOBoot).ScriptBlock
+        function Wait-CageWindowsISOBoot { & $productionWait @args -TimeoutSeconds 0 }
+        foreach ($outcome in @('failed','unconfirmed')) {
+            $events = @(if ($outcome -eq 'failed') { New-BootEvent 18603 $target (Get-Date) })
+            $result = try { & $boot; throw 'Unexpected boot success' } catch { $_.Exception.Message }
+            Assert-Check (@($result)[-1] -ceq "CAGE_WINDOWS_ISO_BOOT $outcome" -and $result -notcontains 'CAGE_GUEST_STAGE windows-11 oobe' -and !(Test-Path $receipt)) "A $outcome boot reached the OOBE handoff."
+        }
+    } finally { [IO.Directory]::Delete($instance, $true) }
+}
+Write-Output 'Passed Windows ISO boot evidence, keyboard targeting, first-start and resume tests.'
