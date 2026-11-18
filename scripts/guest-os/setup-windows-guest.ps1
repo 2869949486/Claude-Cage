@@ -155,6 +155,7 @@ function Assert-Instance($VM) {
         @(Hyper-V\Get-VMNetworkAdapter -VM $VM).Count) { throw 'The selected installation no longer owns this offline virtual machine.' }
 }
 $readyToProvision=Test-Path -LiteralPath $receipt -PathType Leaf
+$createdNow=$false
 if ($readyToProvision) {
     $vm=Hyper-V\Get-VM -Id ([guid][IO.File]::ReadAllText($receipt))
     Assert-Instance $vm
@@ -167,6 +168,7 @@ if ($readyToProvision) {
         $imageOptions['ComputerName'] = Get-CageGuestComputerName $Profile
         $created=& (Join-Path $PSScriptRoot 'new-windows-guest.ps1') -Name $name -IsoPath $IsoPath -ExpectedIsoSha256 $ExpectedIsoSha256 -InstanceDirectory $instance -Confirm:$false @imageOptions
         $vm=Hyper-V\Get-VM -Id $created.VMId
+        $createdNow=$true
     } elseif ($vm.Count -eq 1) { $vm=$vm[0] }
     else { throw 'The installation has an ambiguous Hyper-V registration.' }
     Assert-Instance $vm
@@ -174,14 +176,50 @@ if ($readyToProvision) {
         (!$fromHost -and @($vm | Hyper-V\Get-VMDvdDrive | Where-Object Path -eq $IsoPath).Count -ne 1)) {
         throw 'The retained Windows installation disk or setup media does not match.'
     }
+}
+$manualISO = !$fromHost -and !$published
+$sendBootKey = $false
+if ($manualISO) {
+    $disk = Join-Path $instance 'system.vhdx'
+    $drives = @($vm | Hyper-V\Get-VMHardDiskDrive)
+    if ($drives.Count -ne 1 -or $drives[0].Path -ne $disk) { throw 'The retained Windows installation disk does not match.' }
+    $initialLength = (Get-Item -LiteralPath $disk).Length
+    if ($vm.State -eq 'Off') {
+        $sendBootKey = $createdNow
+        $installerDVD = @($vm | Hyper-V\Get-VMDvdDrive | Where-Object Path -eq $IsoPath)
+        if (!$createdNow -and $installerDVD.Count -eq 1 -and !(Hyper-V\Get-VHD -Path $disk).Attached) {
+            # Older versions wrote the VM receipt before the ISO booted. Only
+            # replay the DVD prompt on a stopped VM whose disk is still blank.
+            $mounted = Hyper-V\Mount-VHD -Path $disk -ReadOnly -NoDriveLetter -Passthru
+            try { $sendBootKey = (Get-Disk -Number $mounted.DiskNumber).PartitionStyle -eq 'RAW' }
+            finally { Hyper-V\Dismount-VHD -Path $disk }
+        }
+        if ($sendBootKey -and $installerDVD.Count -ne 1) {
+            throw 'The retained Windows setup media does not match.'
+        }
+    }
+}
+$showSetup = $manualISO -and (!$readyToProvision -or $sendBootKey)
+if ($showSetup) {
+    $viewer = Join-Path ([Environment]::GetFolderPath('System')) 'vmconnect.exe'
+    if ([IO.File]::Exists($viewer)) { Start-Process -FilePath $viewer -ArgumentList @('localhost',$name) -ErrorAction SilentlyContinue }
+}
+if ($vm.State -eq 'Off') {
+    $bootSince = Get-Date
+    $vm=Hyper-V\Start-VM -VM $vm -Passthru
+} elseif ($manualISO -and $vm.State -eq 'Running') {
+    $bootSince = (Get-Date) - $vm.Uptime
+}
+if ($vm.State -ne 'Running') { throw 'The private Windows guest is not running yet. Retry after its current operation.' }
+if ($manualISO) {
+    Wait-CageWindowsISOBoot $vm.Id $bootSince $disk $initialLength $sendBootKey
+}
+if (!$readyToProvision) {
     $next=$receipt+'.'+[guid]::NewGuid().ToString('N')
     try { [IO.File]::WriteAllText($next,$vm.Id.ToString('D')); [IO.File]::Move($next,$receipt) }
     finally { if ([IO.File]::Exists($next)) { [IO.File]::Delete($next) } }
 }
-if ($vm.State -eq 'Off') { Hyper-V\Start-VM -VM $vm; $vm=Hyper-V\Get-VM -Id $vm.Id }
-if ($vm.State -ne 'Running') { throw 'The private Windows guest is not running yet. Retry after its current operation.' }
-if (!$readyToProvision -and !$fromHost) {
-    Start-Process -FilePath (Join-Path ([Environment]::GetFolderPath('System')) 'vmconnect.exe') -ArgumentList @('localhost',$name)
+if ($showSetup) {
     Write-Output 'CAGE_GUEST_STAGE windows-11 oobe'
     Write-Output '在虚拟机连接窗口完成 Windows 安装，用安装前设置的本地管理员登录桌面，再回 Cage 点击「已进入桌面，继续安装」。本轮 PowerShell 创建窗口会自动关闭。'
     return

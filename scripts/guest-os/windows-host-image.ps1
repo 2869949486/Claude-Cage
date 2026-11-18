@@ -72,6 +72,50 @@ function Remove-CageISOAnswer($VM, $Session, [string]$InstanceDirectory) {
     [IO.File]::Delete($answerPath)
 }
 
+# Gen2 firmware reports the boot result through the Chipset provider in the
+# Worker Admin channel. The second UserData field (VmId) is locale-independent.
+function Get-CageWindowsBootEvent([guid]$VMId, [datetime]$Since) {
+    # Include an in-progress boot (18606) so a guest reboot cannot borrow the
+    # previous firmware result from the same Hyper-V power-on session.
+    $filter = @{ LogName='Microsoft-Windows-Hyper-V-Worker-Admin'; ProviderName='Microsoft-Windows-Hyper-V-Chipset'; Id=18601,18602,18603,18604,18605,18606,18607; StartTime=$Since }
+    Get-WinEvent -FilterHashtable $filter -ErrorAction SilentlyContinue |
+        Where-Object { $_.Properties.Count -gt 1 -and ([string]$_.Properties[1].Value).Trim('{}') -eq $VMId.ToString('D') } |
+        Select-Object -First 1 -ExpandProperty Id
+}
+
+function Wait-CageWindowsISOBoot([guid]$VMId, [datetime]$Since, [string]$Disk, [long]$InitialLength, [bool]$SendBootKey, [int]$TimeoutSeconds = 30) {
+    $timer = [Diagnostics.Stopwatch]::StartNew()
+    $keyboard = $null
+    do {
+        if ($SendBootKey -and $timer.Elapsed.TotalSeconds -lt 5) {
+            if (!$keyboard) {
+                $keyboard = Get-CimInstance -Namespace root/virtualization/v2 -ClassName Msvm_Keyboard -Filter "SystemName='$VMId'" -ErrorAction SilentlyContinue
+            }
+            if ($keyboard) {
+                # 'N' satisfies "press any key" without accepting a Setup dialog.
+                $key = Invoke-CimMethod -InputObject $keyboard -MethodName TypeKey -Arguments @{ keyCode=[uint32]0x4E } -ErrorAction SilentlyContinue
+                if (!$key -or $key.ReturnValue -ne 0) { $keyboard = $null }
+            }
+        }
+        $eventId = Get-CageWindowsBootEvent $VMId $Since
+        if ($eventId -eq 18603) {
+            Write-Output 'CAGE_WINDOWS_ISO_BOOT failed'
+            throw 'CAGE_WINDOWS_ISO_BOOT failed'
+        }
+        if ($eventId -in @(18601,18602)) { return }
+        # A live Windows heartbeat or newly allocated install data also works
+        # on hosts where the firmware log is disabled or has rolled over.
+        $vm = Hyper-V\Get-VM -Id $VMId
+        if ([string]$vm.Heartbeat -in @('OkApplicationsHealthy','OkApplicationsUnknown','OkApplicationsCritical') -or
+            (Get-Item -LiteralPath $Disk).Length -ge $InitialLength + 8MB) { return }
+        if ($timer.Elapsed.TotalSeconds -ge $TimeoutSeconds) { break }
+        if ($SendBootKey -and $timer.Elapsed.TotalSeconds -lt 5) { Start-Sleep -Milliseconds 200 }
+        else { Start-Sleep -Milliseconds 800 }
+    } while ($timer.Elapsed.TotalSeconds -lt $TimeoutSeconds)
+    Write-Output 'CAGE_WINDOWS_ISO_BOOT unconfirmed'
+    throw 'CAGE_WINDOWS_ISO_BOOT unconfirmed'
+}
+
 function New-CageCloneAnswer([pscredential]$Administrator, [string]$Language, [string]$ComputerName = "*") {
     Assert-CageComputerName $ComputerName
     if (!$Administrator -or $Administrator.UserName -cne 'cagesetup' -or $Language -notmatch '^[a-zA-Z]{2,3}-[a-zA-Z0-9-]{2,12}$') {
