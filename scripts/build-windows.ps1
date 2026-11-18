@@ -4,18 +4,23 @@ param(
     [switch]$Release,
     [switch]$Sign,
     [switch]$SkipUI,
+    [switch]$SkipGuestClipboardAnalysis,
     [string]$OutputDirectory,
     [string]$DependencyCache
 )
 . (Join-Path $PSScriptRoot 'windows-common.ps1')
 $repository = Split-Path $PSScriptRoot -Parent
+$signed = $Release -or $Sign
+$requireGuestClipboardAnalysis = $signed -or $env:CI -in @('true', '1')
+if ($requireGuestClipboardAnalysis -and $SkipGuestClipboardAnalysis) {
+    throw 'Signed and CI builds require full Cage.GuestClipboard analysis.'
+}
 if (-not $OutputDirectory) { $OutputDirectory = Join-Path $repository '_output/windows-amd64/app' }
 if (-not $DependencyCache) { $DependencyCache = Join-Path $repository '_output/windows-deps' }
 $OutputDirectory = [IO.Path]::GetFullPath($OutputDirectory)
 if (Test-Path -LiteralPath (Join-Path $OutputDirectory 'Uninstall.exe')) { throw 'Do not build over an installed application. Choose a separate output directory and use the installer to upgrade.' }
 Assert-WindowsWorkbenchTestBase
 $version = Get-CageVersion $repository
-$signed = $Release -or $Sign
 if ($signed) { Assert-WindowsSigningConfiguration }
 $requiredTools = [ordered]@{
     'Go' = @('go')
@@ -39,12 +44,14 @@ $node = $tools['Node.js']
 $sevenZip = $tools['7-Zip']
 $dependencies = Get-Content -LiteralPath (Join-Path $repository 'packaging/windows/dependencies.json') -Raw | ConvertFrom-Json
 $stage = Join-Path $repository ("_output/windows-build-" + [guid]::NewGuid().ToString('N'))
+$retainStage = $false
 $savedGoOS, $savedGoArch, $savedCGO = $env:GOOS, $env:GOARCH, $env:CGO_ENABLED
 New-Item -ItemType Directory -Path $stage -Force | Out-Null
 Push-Location $repository
 try {
     $sdk = (Get-Content -LiteralPath 'global.json' -Raw | ConvertFrom-Json).sdk.version
-    $actualSdk = (& $dotnet '--version' | Select-Object -Last 1)
+    try { $actualSdk = (& $dotnet '--version' | Select-Object -Last 1) }
+    catch { throw "Install .NET SDK $sdk from global.json before building. $($_.Exception.Message)" }
     if ($actualSdk -ne $sdk) { throw "Expected .NET SDK $sdk from global.json; found $actualSdk." }
     foreach ($module in @('.', 'tools/tailnet')) {
         Push-Location $module
@@ -54,8 +61,7 @@ try {
             Invoke-BuildTool $go @('list', '-m')
         } finally { Pop-Location }
     }
-    $qemuBuilt = Join-Path $DependencyCache 'qemu-cage'
-    & (Join-Path $PSScriptRoot 'build-qemu-windows.ps1') -DependencyCache $DependencyCache -OutputDirectory $qemuBuilt
+    $qemuBuilt = & (Join-Path $PSScriptRoot 'build-qemu-windows.ps1') -DependencyCache $DependencyCache -UseFingerprintCache
     Invoke-BuildTool $node @('scripts/bundle-cloud-kit.mjs', '--prefetch')
     if (-not $SkipUI) {
         Invoke-BuildTool $tools['npm'] @('--prefix', 'ui', 'ci', '--no-audit', '--no-fund')
@@ -91,7 +97,12 @@ try {
     foreach ($file in @('install.ps1', 'install-network.ps1')) {
         Copy-Item -LiteralPath (Join-Path 'scripts/guest-os/guest-clipboard-windows' $file) -Destination $bridgeSetup.FullName
     }
-    & (Join-Path $PSScriptRoot 'guest-os/build-windows-workbench-payload.ps1') -Destination (Join-Path $guestSetup.FullName 'payload')
+    $guestPayload = @{
+        Destination = Join-Path $guestSetup.FullName 'payload'
+        SkipAnalysis = $SkipGuestClipboardAnalysis
+        RequireAnalysis = $requireGuestClipboardAnalysis
+    }
+    & (Join-Path $PSScriptRoot 'guest-os/build-windows-workbench-payload.ps1') @guestPayload
     $tailnetAssets = Join-Path $repository 'internal/tailnetassets/assets'
     New-Item -ItemType Directory -Path $tailnetAssets -Force | Out-Null
     foreach ($tailnetArch in @('amd64','arm64')) {
@@ -193,6 +204,10 @@ try {
     if ($signed) {
         $signTool = Get-SigningTool
         foreach ($file in @('Cage.exe', 'resources/cage.exe', 'resources/mihomo.exe')) { Sign-CageFile (Join-Path $app $file) $signTool }
+        # Only a fresh publish with full analysis reaches this signing step.
+        $clipboard = Join-Path $app 'resources/guest-os/payload/Cage.GuestClipboard.exe'
+        Sign-CageFile $clipboard $signTool
+        Assert-CageReleaseSignature $clipboard
         foreach ($file in (Get-WindowsQemuBinaries $qemuTarget)) {
             Sign-CageFile $file.FullName $signTool
             Assert-CageReleaseSignature $file.FullName
@@ -209,7 +224,12 @@ try {
         [IO.File]::WriteAllText((Join-Path $app 'DEVELOPMENT-BUILD.txt'), "Unsigned development build. Automatic update installation is disabled. Windows 10/11 runtime acceptance is still required.`n")
     }
     Assert-WindowsQemuRuntime $qemuTarget -Firmware
-    Assert-WindowsWorkbench $app
+    try { Assert-WindowsWorkbench $app }
+    catch {
+        $retainStage = $true
+        Write-Warning "Workbench acceptance failed. Build candidate retained at $app"
+        throw
+    }
     $previousOutput = $null
     if (Test-Path -LiteralPath $OutputDirectory) {
         $marker = Join-Path $OutputDirectory 'Cage.install-id'
@@ -230,7 +250,7 @@ try {
 } finally {
     Pop-Location
     $env:GOOS = $savedGoOS; $env:GOARCH = $savedGoArch; $env:CGO_ENABLED = $savedCGO
-    if (Test-Path -LiteralPath $stage) {
+    if (-not $retainStage -and (Test-Path -LiteralPath $stage)) {
         try { Remove-Item -LiteralPath $stage -Recurse -Force -ErrorAction Stop }
         catch { Write-Warning "Temporary build files remain at $stage. Cleanup did not complete: $($_.Exception.Message)" }
     }

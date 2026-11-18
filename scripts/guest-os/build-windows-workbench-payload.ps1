@@ -2,8 +2,13 @@
 # Windows is selected. Claude releases resolve from official metadata then;
 # other packages use the digests in windows-workbench-packages.json.
 [CmdletBinding()]
-param([Parameter(Mandatory)][string]$Destination)
+param(
+    [Parameter(Mandatory)][string]$Destination,
+    [switch]$SkipAnalysis,
+    [switch]$RequireAnalysis
+)
 $ErrorActionPreference='Stop'
+if ($SkipAnalysis -and $RequireAnalysis) { throw 'Cage.GuestClipboard analysis is required for this build.' }
 $root=(Resolve-Path (Join-Path $PSScriptRoot '../..')).Path
 $dest=[IO.Path]::GetFullPath($Destination)
 $null=New-Item -ItemType Directory -Force $dest
@@ -11,9 +16,29 @@ $build=Join-Path ([IO.Path]::GetTempPath()) ('cage-windows-publish-'+[guid]::New
 Push-Location $root
 $oldOS=$env:GOOS; $oldArch=$env:GOARCH; $oldCGO=$env:CGO_ENABLED
 try {
-    dotnet publish scripts/guest-os/guest-clipboard-windows/Cage.GuestClipboard.csproj -c Release -r win-x64 --self-contained true -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -o $build
+    $project = Join-Path $PSScriptRoot 'guest-clipboard-windows/Cage.GuestClipboard.csproj'
+    $publish = Join-Path $build 'publish'
+    # Use a fresh obj directory so a signed build cannot reuse a compilation
+    # from a local build that skipped its analyzers.
+    $publishProperties = @('-r', 'win-x64', '-p:Configuration=Release', '-p:SelfContained=true',
+        '-p:PublishSingleFile=true', '-p:IncludeNativeLibrariesForSelfExtract=true',
+        '--artifacts-path', (Join-Path $build 'artifacts'))
+    if ($RequireAnalysis) {
+        $publishProperties += @('-p:RunAnalyzers=true', '-p:RunAnalyzersDuringBuild=true',
+            '-p:EnableNETAnalyzers=true', '-p:EnableSingleFileAnalyzer=true')
+    } elseif ($SkipAnalysis) {
+        $publishProperties += @('-p:RunAnalyzers=false', '-p:RunAnalyzersDuringBuild=false')
+        Write-Warning 'Skipping build analyzers for Cage.GuestClipboard in this local build.'
+    }
+    Write-Host 'Restoring .NET dependencies for Cage.GuestClipboard'
+    dotnet restore $project @publishProperties
+    if ($LASTEXITCODE) { throw 'Could not restore Cage.GuestClipboard dependencies.' }
+    Write-Host 'Compiling and publishing Cage.GuestClipboard'
+    $publishTime = [Diagnostics.Stopwatch]::StartNew()
+    dotnet publish $project @publishProperties --no-restore -o $publish
     if ($LASTEXITCODE) {throw 'Could not publish the native Windows guest bridge.'}
-    Copy-Item -LiteralPath (Join-Path $build 'Cage.GuestClipboard.exe') -Destination $dest
+    Write-Host ('Published Cage.GuestClipboard in {0:F1} s' -f $publishTime.Elapsed.TotalSeconds)
+    Copy-Item -LiteralPath (Join-Path $publish 'Cage.GuestClipboard.exe') -Destination $dest
     $env:GOOS='windows'; $env:GOARCH='amd64'; $env:CGO_ENABLED='0'
     go build -trimpath -o (Join-Path $dest 'cage-guest-files.exe') ./cmd/cage-guest-files
     if ($LASTEXITCODE) {throw 'Could not build the Windows guest file helper.'}

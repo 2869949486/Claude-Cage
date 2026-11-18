@@ -36,11 +36,11 @@ test('same-version Homebrew formula changes cannot silently substitute another b
   mkdirSync(join(root, '.brew'));
   writeFileSync(join(root, 'INSTALL_RECEIPT.json'), JSON.stringify({ source: { spec: 'stable', versions: { stable: '2.90.1' } } }));
   writeFileSync(join(root, '.brew/glib.rb'), 'same version, unreviewed upstream patch');
-  assert.throws(() => inspectDependency('glib', root), /expected version=2\.90\.1, actual version=2\.90\.1.*ask a maintainer/);
+  assert.throws(() => inspectDependency('glib', root), /expected version=2\.90\.1, actual version=2\.90\.1.*review the formula change/);
   writeFileSync(join(root, 'INSTALL_RECEIPT.json'), JSON.stringify({ source: { spec: 'stable', versions: { stable: '2.88.1' } } }));
   assert.throws(() => inspectDependency('glib', root), /expected version=2\.90\.1, actual version=2\.88\.1.*brew upgrade glib/);
   writeFileSync(join(root, 'INSTALL_RECEIPT.json'), JSON.stringify({ source: { spec: 'stable', versions: { stable: '2.100.0' } } }));
-  assert.throws(() => inspectDependency('glib', root), /expected version=2\.90\.1, actual version=2\.100\.0.*ask a maintainer/);
+  assert.throws(() => inspectDependency('glib', root), /expected version=2\.90\.1, actual version=2\.100\.0.*newer than the lock.*ask a maintainer/);
 });
 
 test('upstream license symlinks and PCRE2 LICENCE.md are distributed as readable texts', t => {

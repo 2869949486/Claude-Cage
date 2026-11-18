@@ -38,9 +38,12 @@ export function inspectDependency(name, prefix) {
   const actual = receipt.source?.versions?.stable;
   if (![spec.formulaSha256, ...(spec.additionalFormulaSha256 ?? [])].includes(formulaDigest) || receipt.source?.spec !== 'stable' || actual !== spec.version) {
     const comparison = compareVersions(actual, spec.version);
-    const advice = comparison !== null && comparison < 0
-      ? `Install the reviewed version (use brew upgrade ${name} if Homebrew provides ${spec.version}).`
-      : 'Use the reviewed Homebrew recipe, or ask a maintainer to review the version/recipe change.';
+    let advice = 'Use the reviewed stable Homebrew recipe, or ask a maintainer to review the formula change.';
+    if (comparison < 0) {
+      advice = `Install the reviewed version (use brew upgrade ${name} if Homebrew provides ${spec.version}).`;
+    } else if (comparison > 0) {
+      advice = 'The installed version is newer than the lock. Use the reviewed version, or ask a maintainer to review the newer release.';
+    }
     throw new Error(`${name}: installed formula/version differs from the reviewed SSHFS dependency lock; expected version=${spec.version}, actual version=${actual ?? 'unknown'}, formulaSHA256=${formulaDigest}. ${advice}`);
   }
   // The raw receipt can contain personal paths. Keep only build identity fields.
@@ -57,7 +60,7 @@ function brewDependency(name) {
   let prefix;
   try { prefix = realpathSync(run('brew', ['--prefix', name]).trim()); }
   catch {
-    throw new Error(`${name}: Homebrew dependency not found. Install the reviewed version ${lock[name].version} before building SSHFS.`);
+    throw new Error(`${name}: Homebrew dependency not found. Use brew install ${name} if it provides the reviewed version ${lock[name].version}.`);
   }
   if (!existsSync(join(prefix, 'INSTALL_RECEIPT.json')) || !existsSync(join(prefix, '.brew', `${name}.rb`))) {
     throw new Error(`${name}: Homebrew receipt or formula missing. Install the reviewed version ${lock[name].version} before building SSHFS.`);
