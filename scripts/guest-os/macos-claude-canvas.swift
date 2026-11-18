@@ -256,9 +256,16 @@ final class ClaudeCanvasSession {
             throw Failure(7, "window_changed", detail: "geometry_replaced")
         }
         guard try liveBounds(last.id, last.pid) == last.frame else { throw Failure(7, "window_changed", detail: "bounds_moved") }
+        // A browser window has no title bar to leave out, and
+        // checkedMacInputWindow compares the focused window right after this.
+        if browser { return last }
         let now = ProcessInfo.processInfo.systemUptime
         if let known = inputMeasured, known.token == requested, now - known.time < 1 { return last }
-        guard let ax = owningAXWindow(last.pid, last.frame), cropHeight(ax,last.frame) == last.cropTop else {
+        guard let ax = owningAXWindow(last.pid, last.frame) else {
+            inputMeasured = nil
+            throw Failure(7, "window_changed", detail: "focus_elsewhere")
+        }
+        guard cropHeight(ax,last.frame) == last.cropTop else {
             inputMeasured = nil
             throw Failure(7, "window_changed", detail: "title_bar_changed")
         }
