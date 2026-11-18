@@ -21,6 +21,8 @@ bash www/support/build-corpus.sh origin/main /tmp/corpus.tar.gz
 
 首次安装时创建空的 `/opt/cage-support/rules.md`，并将 `TOKEN_LINK_API_KEY` 写入仅 root 可读的 `/etc/cage-support/model.env`。服务调用 `api.token-link.shop` 的 `deepseek-flash`。将同目录的 systemd 单元安装到 `/etc/systemd/system/`。
 
+官网发送提问或确认发布 Issue 时，在正式页面取得专用的 Turnstile 票据。答疑服务通过本机 18156 端口的验证服务核对域名、操作和票据使用状态，通过后才执行请求。浏览器仅能读取公开的站点配置。外部代理只向公众开放答疑和客服页面路由，验证服务的 `/local/` 路径保留给本机进程。
+
 HTTPS 入口 `https://token-link.shop/cage-support/ask` 将该路径改写为 `/ask` 并转发至 `127.0.0.1:18152`。代理必须用连接对端 IP 覆盖 `X-Real-IP`。服务每个来源 IP 每小时接受 20 次请求，全部访客每天合计 600 次，同时处理 5 个问题。计数以 UTC 整点和自然日为界，服务重启会重置计数。
 
 ## 通过飞书补充答案

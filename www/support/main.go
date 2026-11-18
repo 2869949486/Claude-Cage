@@ -30,6 +30,7 @@ type message struct {
 	Content string `json:"content"`
 }
 type request struct {
+	Proof        string    `json:"proof"`
 	LogExcerpt   string    `json:"logExcerpt,omitempty"`
 	SuggestTitle bool      `json:"suggestTitle"`
 	Action       string    `json:"action"`
@@ -191,9 +192,13 @@ func main() {
 		}
 		w.Header().Set("Access-Control-Allow-Origin", origin)
 		if r.Method == "OPTIONS" {
-			w.Header().Set("Access-Control-Allow-Methods", "POST")
+			w.Header().Set("Access-Control-Allow-Methods", "GET, POST")
 			w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 			w.WriteHeader(204)
+			return
+		}
+		if r.Method == "GET" {
+			protectionConfig(w, r)
 			return
 		}
 		if r.Method != "POST" {
@@ -220,16 +225,29 @@ func main() {
 			fail(w, 400, "问题过长或格式有误。")
 			return
 		}
+		if in.Action != "" && in.Action != "publish_issue" {
+			fail(w, 400, "未知操作。")
+			return
+		}
+		action := "ask"
+		if in.Action == "publish_issue" {
+			action = "issue"
+		}
+		verified, verifyErr := validatePageProof(r.Context(), in.Proof, action)
+		if verifyErr != nil {
+			fail(w, 503, "页面验证暂不可用，请稍后重试。")
+			return
+		}
+		if !verified {
+			fail(w, 403, "页面验证无效或已过期，请在官网答疑页重新发送。")
+			return
+		}
 		if in.Action == "publish_issue" {
 			if issues == nil {
 				fail(w, 503, "机器人暂不可用。")
 				return
 			}
 			issues.publish(w, r, in, ip.String())
-			return
-		}
-		if in.Action != "" {
-			fail(w, 400, "未知操作。")
 			return
 		}
 		in.Question = strings.TrimSpace(in.Question)
