@@ -80,6 +80,9 @@ func (s *Server) prepareCLIConnection(terminal *terminalSession, id string) {
 					if err := s.runCLIChannel(ctx, "rpc", resumeChannelRequest(record), &response); err != nil || !response.OK {
 						continue
 					}
+					if !isClientMountPath(record.Workspace) {
+						s.serveCodexChannel(terminal, record, s.codexWindow())
+					}
 					return
 				}
 				if current.Active || current.ConnectionNotice != "" {

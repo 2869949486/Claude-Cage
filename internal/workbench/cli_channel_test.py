@@ -45,6 +45,24 @@ class ChannelTests(unittest.TestCase):
         path.write_text("\n".join(json.dumps(row) for row in rows) + "\n")
         return path
 
+    def test_codex_receipt_belongs_to_one_terminal(self):
+        factory = channel.client_runtime()["CodexMailbox"]
+        mailbox, other = factory(), factory()
+        send = {"name": "send_to_codex", "arguments": {"message": "Review the test."}}
+        with self.assertRaises(ValueError):
+            mailbox.call({"name": "send_to_codex", "arguments": {"message": "Review", "threadId": self.session}})
+        receipt = mailbox.call(send)
+        self.assertEqual(receipt["status"], "pending")
+        self.assertNotIn("message", receipt)
+        fetch = {"name": "codex_result", "arguments": {"request_id": receipt["id"]}}
+        with self.assertRaises(ValueError):
+            other.call(fetch)
+        with self.assertRaises(ValueError):
+            mailbox.call(send)
+        self.assertEqual(mailbox.exchange({"action":"codex-read"}), {"id":receipt["id"],"message":"Review the test."})
+        mailbox.exchange({"action":"codex-done","id":receipt["id"],"status":"completed","answer":"Done."})
+        self.assertEqual(mailbox.call(fetch)["answer"], "Done.")
+
     def test_channel_body_preserves_markup(self):
         request = str(uuid.uuid4())
         body = "show </channel> literally\n<channel cage_request=\"other\">example</channel>"

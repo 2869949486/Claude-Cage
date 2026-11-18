@@ -11,6 +11,8 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
+import uuid
+import threading
 
 _KEYS = ("CAGE_CLI_STATE_ROOT", "CAGE_CLI_ACCOUNT_ROOT", "CAGE_CLI_SHARED_ROOT",
          "CAGE_CLI_ACCOUNT_HELPER", "CAGE_CLI_BINARY", "CAGE_CLAUDE_SUBJECT", "CAGE_REMOTE_APP_CONTAINER",
@@ -201,6 +203,72 @@ def environment(values):
         if value.startswith(prefix):
             clean[key] = prefix + path(value[len(prefix):])
     return clean
+
+
+class CodexMailbox:
+    """One Claude terminal's outbound task and its last answer."""
+
+    tools = [
+        {
+            "name": "send_to_codex",
+            "description": "Send a task or follow-up to your dedicated Codex conversation. Read the result before sending another message.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"message": {"type": "string", "maxLength": 8192}},
+                "required": ["message"],
+                "additionalProperties": False,
+            },
+        },
+        {
+            "name": "codex_result",
+            "description": "Read the status and final answer for your most recent Codex request.",
+            "inputSchema": {
+                "type": "object",
+                "properties": {"request_id": {"type": "string"}},
+                "required": ["request_id"],
+                "additionalProperties": False,
+            },
+        },
+    ]
+
+    def __init__(self):
+        self.changed = threading.Condition()
+        self.request = {}
+        self.deadline = 0.0
+
+    def call(self, params):
+        args = params.get("arguments", {})
+        if not isinstance(args, dict):
+            raise ValueError("Expected a tool arguments object.")
+        with self.changed:
+            if self.request.get("status") == "pending" and time.monotonic() >= self.deadline:
+                self.request.update(status="failed", answer="No reply was received. Check the project before repeating a task.")
+            if params.get("name") == "send_to_codex" and set(args) == {"message"}:
+                message = args["message"]
+                if not isinstance(message, str) or not message.strip() or len(message.encode()) > 8192:
+                    raise ValueError("Provide a message of at most 8192 UTF-8 bytes.")
+                if self.request.get("status") == "pending":
+                    raise ValueError("A request is pending. Read its result before sending another.")
+                self.deadline = time.monotonic() + 360
+                self.request.clear()
+                self.request.update(id=str(uuid.uuid4()), message=message, status="pending")
+                self.changed.notify_all()
+            elif params.get("name") == "codex_result" and set(args) == {"request_id"} and self.request.get("id") == args["request_id"] and self.request:
+                self.changed.wait_for(lambda: self.request["status"] != "pending", timeout=2)
+            else:
+                raise ValueError("Unknown request or invalid arguments.")
+            return {key: value for key, value in self.request.items() if key != "message"}
+
+    def exchange(self, request):
+        with self.changed:
+            if request["action"] == "codex-read":
+                self.changed.wait_for(lambda: self.request.get("status") == "pending", timeout=9)
+                if self.request.get("status") == "pending":
+                    return {"id": self.request["id"], "message": self.request["message"]}
+            elif self.request and self.request["id"] == request["id"]:
+                self.request.update(status=request["status"], answer=request["answer"])
+                self.changed.notify_all()
+            return {"ok": True}
 
 
 if __name__ == "__main__":
