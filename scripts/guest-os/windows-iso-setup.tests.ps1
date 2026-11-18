@@ -89,18 +89,26 @@ try {
     $stdout = $progressFile+'.stdout'
     $stderr = $progressFile+'.stderr'
     try {
-        [IO.File]::WriteAllText($fixtureScript, "Write-Output 'CAGE_GUEST_STAGE windows-11 account'`nWrite-Output 'private diagnostic fixture'`nWrite-Output 'CAGE_GUEST_STAGE windows-11 oobe'")
         $payload = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes((@{ProgressFile=$progressFile}|ConvertTo-Json -Compress)))
         $scriptPath = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($fixtureScript))
         $command = $command.Replace('__PARAMETERS__', $payload).Replace('__SCRIPT__', $scriptPath)
         $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($command))
-        $child = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
-        try {
-            $null = $child.Handle
-            $forwarded = @(Wait-CageWindowsInstaller $child $progressFile)
-            Assert-Check ($child.ExitCode -eq 0) ('Encoded installer wrapper failed. '+[IO.File]::ReadAllText($stderr))
-            Assert-Check ($forwarded[-1] -ceq 'CAGE_GUEST_STAGE windows-11 oobe') 'The actual child could not publish its final stage.'
-        } finally { $child.Dispose() }
+        foreach ($case in @(
+            @{Last="Write-Output 'CAGE_GUEST_STAGE windows-11 oobe'"; Expected='CAGE_GUEST_STAGE windows-11 oobe'; Exit=0}
+            @{Last="throw 'CAGE_WINDOWS_ISO_BOOT failed'"; Expected='CAGE_WINDOWS_ISO_BOOT failed'; Exit=1}
+            @{Last="throw 'CAGE_WINDOWS_ISO_BOOT unconfirmed'"; Expected='CAGE_WINDOWS_ISO_BOOT unconfirmed'; Exit=1}
+            @{Last="throw 'CAGE_WINDOWS_ISO_BOOT failed with private diagnostic'"; Expected='CAGE_GUEST_STAGE windows-11 account'; Exit=1}
+        )) {
+            $heldProgress.SetLength(0)
+            [IO.File]::WriteAllLines($fixtureScript, @("Write-Output 'CAGE_GUEST_STAGE windows-11 account'", "Write-Output 'private diagnostic fixture'", $case.Last))
+            $child = Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoLogo','-NoProfile','-NonInteractive','-EncodedCommand',$encoded) -RedirectStandardOutput $stdout -RedirectStandardError $stderr -PassThru
+            try {
+                $null = $child.Handle
+                $forwarded = @(Wait-CageWindowsInstaller $child $progressFile)
+                Assert-Check ($child.ExitCode -eq $case.Exit) ('Unexpected installer exit code. '+[IO.File]::ReadAllText($stderr))
+                Assert-Check ($forwarded[-1] -ceq $case.Expected) ('Expected final installer marker '+$case.Expected)
+            } finally { $child.Dispose() }
+        }
     } finally {
         foreach ($path in @($fixtureScript,$stdout,$stderr)) { [IO.File]::Delete($path) }
     }

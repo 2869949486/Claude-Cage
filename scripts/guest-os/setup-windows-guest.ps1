@@ -29,7 +29,7 @@ function Wait-CageWindowsInstaller($Process, [string]$ProgressFile) {
             $stage = $reader.ReadToEnd()
         } catch [IO.IOException] { }
         finally { if ($reader) { $reader.Dispose() } }
-        if ($stage -cmatch '^CAGE_GUEST_STAGE windows-11 (account|oobe|credentials|media|tools|services)$' -and $stage -cne $lastStage) {
+        if ($stage -cmatch '\A(CAGE_GUEST_STAGE windows-11 (account|oobe|credentials|media|tools|services)|CAGE_WINDOWS_ISO_BOOT (failed|unconfirmed))\z' -and $stage -cne $lastStage) {
             Write-Output $stage
             $lastStage = $stage
         }
@@ -69,21 +69,31 @@ $progressFile=$a.ProgressFile
 $a.Remove('ProgressFile')
 $s=[Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('__SCRIPT__'))
 $progressStream=$null
+function Write-InstallerProgress([string]$Line) {
+    $bytes=[Text.Encoding]::UTF8.GetBytes($Line)
+    $progressStream.Position=0
+    $progressStream.SetLength(0)
+    $progressStream.Write($bytes,0,$bytes.Length)
+    $progressStream.Flush()
+}
 try {
     $progressStream=[IO.File]::Open($progressFile,'Open','Write','ReadWrite')
     & $s @a | ForEach-Object {
         $line=[string]$_
-        if ($line -cmatch '^CAGE_GUEST_STAGE windows-11 (account|oobe|credentials|media|tools|services)$') {
-            $bytes=[Text.Encoding]::UTF8.GetBytes($line)
-            $progressStream.Position=0
-            $progressStream.SetLength(0)
-            $progressStream.Write($bytes,0,$bytes.Length)
-            $progressStream.Flush()
+        if ($line -cmatch '\ACAGE_GUEST_STAGE windows-11 (account|oobe|credentials|media|tools|services)\z') {
+            Write-InstallerProgress $line
         }
         Write-Output $_
     }
     exit 0
-} catch { Write-Error $_; exit 1 }
+} catch {
+    $message=$_.Exception.Message
+    if ($progressStream -and $message -cmatch '\ACAGE_WINDOWS_ISO_BOOT (failed|unconfirmed)\z') {
+        Write-InstallerProgress $message
+    }
+    Write-Error $_ -ErrorAction Continue
+    exit 1
+}
 finally { if ($progressStream) { $progressStream.Dispose() } }
 '@
     $command=$command.Replace('__PARAMETERS__',$payload).Replace('__SCRIPT__',$script)
