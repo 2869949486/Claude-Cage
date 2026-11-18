@@ -1,25 +1,26 @@
 // The server is authoritative for the site, action and one-time redemption.
 let library;
 async function loadWidget(region) {
-  if (window.turnstile) return window.turnstile;
   if (!library) {
     library = new Promise((resolve, reject) => {
       const script = document.createElement('script');
       const domain = region === 'china' ? 'challenges.cloudflare-cn.com' : 'challenges.cloudflare.com';
       const fail = () => {
         clearTimeout(timer);
+        delete window.tokenLinkProofLoaded;
         script.remove();
         library = undefined;
         reject(new Error('未能加载安全验证，请检查网络后重试。'));
       };
       const timer = setTimeout(fail, 15000);
       script.onerror = fail;
-      script.onload = () => {
-        clearTimeout(timer);
+      window.tokenLinkProofLoaded = () => {
         if (!window.turnstile) return fail();
-        window.turnstile.ready(() => resolve(window.turnstile));
+        clearTimeout(timer);
+        delete window.tokenLinkProofLoaded;
+        resolve(window.turnstile);
       };
-      script.src = 'https://' + domain + '/turnstile/v0/api.js?render=explicit';
+      script.src = 'https://' + domain + '/turnstile/v0/api.js?render=explicit&onload=tokenLinkProofLoaded';
       document.head.append(script);
     });
   }
