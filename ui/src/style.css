@@ -439,20 +439,6 @@ button.large {
   overflow: hidden;
   background: var(--paper);
 }
-.remote-capability-banner {
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 8px 12px;
-  padding: 10px 14px;
-  background: var(--paper);
-  border-bottom: 1px solid var(--line);
-  font-size: 0.9286rem;
-}
-.remote-capability-banner span {
-  flex: 1 1 20em;
-}
 .remote-view,
 .terminal-view {
   position: absolute;
@@ -2055,6 +2041,7 @@ svg {
   color: var(--muted);
   font-size: 0.7857rem;
 }
+.project-recovery-actions { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .start-error strong {
   color: var(--danger);
   font-weight: 500;
