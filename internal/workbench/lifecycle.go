@@ -34,12 +34,13 @@ func (s *Server) startMonitors() {
 		return
 	}
 	ctx := s.lifetimeContextLocked()
-	s.monitors.Add(5)
+	s.monitors.Add(6)
 	s.mu.Unlock()
 	go func() {
 		defer s.monitors.Done()
 		s.monitorTokenUsage(ctx)
 	}()
+	go func() { defer s.monitors.Done(); s.monitorDesktopCodex(ctx) }()
 	go func() {
 		defer s.monitors.Done()
 		ticker := time.NewTicker(time.Hour)

@@ -45,58 +45,68 @@ func (s *Server) serveCodexChannel(terminal *terminalSession, record *mobileReco
 				cancel()
 			}
 		}()
-		var session *codexConversation
-		defer func() {
-			if session != nil {
-				session.close()
-			}
-		}()
-		base := map[string]string{"connection": record.Connection, "cli_id": record.CLIID, "action": "codex-read"}
-		var lastID, answer, status string
-		for ctx.Err() == nil && terminal.ownsConversation() && s.codexWindow() == bin {
-			var pending codexDelivery
-			err := s.runCLIChannel(ctx, "rpc", base, &pending)
-			if err == nil && pending.ID == "" && !pending.OK {
-				return
-			}
-			if err != nil {
-				select {
-				case <-ctx.Done():
-					return
-				case <-time.After(3 * time.Second):
-				}
-				continue
-			}
-			if pending.ID == "" {
-				continue
-			}
-			if !validCLIUUID(pending.ID) || strings.TrimSpace(pending.Message) == "" || len(pending.Message) > 8192 {
-				return
-			}
-			if pending.ID != lastID {
-				project, err := s.projectWorkspace(record.Workspace)
-				if err != nil || isClientMountPath(project) {
-					return
-				}
-				lastID = pending.ID
-				if session == nil {
-					session, err = startCodexConversation(ctx, bin, project)
-				}
-				if err == nil {
-					answer, err = session.ask(pending.Message)
-				}
-				status = "completed"
-				if err != nil {
-					status, answer = "failed", "The result is unavailable. Check the project before retrying. Your next message starts a fresh conversation."
-					if session != nil {
-						session.close()
-						session = nil
-					}
-				}
-			}
-			// An interrupted acknowledgement can only redeliver the saved answer.
-			var ack codexDelivery
-			_ = s.runCLIChannel(ctx, "rpc", map[string]string{"connection": record.Connection, "cli_id": record.CLIID, "action": "codex-done", "id": lastID, "status": status, "answer": answer}, &ack)
+		s.runCodexRequests(ctx, bin, record.Workspace, terminal.ownsConversation, func(ctx context.Context, req map[string]string, out *codexDelivery) error {
+			req["connection"], req["cli_id"] = record.Connection, record.CLIID
+			return s.runCLIChannel(ctx, "rpc", req, out)
+		})
+	}()
+}
+
+func (s *Server) runCodexRequests(ctx context.Context, bin, workspace string, owned func() bool, exchange func(context.Context, map[string]string, *codexDelivery) error) {
+	var session *codexConversation
+	defer func() {
+		if session != nil {
+			session.close()
 		}
 	}()
+	base := map[string]string{"action": "codex-read"}
+	var lastID, answer, status string
+	for ctx.Err() == nil && owned() && s.codexWindow() == bin {
+		var pending codexDelivery
+		err := exchange(ctx, base, &pending)
+		if err == nil && pending.ID == "" && !pending.OK {
+			return
+		}
+		if err != nil {
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(3 * time.Second):
+			}
+			continue
+		}
+		if pending.ID == "" {
+			continue
+		}
+		if !validCLIUUID(pending.ID) || strings.TrimSpace(pending.Message) == "" || len(pending.Message) > 8192 {
+			return
+		}
+		if ctx.Err() != nil || !owned() || s.codexWindow() != bin {
+			return
+		}
+		if pending.ID != lastID {
+			project, err := s.projectWorkspace(workspace)
+			if err != nil || isClientMountPath(project) {
+				return
+			}
+			lastID = pending.ID
+			if session == nil {
+				session, err = startCodexConversation(ctx, bin, project)
+			}
+			if err == nil {
+				answer, err = session.ask(pending.Message)
+			}
+			status = "completed"
+			if err != nil {
+				status, answer = "failed", "The result is unavailable. Check the project before retrying. Your next message starts a fresh conversation."
+				if session != nil {
+					session.close()
+					session = nil
+				}
+			}
+		}
+		// An interrupted acknowledgement can only redeliver the saved answer.
+		var ack codexDelivery
+		_ = exchange(ctx, map[string]string{"action": "codex-done", "id": lastID, "status": status, "answer": answer}, &ack)
+	}
 }
