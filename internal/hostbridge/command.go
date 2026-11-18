@@ -1,0 +1,181 @@
+package hostbridge
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"fmt"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+)
+
+const (
+	defaultCommandTimeout = 2 * time.Minute
+	maxCommandTimeout     = 30 * time.Minute
+	commandOutputLimit    = 64 << 10
+)
+
+// Command runs shell commands on this computer.
+//
+// Dirs are the directories a command may start in; the first is the default.
+// This limits where a command starts, not what it can reach: a command runs
+// with the user's own permissions.
+type Command struct {
+	Dirs []string
+}
+
+type commandInput struct {
+	Command        string `json:"command" jsonschema:"the shell command to run"`
+	Dir            string `json:"dir,omitempty" jsonschema:"absolute directory to run in; defaults to the first project directory"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"stop the command after this many seconds; default 120, at most 1800"`
+}
+
+type commandOutput struct {
+	ExitCode  int    `json:"exit_code"`
+	Output    string `json:"output"`
+	Truncated bool   `json:"truncated,omitempty"`
+	TimedOut  bool   `json:"timed_out,omitempty"`
+}
+
+func (c Command) tool() *mcp.Tool {
+	return &mcp.Tool{
+		Name:        "run_command",
+		Description: "Run a shell command on the user's computer and return its combined output and exit code.",
+	}
+}
+
+// Register adds the run_command tool.
+func (c Command) Register(server *mcp.Server) {
+	mcp.AddTool(server, c.tool(), func(ctx context.Context, _ *mcp.CallToolRequest, in commandInput) (*mcp.CallToolResult, commandOutput, error) {
+		out, err := c.run(ctx, in)
+		return nil, out, err
+	})
+}
+
+func (c Command) run(ctx context.Context, in commandInput) (commandOutput, error) {
+	if strings.TrimSpace(in.Command) == "" {
+		return commandOutput{}, errors.New("command is empty")
+	}
+	dir, err := c.resolveDir(in.Dir)
+	if err != nil {
+		return commandOutput{}, err
+	}
+	timeout := defaultCommandTimeout
+	if in.TimeoutSeconds > 0 {
+		timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxCommandTimeout)
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	cmd := shellCommand(in.Command)
+	cmd.Dir = dir
+	output := &cappedBuffer{limit: commandOutputLimit}
+	cmd.Stdout, cmd.Stderr = output, output
+	if err := cmd.Start(); err != nil {
+		return commandOutput{}, err
+	}
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	var waitErr error
+	select {
+	case waitErr = <-done:
+	case <-ctx.Done():
+		// The command may have started children that hold the output open,
+		// so end the whole tree rather than only the shell.
+		killTree(cmd)
+		waitErr = <-done
+	}
+
+	result := commandOutput{Output: output.String(), Truncated: output.truncated()}
+	if ctx.Err() != nil {
+		result.TimedOut = errors.Is(ctx.Err(), context.DeadlineExceeded)
+		result.ExitCode = -1
+		return result, nil
+	}
+	var exit *exec.ExitError
+	switch {
+	case waitErr == nil:
+	case errors.As(waitErr, &exit):
+		result.ExitCode = exit.ExitCode()
+	default:
+		return result, waitErr
+	}
+	return result, nil
+}
+
+// resolveDir returns the directory to run in, refusing one outside Dirs.
+func (c Command) resolveDir(requested string) (string, error) {
+	if len(c.Dirs) == 0 {
+		return "", errors.New("no project directory is available")
+	}
+	if requested == "" {
+		requested = c.Dirs[0]
+	}
+	if !filepath.IsAbs(requested) {
+		return "", fmt.Errorf("dir must be an absolute path: %s", requested)
+	}
+	// Symlinks are resolved on both sides so a link inside a project
+	// directory cannot stand in for somewhere outside it.
+	real, err := filepath.EvalSymlinks(requested)
+	if err != nil {
+		return "", err
+	}
+	for _, allowed := range c.Dirs {
+		root, err := filepath.EvalSymlinks(allowed)
+		if err != nil {
+			continue
+		}
+		if rel, err := filepath.Rel(root, real); err == nil && filepath.IsLocal(rel) {
+			return real, nil
+		}
+	}
+	return "", fmt.Errorf("dir is outside the project directories: %s", requested)
+}
+
+// cappedBuffer keeps the start and the end of the output, since the end
+// usually holds the error and the start says what ran.
+type cappedBuffer struct {
+	limit   int
+	mu      sync.Mutex
+	head    bytes.Buffer
+	tail    []byte
+	dropped bool
+}
+
+func (b *cappedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	written := len(p)
+	headLimit, tailLimit := b.limit/4, b.limit-b.limit/4
+	if room := headLimit - b.head.Len(); room > 0 {
+		n := min(room, len(p))
+		b.head.Write(p[:n])
+		p = p[n:]
+	}
+	b.tail = append(b.tail, p...)
+	if over := len(b.tail) - tailLimit; over > 0 {
+		b.tail = append(b.tail[:0], b.tail[over:]...)
+		b.dropped = true
+	}
+	return written, nil
+}
+
+func (b *cappedBuffer) truncated() bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.dropped
+}
+
+func (b *cappedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if !b.dropped {
+		return b.head.String() + string(b.tail)
+	}
+	return b.head.String() + "\n[... output truncated ...]\n" + string(b.tail)
+}
