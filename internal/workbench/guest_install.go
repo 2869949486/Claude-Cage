@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -19,6 +20,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/host"
 	"github.com/sylvinus/agent-vm/internal/hostimage"
 	"github.com/sylvinus/agent-vm/internal/hostproxy"
+	"github.com/sylvinus/agent-vm/internal/usererror"
 )
 
 type guestInstallRequest struct {
@@ -226,6 +228,40 @@ func guestInstallFailureMessage(system string, err error) error {
 	return fmt.Errorf("客户机安装未完成，已保留安装进度和文件。%s失败原因：%w", next, err)
 }
 
+func runGuestInstallCommand(cmd *exec.Cmd, system string, execution *jobExecution) error {
+	cmd.Stdout, cmd.Stderr = execution, execution
+	var bootReason string
+	var bootAction string
+	var status *diagnostics.Stream
+	if system == guestos.Windows11 {
+		// Only the installer's stdout carries the boot result. Both streams
+		// still go through the normal job log.
+		status = diagnostics.NewStreamWithConsumer(nil, "windows-install", "info", nil, func(line string) bool {
+			switch line {
+			case "CAGE_WINDOWS_ISO_BOOT failed":
+				bootReason = "Hyper-V 记录了事件 18603，虚拟机未能从 Windows 安装 ISO 启动"
+				bootAction = "原虚拟机和磁盘已保留。若控制台停在 Boot Summary，请在 Hyper-V 管理器关闭这台虚拟机的电源，再回 Cage 点击「继续安装」，用原安装盘重试。"
+			case "CAGE_WINDOWS_ISO_BOOT unconfirmed":
+				bootReason = "尚无法确认虚拟机是否已从 Windows 安装 ISO 启动"
+				bootAction = "原虚拟机和磁盘已保留。请打开 Hyper-V 虚拟机连接窗口；若已进入 Windows 安装程序，请完成安装并登录桌面，再回 Cage 点击「继续安装」。"
+			}
+			return false
+		})
+		cmd.Stdout = io.MultiWriter(execution, status)
+	}
+	err := cmd.Run()
+	if status != nil {
+		_ = status.Close()
+	}
+	if err == nil {
+		return nil
+	}
+	if bootReason != "" && cmd.ProcessState != nil && cmd.ProcessState.ExitCode() > 0 {
+		return usererror.New("安装 Windows 客机", bootReason, bootAction, err)
+	}
+	return guestInstallFailureMessage(system, err)
+}
+
 func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, in guestInstallRequest, guiAuthorize bool, recoveryUser string) {
 	if in.System == guestos.MacOS && !s.account.view().MacOSCredentialsReady {
 		http.Error(w, "请先注册或确认 Cage 账密，再安装 macOS 客机", http.StatusConflict)
@@ -420,11 +456,6 @@ func (s *Server) beginGuestInstallMode(w http.ResponseWriter, r *http.Request, i
 				return err
 			}
 		}
-		cmd.Stdout = s.jobs.execution()
-		cmd.Stderr = s.jobs.execution()
-		if err := cmd.Run(); err != nil {
-			return guestInstallFailureMessage(install.System, err)
-		}
-		return nil
+		return runGuestInstallCommand(cmd, install.System, s.jobs.execution())
 	})
 }
