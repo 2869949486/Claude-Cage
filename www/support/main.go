@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -29,9 +30,14 @@ type message struct {
 	Content string `json:"content"`
 }
 type request struct {
+	Action   string    `json:"action"`
+	Ticket   string    `json:"ticket"`
+	Title    string    `json:"title"`
+	Body     string    `json:"body"`
 	Question string    `json:"question"`
 	History  []message `json:"history"`
 	Web      bool      `json:"web"`
+	Photo    string    `json:"photo,omitempty"`
 	Collect  bool      `json:"collect"`
 }
 type quota struct {
@@ -70,36 +76,60 @@ func fail(w http.ResponseWriter, status int, msg string) {
 	respond(w, status, map[string]string{"error": msg})
 }
 
+type issueDraft struct {
+	Ticket string `json:"ticket,omitempty"`
+	Title  string `json:"title"`
+	Body   string `json:"body"`
+}
 type decision struct {
-	Answer   string `json:"answer"`
-	Status   string `json:"status"`
-	Question string `json:"question"`
+	Issue    *issueDraft `json:"issue,omitempty"`
+	Answer   string      `json:"answer"`
+	Status   string      `json:"status"`
+	Question string      `json:"question"`
 }
 
 func modelJSON(ctx context.Context, key string, messages []message, output any) error {
-	body, _ := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": messages, "response_format": map[string]string{"type": "json_object"}, "max_tokens": 1800, "stream": false, "thinking": map[string]string{"type": "disabled"}})
-	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.token-link.shop/v1/chat/completions", bytes.NewReader(body))
+	raw, err := json.Marshal(messages)
 	if err != nil {
 		return err
+	}
+	text, err := modelText(ctx, key, raw, true)
+	if err != nil {
+		return err
+	}
+	return json.Unmarshal([]byte(text), output)
+}
+func modelText(ctx context.Context, key string, messages json.RawMessage, jsonMode bool) (string, error) {
+	payload := map[string]any{"model": "deepseek-flash", "messages": messages, "max_tokens": 1800, "stream": false, "thinking": map[string]string{"type": "disabled"}}
+	if jsonMode {
+		payload["response_format"] = map[string]string{"type": "json_object"}
+	}
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return "", err
+	}
+	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.token-link.shop/v1/chat/completions", bytes.NewReader(body))
+	if err != nil {
+		return "", err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return fmt.Errorf("model status %d", resp.StatusCode)
+		return "", fmt.Errorf("model status %d", resp.StatusCode)
 	}
 	var result struct{ Choices []struct{ Message message } }
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return err
+		return "", err
 	}
 	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		return errors.New("empty model response")
+		return "", errors.New("empty model response")
 	}
-	return json.Unmarshal([]byte(result.Choices[0].Message.Content), output)
+	return result.Choices[0].Message.Content, nil
 }
 func complete(ctx context.Context, key string, messages []message) (decision, error) {
 	var reply decision
@@ -129,7 +159,9 @@ func main() {
 		log.Fatal(err)
 	}
 	var learned *lessons
+	var issues *issueDesk
 	if dir := os.Getenv("SUPPORT_LEARNING_DIR"); dir != "" {
+		issues = &issueDesk{dir: filepath.Join(filepath.Dir(dir), "issue-drafts")}
 		learned, err = openLessons(dir)
 		if err != nil {
 			log.Fatal(err)
@@ -163,13 +195,42 @@ func main() {
 			fail(w, 405, "请使用提问表单。")
 			return
 		}
+		// The reverse proxy overwrites this header with the actual peer address.
+		ip := net.ParseIP(r.Header.Get("X-Real-IP"))
+		if ip == nil {
+			host, _, _ := net.SplitHostPort(r.RemoteAddr)
+			ip = net.ParseIP(host)
+		}
+		select {
+		case slots <- struct{}{}:
+			defer func() { <-slots }()
+		default:
+			fail(w, 429, "当前提问较多，请稍后再试。")
+			return
+		}
+
 		var in request
-		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 32<<10))
-		if d.Decode(&in) != nil || d.Decode(&struct{}{}) != io.EOF || len(in.History) > 4 {
+		d := json.NewDecoder(http.MaxBytesReader(w, r.Body, 2200<<10))
+		if d.Decode(&in) != nil || d.Decode(&struct{}{}) != io.EOF || len(in.History) > 12 || (in.Photo != "" && !validPhoto(in.Photo)) {
 			fail(w, 400, "问题过长或格式有误。")
 			return
 		}
+		if in.Action == "publish_issue" {
+			if issues == nil {
+				fail(w, 503, "机器人暂不可用。")
+				return
+			}
+			issues.publish(w, r, in, ip.String())
+			return
+		}
+		if in.Action != "" {
+			fail(w, 400, "未知操作。")
+			return
+		}
 		in.Question = strings.TrimSpace(in.Question)
+		if in.Question == "" && in.Photo != "" {
+			in.Question = "请看看这张截图，帮我解释当前情况。"
+		}
 		if in.Question == "" || utf8.RuneCountInString(in.Question) > 1400 {
 			fail(w, 400, "请输入 1–1400 个字符的问题。")
 			return
@@ -184,19 +245,6 @@ func main() {
 		if len(in.History) >= 2 {
 			query += " " + in.History[len(in.History)-2].Content
 		}
-		// The reverse proxy overwrites this header with the actual peer address.
-		ip := net.ParseIP(r.Header.Get("X-Real-IP"))
-		if ip == nil {
-			host, _, _ := net.SplitHostPort(r.RemoteAddr)
-			ip = net.ParseIP(host)
-		}
-		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
-		default:
-			fail(w, 429, "当前提问较多，请稍后再试。")
-			return
-		}
 		if !lim.take(ip.String(), time.Now()) {
 			fail(w, 429, "当前提问额度已用完，请稍后再试。")
 			return
@@ -207,6 +255,16 @@ func main() {
 		if err != nil {
 			fail(w, 503, "答疑规则暂不可用，请稍后再试。")
 			return
+		}
+		observation := ""
+		if in.Photo != "" {
+			observation, err = inspectPhoto(ctx, key, in.Photo, in.Question)
+			if err != nil {
+				log.Printf("image observation unavailable: %v", err)
+				fail(w, 502, "图片暂时未能识别，请重试或粘贴报错原文。")
+				return
+			}
+			query += " " + observation
 		}
 		refs := append(learned.sources(query), ix.search(query)...)
 		external := 0
@@ -223,7 +281,7 @@ func main() {
 		}
 		system := prompt + "\n维护者规则：\n" + string(rules)
 		messages := append([]message{{"system", system}}, in.History...)
-		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, external, notes.String())})
+		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, external, notes.String())})
 		answer, err := complete(ctx, key, messages)
 		if err != nil {
 			log.Printf("answer unavailable: %v", err)
@@ -235,7 +293,17 @@ func main() {
 				log.Printf("question storage: %v", err)
 			}
 		}
-		respond(w, 200, map[string]any{"answer": answer.Answer, "sources": refs, "webCount": external})
+		if answer.Issue != nil {
+			answer.Issue.Ticket = ""
+			if issues != nil && answer.Issue.Title != "" && answer.Issue.Body != "" {
+				answer.Issue.Ticket, err = issues.draft()
+				if err != nil {
+					fail(w, 503, "暂时无法保存 Issue 草稿。")
+					return
+				}
+			}
+		}
+		respond(w, 200, map[string]any{"answer": answer.Answer, "sources": refs, "webCount": external, "observation": observation, "issue": answer.Issue})
 	})
 	server := &http.Server{Addr: "127.0.0.1:18152", Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 82 * time.Second, IdleTimeout: 35 * time.Second}
 	log.Fatal(server.ListenAndServe())
