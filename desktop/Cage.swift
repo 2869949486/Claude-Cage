@@ -1,5 +1,6 @@
 import Cocoa
 import LocalAuthentication
+import CryptoKit
 import WebKit
 import UniformTypeIdentifiers
 
@@ -51,6 +52,33 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
 
     static func main() {
         let args = Array(CommandLine.arguments.dropFirst())
+        if args == ["--confirm-codex-network"] {
+            let data = FileHandle.standardInput.readDataToEndOfFile()
+            guard data.count <= 131072,
+                  let request = try? JSONDecoder().decode([String:String].self, from: data),
+                  let command = request["command"], let cwd = request["cwd"], let project = request["project"] else { exit(1) }
+            let app = NSApplication.shared
+            app.setActivationPolicy(.accessory)
+            let reference = SHA256.hash(data: data).prefix(4).map { String(format: "%02x", $0) }.joined()
+            let alert = NSAlert()
+            alert.messageText = "允许 Codex 为这条命令使用网络？"
+            alert.informativeText = "项目「\(URL(fileURLWithPath: project).lastPathComponent)」。本次命令及其子进程可监听端口、连接网络。请核对完整命令及工作目录。请求编号 \(reference)"
+            let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: 520, height: 165))
+            scroll.hasVerticalScroller = true
+            let details = NSTextView(frame: scroll.contentView.bounds)
+            details.isEditable = false
+            details.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
+            details.isVerticallyResizable = true
+            details.textContainer?.widthTracksTextView = true
+            details.string = "工作目录　\(cwd)\n\n\(command)"
+            scroll.documentView = details
+            alert.accessoryView = scroll
+            alert.addButton(withTitle: "取消")
+            alert.addButton(withTitle: "验证并允许一次")
+            app.activate(ignoringOtherApps: true)
+            guard alert.runModal() == .alertSecondButtonReturn else { exit(1) }
+            verifyCodexDecision("允许项目「\(URL(fileURLWithPath: project).lastPathComponent)」的 Codex 命令使用网络一次。请核对刚才查看的请求编号 \(reference)。")
+        }
         if args.first == "--confirm-codex-app" {
             guard args.count == 4, ["once", "always"].contains(args[3]) else { exit(1) }
             let bundleID = args[2]
@@ -58,14 +86,7 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
             let label = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
                 .map { FileManager.default.displayName(atPath: $0.path) } ?? bundleID
             let scope = args[3] == "always" ? "验证即同意 Codex 记住对此应用的授权，其他使用同一授权的会话也可能受益。" : "验证仅允许本次请求。"
-            let auth = LAContext()
-            auth.localizedCancelTitle = "拒绝"
-            guard auth.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else { exit(1) }
-            auth.evaluatePolicy(.deviceOwnerAuthentication,
-                localizedReason: "授权 Codex 查看和操作「\(label)」(\(bundleID))。\(scope) 请求项目：\(project)") { granted, _ in
-                    exit(granted ? 0 : 1)
-                }
-            withExtendedLifetime(auth) { dispatchMain() }
+            verifyCodexDecision("授权 Codex 查看和操作「\(label)」(\(bundleID))。\(scope) 请求项目：\(project)")
         }
         CageProfile.pinEnvironment()
         if CommandLine.arguments.dropFirst().elementsEqual(["--store-trial-guest-password"]) {
@@ -78,6 +99,15 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
         app.delegate = delegate
         app.setActivationPolicy(.regular)
         withExtendedLifetime(delegate) { app.run() }
+    }
+    private static func verifyCodexDecision(_ reason: String) -> Never {
+        let auth = LAContext()
+        auth.localizedCancelTitle = "拒绝"
+        guard auth.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else { exit(1) }
+        auth.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { granted, _ in
+            exit(granted ? 0 : 1)
+        }
+        return withExtendedLifetime(auth) { dispatchMain() }
     }
     func applicationDidFinishLaunching(_ notification: Notification) {
         let appearance = UserDefaults.standard.dictionary(forKey: "cage.windowAppearance") ?? [:]

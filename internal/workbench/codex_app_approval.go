@@ -1,6 +1,7 @@
 package workbench
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -42,6 +43,22 @@ func (r codexAppRequest) bundleID() string {
 
 func (c *codexConversation) requestReply(m codexEvent) map[string]any {
 	reply := map[string]any{"id": *m.ID}
+	if m.Method == "item/commandExecution/requestApproval" {
+		r := m.Params.codexNetworkRequest
+		decision := "cancel"
+		if c.thread != "" && c.turn != "" && m.Params.ThreadID == c.thread && m.Params.TurnID == c.turn {
+			c.commandNotice = "Codex did not run this command. The requested approval scope is unavailable."
+			if c.approveNetwork != nil && r.networkOnly() {
+				c.commandNotice = "Codex did not run this command. The host did not grant network access for this invocation."
+				if c.approveNetwork(r) {
+					decision = "accept"
+					c.commandNotice = ""
+				}
+			}
+		}
+		reply["result"] = map[string]string{"decision": decision}
+		return reply
+	}
 	if m.Method != "mcpServer/elicitation/request" {
 		reply["error"] = map[string]any{"code": -32601, "message": "Interaction unavailable"}
 		return reply
@@ -62,6 +79,14 @@ func (c *codexConversation) requestReply(m codexEvent) map[string]any {
 // Only the installed native application can return the user's decision. Killing
 // the helper on lock, timeout or session close dismisses its system dialog.
 func confirmCodexApp(ctx context.Context, project string, r codexAppRequest) bool {
+	scope := "once"
+	if slices.Contains(r.Meta.Persist, "always") {
+		scope = "always"
+	}
+	return runCodexConfirmation(ctx, nil, "--confirm-codex-app", project, r.bundleID(), scope)
+}
+
+func runCodexConfirmation(ctx context.Context, input []byte, args ...string) bool {
 	exe, err := os.Executable()
 	if err != nil || filepath.Base(filepath.Dir(exe)) != "Resources" {
 		return false
@@ -72,10 +97,7 @@ func confirmCodexApp(ctx context.Context, project string, r codexAppRequest) boo
 	}
 	ctx, cancel := context.WithTimeout(ctx, 90*time.Second)
 	defer cancel()
-	scope := "once"
-	if slices.Contains(r.Meta.Persist, "always") {
-		scope = "always"
-	}
-	helper := filepath.Join(contents, "MacOS", "Cage")
-	return exec.CommandContext(ctx, helper, "--confirm-codex-app", project, r.bundleID(), scope).Run() == nil
+	cmd := exec.CommandContext(ctx, filepath.Join(contents, "MacOS", "Cage"), args...)
+	cmd.Stdin = bytes.NewReader(input)
+	return cmd.Run() == nil && ctx.Err() == nil
 }

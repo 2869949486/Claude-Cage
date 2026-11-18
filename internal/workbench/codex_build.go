@@ -85,6 +85,18 @@ func codexBuildConfig(ctx context.Context, dir, project string) ([]string, error
 	nodes := []string{"/opt/homebrew/bin/node", "/usr/local/bin/node"}
 	if home, err := os.UserHomeDir(); err == nil && filepath.IsAbs(home) {
 		nodes = append([]string{filepath.Join(home, ".local", "bin", "node")}, nodes...)
+		for _, candidate := range []string{filepath.Join(home, ".local", "bin", "uv"), "/opt/homebrew/bin/uv", "/usr/local/bin/uv"} {
+			tool, err := filepath.EvalSymlinks(candidate)
+			if err != nil || !regularBuildFile(tool) {
+				continue
+			}
+			if err = os.Symlink(tool, filepath.Join(bin, "uv")); err != nil {
+				return nil, err
+			}
+			access[tool] = "read"
+			env["UV_CACHE_DIR"] = filepath.Join(scratch, "uv-cache")
+			break
+		}
 	}
 	for _, candidate := range nodes {
 		node, err := filepath.EvalSymlinks(candidate)

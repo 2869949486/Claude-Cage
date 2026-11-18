@@ -19,15 +19,17 @@ import (
 // Each process owns one ephemeral thread. No thread ID, cwd, executable or
 // permission setting comes from the guest.
 type codexConversation struct {
-	cmd     *exec.Cmd
-	cancel  context.CancelFunc
-	dir     string
-	input   *json.Encoder
-	lines   *bufio.Scanner
-	seq     int
-	thread  string
-	turn    string
-	approve func(codexAppRequest) bool
+	cmd            *exec.Cmd
+	cancel         context.CancelFunc
+	dir            string
+	input          *json.Encoder
+	lines          *bufio.Scanner
+	seq            int
+	thread         string
+	turn           string
+	approve        func(codexAppRequest) bool
+	approveNetwork func(codexNetworkRequest) bool
+	commandNotice  string
 }
 
 func localCodex() string {
@@ -59,6 +61,7 @@ type codexEvent struct {
 	Error  json.RawMessage `json:"error"`
 	Params struct {
 		codexAppRequest
+		codexNetworkRequest
 		ThreadID string `json:"threadId"`
 		TurnID   string `json:"turnId"`
 		Turn     struct{ ID, Status string }
@@ -127,7 +130,7 @@ func startCodexConversationMode(ctx context.Context, bin, project string, comput
 	}
 	if computerUse {
 		// The bundled desktop runtime requires the standard Codex workspace sandbox.
-		args = append(args, "-c", "sandbox_workspace_write.network_access=false", "-c", "sandbox_workspace_write.writable_roots=["+strconv.Quote(filepath.Join(dir, "build"))+"]")
+		args = append(args, "-c", "sandbox_workspace_write.network_access=false", "-c", "features.exec_permission_approvals=true", "-c", "sandbox_workspace_write.writable_roots=["+strconv.Quote(filepath.Join(dir, "build"))+"]")
 	} else {
 		args = append(args, "-c", "permissions.delegated.network.enabled=false", "-c", `shell_environment_policy.inherit="none"`)
 	}
@@ -154,6 +157,9 @@ func startCodexConversationMode(ctx context.Context, bin, project string, comput
 	c.lines.Buffer(make([]byte, 64<<10), 8<<20)
 	if computerUse {
 		c.approve = func(r codexAppRequest) bool { return confirmCodexApp(life, project, r) }
+		c.approveNetwork = func(r codexNetworkRequest) bool {
+			return confirmCodexNetwork(life, project, dir, r)
+		}
 	}
 	success := false
 	defer func() {
@@ -225,7 +231,7 @@ func startCodexConversationMode(ctx context.Context, bin, project string, comput
 		params["sandbox"] = "workspace-write"
 		params["approvalPolicy"] = "on-request"
 		params["approvalsReviewer"] = "user"
-		params["developerInstructions"] = params["developerInstructions"].(string) + " Use Computer Use for the assigned task. Only the host user can approve access. Return only task-relevant results. Do not seek or disclose host network addresses or unrelated personal information."
+		params["developerInstructions"] = params["developerInstructions"].(string) + " Use the shell directly for builds, tests, diagnostic logs and command-line tools. Use Computer Use for graphical tasks in the target app. A local port listener or an SSH connection may need a one-command network permission: request with_additional_permissions with network.enabled=true, in the assigned project. Cage presents that request to the host user. Only the host user can approve access. Return only task-relevant results. Do not seek or disclose host network addresses or unrelated personal information."
 	}
 	if err = c.call("thread/start", params, &start); err != nil {
 		return nil, err
@@ -287,6 +293,7 @@ func (c *codexConversation) ask(text string) (string, error) {
 		return "", errors.New("Codex did not start a turn")
 	}
 	c.turn = start.Turn.ID
+	c.commandNotice = ""
 	defer func() { c.turn = "" }()
 	var answer string
 	for {
@@ -302,6 +309,9 @@ func (c *codexConversation) ask(text string) (string, error) {
 			answer = p.Item.Text
 		}
 		if m.Method == "turn/completed" && p.Turn.ID == start.Turn.ID {
+			if c.commandNotice != "" && (p.Turn.Status != "completed" || strings.TrimSpace(answer) == "") {
+				return c.commandNotice, nil
+			}
 			if p.Turn.Status != "completed" || strings.TrimSpace(answer) == "" || len(answer) > 8192 {
 				return "", errors.New("Codex did not return a deliverable answer")
 			}
