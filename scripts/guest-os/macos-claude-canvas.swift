@@ -88,23 +88,61 @@ private func titleBarHeight(_ window: AXUIElement, _ frame: CGRect) -> CGFloat {
     return bottom < frame.height / 3 ? bottom : 0
 }
 
-// JPEG has no alpha. A window's rounded corners are filled with the colour
-// just inside its bottom edge instead of the encoder's black.
-private func windowEdgeColor(_ image: CGImage) -> CGColor? {
+// macOS draws a window with rounded corners whose outside is transparent,
+// and JPEG has no alpha. Cage shows the window as the whole pane, so each
+// pixel outside a corner's curve takes the colour just inside the window's
+// edge on the same row. The pane then shows a window with square corners.
+private func squaredWindowCorners(_ image: CGImage) -> CGImage {
     switch image.alphaInfo {
-    case .none, .noneSkipFirst, .noneSkipLast: return nil
+    case .none, .noneSkipFirst, .noneSkipLast: return image
     default: break
     }
-    guard image.width > 40, image.height > 40,
-          let pixel = image.cropping(to: CGRect(x: 16, y: image.height - 17, width: 1, height: 1)),
-          let context = CGContext(data: nil, width: 1, height: 1, bitsPerComponent: 8, bytesPerRow: 4,
-                                  space: CGColorSpaceCreateDeviceRGB(),
-                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
-    context.draw(pixel, in: CGRect(x: 0, y: 0, width: 1, height: 1))
-    guard let data = context.data else { return nil }
-    let bytes = data.assumingMemoryBound(to: UInt8.self)
-    guard bytes[3] == 255 else { return nil }
-    return CGColor(red: CGFloat(bytes[0]) / 255, green: CGFloat(bytes[1]) / 255, blue: CGFloat(bytes[2]) / 255, alpha: 1)
+    let width = image.width, height = image.height
+    // Wider than the largest system corner radius at twice the point density.
+    let reach = min(128, width / 4, height / 4)
+    guard reach > 4 else { return image }
+    // Keep the captured colour space so the window's colours are not converted.
+    let spaces = [image.colorSpace, CGColorSpaceCreateDeviceRGB()].compactMap { $0 }.filter { $0.model == .rgb }
+    guard let context = spaces.lazy.compactMap({
+              CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: width * 4, space: $0,
+                        bitmapInfo: CGImageAlphaInfo.premultipliedFirst.rawValue | CGBitmapInfo.byteOrder32Little.rawValue)
+          }).first,
+          let data = context.data else { return image }
+    context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+    // Little-endian premultiplied-first pixels read as 0xAARRGGBB.
+    let pixels = data.bindMemory(to: UInt32.self, capacity: width * height)
+    func opaque(_ value: UInt32) -> Bool { value >> 24 == 0xFF }
+    // The colour is read a little inside the edge, past any anti-aliased
+    // outline, and replaces that outline along the curve too. Rows are filled
+    // from the centre outwards; a row with no opaque pixel near its edge
+    // copies the row filled just before it.
+    let inset = 2, last = width - 1
+    var changed = false
+    for (rows, step) in [(Array((0..<reach).reversed()), width), (Array((height - reach)..<height), -width)] {
+        for y in rows {
+            let row = pixels + y * width, inner = row + step
+            if !opaque(row[0]) {
+                if let x = (1..<reach).first(where: { opaque(row[$0]) }) {
+                    let end = opaque(row[x + inset]) ? x + inset : x
+                    for i in 0..<end { row[i] = row[end] }
+                } else {
+                    for i in 0..<reach where !opaque(row[i]) { row[i] = inner[i] }
+                }
+                changed = true
+            }
+            if !opaque(row[last]) {
+                if let x = (1..<reach).first(where: { opaque(row[last - $0]) }) {
+                    let end = opaque(row[last - x - inset]) ? x + inset : x
+                    for i in 0..<end { row[last - i] = row[last - end] }
+                } else {
+                    for i in 0..<reach where !opaque(row[last - i]) { row[last - i] = inner[last - i] }
+                }
+                changed = true
+            }
+        }
+    }
+    guard changed else { return image }
+    return context.makeImage() ?? image
 }
 
 // ImageIO compresses the whole window on the CPU. Callers run this off the
@@ -112,13 +150,12 @@ private func windowEdgeColor(_ image: CGImage) -> CGColor? {
 // sent as JPEG: it encodes and decodes several times faster than PNG and is
 // the same kind of image a Linux guest sends, at that display's quality.
 private func encodedWindowFrame(_ content: CGImage, phoneJPEG: Bool) throws -> (data: Data, mime: String) {
+    let content = squaredWindowCorners(content)
     if phoneJPEG { return (try phoneDesktopJPEG(content), "image/jpeg") }
-    let edge = windowEdgeColor(content)
     var data = Data()
     // Preserve native glyph density and geometry even on photo-heavy windows.
     for quality in [0.92, 0.84] {
-        var properties: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
-        if let edge { properties[kCGImageDestinationBackgroundColor] = edge }
+        let properties: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
         data = try encodedImage(content, type: .jpeg, properties: properties as CFDictionary)
         if data.count < 8<<20 { break }
     }
