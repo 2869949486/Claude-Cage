@@ -724,6 +724,24 @@ button.large {
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
+.status-network-speed {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  flex-shrink: 0;
+  font-size: 0.7857rem;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.status-network-speed > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.status-network-speed > span > span {
+  min-width: 8ch;
+  text-align: right;
+}
 .status-feedback {
   max-width: 48vw;
   overflow: hidden;
@@ -2348,6 +2366,10 @@ svg {
   .status-bar > button:nth-of-type(3) {
     display: none;
   }
+  .status-bar {
+    gap: 8px;
+    padding-inline: 12px;
+  }
   .settings-content {
     padding: 32px;
   }
@@ -2375,6 +2397,13 @@ svg {
   .status-feedback,
   .status-feedback:has(.safety-checklist-link) {
     display: none;
+  }
+  .status-bar {
+    gap: 4px;
+    padding-inline: 10px;
+  }
+  .status-network-speed {
+    gap: 6px;
   }
   .welcome {
     padding: 24px 20px;
