@@ -36,17 +36,25 @@ type Bridge struct {
 	once     sync.Once
 }
 
-// Start serves the plugins on a free loopback port.
-func Start(plugins ...Plugin) (*Bridge, error) {
+// NewToken returns a random bearer token.
+func NewToken() (string, error) {
 	raw := make([]byte, 32)
 	if _, err := rand.Read(raw); err != nil {
-		return nil, err
+		return "", err
+	}
+	return hex.EncodeToString(raw), nil
+}
+
+// Start serves the plugins on a free loopback port to clients presenting token.
+func Start(token string, plugins ...Plugin) (*Bridge, error) {
+	if len(token) < 32 {
+		return nil, errors.New("token is too short")
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return nil, err
 	}
-	b := &Bridge{token: hex.EncodeToString(raw), listener: listener}
+	b := &Bridge{token: token, listener: listener}
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
 		// One server per session keeps sessions from seeing each other's state.
 		server := mcp.NewServer(&mcp.Implementation{Name: "computer", Version: "1"}, nil)

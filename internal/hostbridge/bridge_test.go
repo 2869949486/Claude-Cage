@@ -16,7 +16,11 @@ import (
 
 func startBridge(t *testing.T, dirs ...string) *Bridge {
 	t.Helper()
-	bridge, err := Start(Command{Dirs: dirs})
+	token, err := NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, err := Start(token, Command{Dirs: func() []string { return dirs }})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -22,11 +22,15 @@ const (
 
 // Command runs shell commands on this computer.
 //
-// Dirs are the directories a command may start in; the first is the default.
-// This limits where a command starts, not what it can reach: a command runs
-// with the user's own permissions.
+// Dirs reports the directories a command may start in; the first is the
+// default. This limits where a command starts, not what it can reach: a
+// command runs with the user's own permissions.
+//
+// MapDir, if set, turns the directory a caller names into this computer's
+// spelling of it, for callers that see the same directory under another path.
 type Command struct {
-	Dirs []string
+	Dirs   func() []string
+	MapDir func(string) string
 }
 
 type commandInput struct {
@@ -110,11 +114,14 @@ func (c Command) run(ctx context.Context, in commandInput) (commandOutput, error
 
 // resolveDir returns the directory to run in, refusing one outside Dirs.
 func (c Command) resolveDir(requested string) (string, error) {
-	if len(c.Dirs) == 0 {
+	dirs := c.Dirs()
+	if len(dirs) == 0 {
 		return "", errors.New("no project directory is available")
 	}
 	if requested == "" {
-		requested = c.Dirs[0]
+		requested = dirs[0]
+	} else if c.MapDir != nil {
+		requested = c.MapDir(requested)
 	}
 	if !filepath.IsAbs(requested) {
 		return "", fmt.Errorf("dir must be an absolute path: %s", requested)
@@ -125,7 +132,7 @@ func (c Command) resolveDir(requested string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	for _, allowed := range c.Dirs {
+	for _, allowed := range dirs {
 		root, err := filepath.EvalSymlinks(allowed)
 		if err != nil {
 			continue

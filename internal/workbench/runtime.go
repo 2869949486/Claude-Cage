@@ -221,6 +221,7 @@ func (s *Server) attach() error {
 	s.ready = true
 	s.mu.Unlock()
 	s.restoreProjectShares()
+	s.ensureHostTools()
 	s.desktopViews.background(s.changeDesktopVisibility)
 	s.browserViews.background(s.changeBrowserVisibility)
 	return nil
@@ -250,6 +251,8 @@ func (s *Server) monitor(ctx context.Context) {
 						s.mu.Lock()
 						s.ready = false
 						s.mu.Unlock()
+					} else {
+						s.ensureHostTools()
 					}
 				}
 				timing.stage("environment_health")
@@ -550,6 +553,7 @@ func (s *Server) stopEnvironment() (returned error) {
 	s.terminals.closeAll()
 	s.mobileCLI.stopAll()
 	s.closeProjectShares()
+	s.closeHostTools()
 	if _, err := os.Stat(filepath.Join(s.instanceDir(), "lima.yaml")); !containerenv.Configured(s.profile) && os.IsNotExist(err) {
 		return nil
 	}

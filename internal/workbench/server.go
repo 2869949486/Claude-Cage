@@ -120,6 +120,7 @@ type Server struct {
 	mobileConnectMu                                  sync.Mutex
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
+	hostTools                                        *hostTools
 	projectErrors                                    []projectShareError
 	clientMounts                                     map[string]*guestClientMount
 	clientWorkspace                                  string
@@ -771,6 +772,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.ProjectFileCache = s.preferences.ProjectFileCache
 	input.ReuseClaudeLogin = s.preferences.ReuseClaudeLogin
 	input.TransferAllowUnclean = s.preferences.TransferAllowUnclean
+	input.HostTools = s.preferences.HostTools
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	s.mu.Unlock()
