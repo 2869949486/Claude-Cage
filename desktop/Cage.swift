@@ -1,4 +1,5 @@
 import Cocoa
+import LocalAuthentication
 import WebKit
 import UniformTypeIdentifiers
 
@@ -49,6 +50,23 @@ final class CageApp: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNaviga
     }
 
     static func main() {
+        let args = Array(CommandLine.arguments.dropFirst())
+        if args.first == "--confirm-codex-app" {
+            guard args.count == 4, ["once", "always"].contains(args[3]) else { exit(1) }
+            let bundleID = args[2]
+            let project = String(URL(fileURLWithPath: args[1]).lastPathComponent.prefix(80))
+            let label = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleID)
+                .map { FileManager.default.displayName(atPath: $0.path) } ?? bundleID
+            let scope = args[3] == "always" ? "验证即同意 Codex 记住对此应用的授权，其他使用同一授权的会话也可能受益。" : "验证仅允许本次请求。"
+            let auth = LAContext()
+            auth.localizedCancelTitle = "拒绝"
+            guard auth.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else { exit(1) }
+            auth.evaluatePolicy(.deviceOwnerAuthentication,
+                localizedReason: "授权 Codex 查看和操作「\(label)」(\(bundleID))。\(scope) 请求项目：\(project)") { granted, _ in
+                    exit(granted ? 0 : 1)
+                }
+            withExtendedLifetime(auth) { dispatchMain() }
+        }
         CageProfile.pinEnvironment()
         if CommandLine.arguments.dropFirst().elementsEqual(["--store-trial-guest-password"]) {
             do { try MacGuestLoginCredential.importFromPipe(); return }

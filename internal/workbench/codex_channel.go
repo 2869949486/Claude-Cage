@@ -45,14 +45,14 @@ func (s *Server) serveCodexChannel(terminal *terminalSession, record *mobileReco
 				cancel()
 			}
 		}()
-		s.runCodexRequests(ctx, bin, record.Workspace, terminal.ownsConversation, func(ctx context.Context, req map[string]string, out *codexDelivery) error {
+		s.runCodexRequests(ctx, bin, record.Workspace, false, terminal.ownsConversation, func(ctx context.Context, req map[string]string, out *codexDelivery) error {
 			req["connection"], req["cli_id"] = record.Connection, record.CLIID
 			return s.runCLIChannel(ctx, "rpc", req, out)
 		})
 	}()
 }
 
-func (s *Server) runCodexRequests(ctx context.Context, bin, workspace string, owned func() bool, exchange func(context.Context, map[string]string, *codexDelivery) error) {
+func (s *Server) runCodexRequests(ctx context.Context, bin, workspace string, computerUse bool, owned func() bool, exchange func(context.Context, map[string]string, *codexDelivery) error) {
 	var session *codexConversation
 	defer func() {
 		if session != nil {
@@ -91,7 +91,7 @@ func (s *Server) runCodexRequests(ctx context.Context, bin, workspace string, ow
 			}
 			lastID = pending.ID
 			if session == nil {
-				session, err = startCodexConversation(ctx, bin, project)
+				session, err = startCodexConversationMode(ctx, bin, project, computerUse)
 			}
 			if err == nil {
 				answer, err = session.ask(pending.Message)

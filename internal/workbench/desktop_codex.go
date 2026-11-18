@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -62,8 +63,9 @@ os.execv(sys.executable,[sys.executable,"-I",str(p),sys.argv[1]])`
 }
 
 type desktopCodexGrant struct {
-	Workspace string `json:"workspace"`
-	Account   string `json:"account"`
+	Workspace   string `json:"workspace"`
+	Account     string `json:"account"`
+	ComputerUse bool   `json:"computer_use,omitempty"`
 }
 
 type desktopCodexEndpoint struct{ Grant, Session string }
@@ -75,7 +77,11 @@ func (s *Server) monitorDesktopCodex(ctx context.Context) {
 	}
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
-	workers := map[desktopCodexEndpoint]context.CancelFunc{}
+	type workerKey struct {
+		desktopCodexEndpoint
+		scope desktopCodexGrant
+	}
+	workers := map[workerKey]context.CancelFunc{}
 	var group sync.WaitGroup
 	stop := func() {
 		for key, cancel := range workers {
@@ -143,25 +149,27 @@ func (s *Server) monitorDesktopCodex(ctx context.Context) {
 			installed = false
 			continue
 		}
-		active := map[desktopCodexEndpoint]bool{}
+		active := map[workerKey]bool{}
 		for _, endpoint := range endpoints {
-			project := grants[endpoint.Grant].Workspace
+			scope := grants[endpoint.Grant]
+			key := workerKey{endpoint, scope}
+			project := scope.Workspace
 			if project == "" || !validCLIUUID(endpoint.Session) {
 				continue
 			}
-			active[endpoint] = true
-			if workers[endpoint] != nil {
+			active[key] = true
+			if workers[key] != nil {
 				continue
 			}
 			life, end := context.WithCancel(ctx)
 			revoke := context.AfterFunc(epoch, end)
-			workers[endpoint] = end
+			workers[key] = end
 			group.Add(1)
 			go func() {
 				defer group.Done()
 				defer revoke()
 				defer end()
-				s.runCodexRequests(life, bin, project, func() bool { return life.Err() == nil }, func(ctx context.Context, req map[string]string, out *codexDelivery) error {
+				s.runCodexRequests(life, bin, project, scope.ComputerUse && runtime.GOOS == "darwin", func() bool { return life.Err() == nil }, func(ctx context.Context, req map[string]string, out *codexDelivery) error {
 					req["session"], req["endpoint"] = endpoint.Session, endpoint.Grant
 					return s.desktopCodexRPC(ctx, "rpc", req, out)
 				})
