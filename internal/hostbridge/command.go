@@ -28,9 +28,22 @@ const (
 //
 // MapDir, if set, turns the directory a caller names into this computer's
 // spelling of it, for callers that see the same directory under another path.
+//
+// Approve, if set, is asked before each command and refuses it by returning
+// an error, whose text the caller sees.
 type Command struct {
-	Dirs   func() []string
-	MapDir func(string) string
+	Dirs    func() []string
+	MapDir  func(string) string
+	Approve func(context.Context, CommandRequest) error
+}
+
+// CommandRequest is one command awaiting approval. Dir is the directory it
+// would run in and Project the allowed directory that contains it, both with
+// symlinks resolved.
+type CommandRequest struct {
+	Command string
+	Dir     string
+	Project string
 }
 
 type commandInput struct {
@@ -65,9 +78,14 @@ func (c Command) run(ctx context.Context, in commandInput) (commandOutput, error
 	if strings.TrimSpace(in.Command) == "" {
 		return commandOutput{}, errors.New("command is empty")
 	}
-	dir, err := c.resolveDir(in.Dir)
+	dir, project, err := c.resolveDir(in.Dir)
 	if err != nil {
 		return commandOutput{}, err
+	}
+	if c.Approve != nil {
+		if err := c.Approve(ctx, CommandRequest{Command: in.Command, Dir: dir, Project: project}); err != nil {
+			return commandOutput{}, err
+		}
 	}
 	timeout := defaultCommandTimeout
 	if in.TimeoutSeconds > 0 {
@@ -112,11 +130,12 @@ func (c Command) run(ctx context.Context, in commandInput) (commandOutput, error
 	return result, nil
 }
 
-// resolveDir returns the directory to run in, refusing one outside Dirs.
-func (c Command) resolveDir(requested string) (string, error) {
+// resolveDir returns the directory to run in and the allowed directory that
+// contains it, refusing one outside Dirs.
+func (c Command) resolveDir(requested string) (dir, project string, err error) {
 	dirs := c.Dirs()
 	if len(dirs) == 0 {
-		return "", errors.New("no project directory is available")
+		return "", "", errors.New("no project directory is available")
 	}
 	if requested == "" {
 		requested = dirs[0]
@@ -124,13 +143,13 @@ func (c Command) resolveDir(requested string) (string, error) {
 		requested = c.MapDir(requested)
 	}
 	if !filepath.IsAbs(requested) {
-		return "", fmt.Errorf("dir must be an absolute path: %s", requested)
+		return "", "", fmt.Errorf("dir must be an absolute path: %s", requested)
 	}
 	// Symlinks are resolved on both sides so a link inside a project
 	// directory cannot stand in for somewhere outside it.
 	real, err := filepath.EvalSymlinks(requested)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 	for _, allowed := range dirs {
 		root, err := filepath.EvalSymlinks(allowed)
@@ -138,10 +157,10 @@ func (c Command) resolveDir(requested string) (string, error) {
 			continue
 		}
 		if rel, err := filepath.Rel(root, real); err == nil && filepath.IsLocal(rel) {
-			return real, nil
+			return real, root, nil
 		}
 	}
-	return "", fmt.Errorf("dir is outside the project directories: %s", requested)
+	return "", "", fmt.Errorf("dir is outside the project directories: %s", requested)
 }
 
 // cappedBuffer keeps the start and the end of the output, since the end

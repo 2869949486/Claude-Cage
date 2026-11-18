@@ -3,6 +3,7 @@ package hostbridge
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -97,6 +98,52 @@ func TestCommandStopsAtTimeoutWithItsChildren(t *testing.T) {
 	out, _ := call(t, startBridge(t, t.TempDir()), commandInput{Command: sleep, TimeoutSeconds: 1})
 	if !out.TimedOut || time.Since(started) > 20*time.Second {
 		t.Fatalf("got %+v after %s", out, time.Since(started))
+	}
+}
+
+func TestRefusedCommandDoesNotRun(t *testing.T) {
+	dir := t.TempDir()
+	token, _ := NewToken()
+	var asked CommandRequest
+	refuse := true
+	bridge, err := Start(token, Command{
+		Dirs: func() []string { return []string{dir} },
+		Approve: func(_ context.Context, request CommandRequest) error {
+			asked = request
+			if refuse {
+				return errors.New("the user refused this command")
+			}
+			return nil
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = bridge.Close() })
+	create := "echo x > made.txt"
+	if runtime.GOOS == "windows" {
+		create = "Set-Content made.txt x"
+	}
+	_, result := call(t, bridge, commandInput{Command: create})
+	if !result.IsError {
+		t.Fatal("a refused command returned a result")
+	}
+	if text, _ := json.Marshal(result.Content); !strings.Contains(string(text), "the user refused this command") {
+		t.Fatalf("the refusal is not reported: %s", text)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "made.txt")); err == nil {
+		t.Fatal("a refused command ran")
+	}
+	real, _ := filepath.EvalSymlinks(dir)
+	if asked.Command != create || asked.Dir != real || asked.Project != real {
+		t.Fatalf("asked about %+v", asked)
+	}
+	refuse = false
+	if out, result := call(t, bridge, commandInput{Command: create}); result.IsError || out.ExitCode != 0 {
+		t.Fatalf("an approved command failed: %+v", out)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "made.txt")); err != nil {
+		t.Fatal("an approved command did not run")
 	}
 }
 

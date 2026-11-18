@@ -92,7 +92,7 @@ func (s *Server) startHostTools() error {
 	if err != nil {
 		return err
 	}
-	bridge, err := hostbridge.Start(token, hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash})
+	bridge, err := hostbridge.Start(token, hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: newHostApprovals().approve})
 	if err != nil {
 		return err
 	}
