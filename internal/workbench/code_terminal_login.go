@@ -77,7 +77,7 @@ func (s *Server) startCodeLogin(input terminalRequest, expectedID string) (*term
 			s.op.Lock()
 			input.ClaudeAccountID = selected.ID
 			input.afterLogin = login
-			input.requestContext = context.WithValue(ctx, mobileEpochKey{}, epoch)
+			input.requestContext = context.WithValue(ctx, accountEpochKey{}, epoch)
 			if ctx.Err() != nil || !login.replaceable() {
 				s.op.Unlock()
 				return
