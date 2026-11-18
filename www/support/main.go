@@ -69,7 +69,7 @@ func fail(w http.ResponseWriter, status int, msg string) {
 	respond(w, status, map[string]string{"error": msg})
 }
 func complete(ctx context.Context, key string, messages []message) (string, error) {
-	body, _ := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": messages, "max_tokens": 1800, "stream": false})
+	body, _ := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": messages, "max_tokens": 1800, "stream": false, "thinking": map[string]string{"type": "disabled"}})
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.token-link.shop/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return "", err
@@ -194,7 +194,7 @@ func main() {
 		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, external, notes.String())})
 		answer, err := complete(ctx, key, messages)
 		if err != nil {
-			log.Printf("answer unavailable: %T", err)
+			log.Printf("answer unavailable: %v", err)
 			fail(w, 502, "模型暂时没有返回回答，请稍后重试。")
 			return
 		}
