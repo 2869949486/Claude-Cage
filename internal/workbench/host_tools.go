@@ -29,6 +29,12 @@ const hostToolsPort = 18962
 //go:embed host_tools_config.py
 var hostToolsConfigScript string
 
+// hostToolsRelayScript lets the desktop app, which can only start a server as
+// a local program, reach the same tools.
+//
+//go:embed host_tools_relay.py
+var hostToolsRelayScript string
+
 // hostTools is the running tool server and the SSH process that forwards the
 // environment's port to it.
 type hostTools struct {
@@ -159,8 +165,8 @@ func hostToolsEntry(token string) map[string]any {
 	}
 }
 
-// writeHostToolsConfig adds the entry to each Claude profile in the
-// environment. The token travels on SSH stdin, never argv.
+// writeHostToolsConfig adds the entry to each Claude Code profile and to the
+// desktop app in the environment. The token travels on SSH stdin, never argv.
 func (s *Server) writeHostToolsConfig(ctx context.Context, token string) error {
 	entry, err := json.Marshal(hostToolsEntry(token))
 	if err != nil {
@@ -180,10 +186,11 @@ func (s *Server) writeHostToolsConfig(ctx context.Context, token string) error {
 	return nil
 }
 
-// hostToolsConfigInput is the script followed by the entry it reads back
+// hostToolsConfigInput is the script preceded by the values it reads back
 // from its own source, so the entry is never part of a command line.
 func hostToolsConfigInput(entry []byte) string {
 	// A JSON string of ASCII is also a Python string literal.
 	literal, _ := json.Marshal(string(entry))
-	return "ENTRY = " + string(literal) + "\n" + hostToolsConfigScript
+	relay, _ := json.Marshal(hostToolsRelayScript)
+	return "ENTRY = " + string(literal) + "\nRELAY = " + string(relay) + "\n" + hostToolsConfigScript
 }

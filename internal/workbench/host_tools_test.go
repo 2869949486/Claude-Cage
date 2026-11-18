@@ -1,12 +1,17 @@
 package workbench
 
 import (
+	"bufio"
+	"encoding/json"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/sylvinus/agent-vm/internal/hostbridge"
 )
 
 func TestHostToolDirsListsTheCurrentProjectFirst(t *testing.T) {
@@ -58,5 +63,95 @@ func TestHostToolsConfigInputWritesTheEntry(t *testing.T) {
 		if !strings.Contains(string(written), want) {
 			t.Fatalf("%s is missing from %s", want, written)
 		}
+	}
+}
+
+// The relay is what the desktop app starts: messages written to its stdin
+// must reach the tools and the answers must come back on its stdout.
+func TestHostToolsRelayCarriesAToolCall(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is unavailable")
+	}
+	dir := t.TempDir()
+	token, err := hostbridge.NewToken()
+	if err != nil {
+		t.Fatal(err)
+	}
+	bridge, err := hostbridge.Start(token, hostbridge.Command{Dirs: func() []string { return []string{dir} }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close()
+	relay := filepath.Join(dir, "relay.py")
+	endpoint := filepath.Join(dir, "endpoint.json")
+	settings, _ := json.Marshal(map[string]any{"url": "http://" + bridge.Addr() + "/", "headers": map[string]string{"Authorization": "Bearer " + token}})
+	if err = os.WriteFile(relay, []byte(hostToolsRelayScript), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err = os.WriteFile(endpoint, settings, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(python, relay, endpoint)
+	stdin, _ := cmd.StdinPipe()
+	stdout, _ := cmd.StdoutPipe()
+	cmd.Stderr = os.Stderr
+	if err = cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = stdin.Close(); _ = cmd.Wait() }()
+	timer := time.AfterFunc(30*time.Second, func() { _ = cmd.Process.Kill() })
+	defer timer.Stop()
+	replies := bufio.NewReader(stdout)
+	exchange := func(message string, id float64) map[string]any {
+		t.Helper()
+		if _, err := stdin.Write([]byte(message + "\n")); err != nil {
+			t.Fatal(err)
+		}
+		for {
+			line, err := replies.ReadBytes('\n')
+			if err != nil {
+				t.Fatalf("no reply to %s: %v", message, err)
+			}
+			var reply map[string]any
+			if json.Unmarshal(line, &reply) == nil && reply["id"] == id {
+				return reply
+			}
+		}
+	}
+	initialized := exchange(`{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"test","version":"1"}}}`, 1)
+	if initialized["result"] == nil {
+		t.Fatalf("initialize: %v", initialized)
+	}
+	if _, err = stdin.Write([]byte(`{"jsonrpc":"2.0","method":"notifications/initialized"}` + "\n")); err != nil {
+		t.Fatal(err)
+	}
+	listed, _ := json.Marshal(exchange(`{"jsonrpc":"2.0","id":2,"method":"tools/list"}`, 2))
+	if !strings.Contains(string(listed), `"run_command"`) {
+		t.Fatalf("tools: %s", listed)
+	}
+	called, _ := json.Marshal(exchange(`{"jsonrpc":"2.0","id":3,"method":"tools/call","params":{"name":"run_command","arguments":{"command":"echo relayed"}}}`, 3))
+	if !strings.Contains(string(called), "relayed") {
+		t.Fatalf("call: %s", called)
+	}
+}
+
+// With the server gone the client gets an error for its request rather
+// than silence.
+func TestHostToolsRelayAnswersWhenTheServerIsGone(t *testing.T) {
+	python, err := exec.LookPath("python3")
+	if err != nil {
+		t.Skip("python3 is unavailable")
+	}
+	dir := t.TempDir()
+	relay := filepath.Join(dir, "relay.py")
+	endpoint := filepath.Join(dir, "endpoint.json")
+	_ = os.WriteFile(relay, []byte(hostToolsRelayScript), 0o600)
+	_ = os.WriteFile(endpoint, []byte(`{"url":"http://127.0.0.1:1/"}`), 0o600)
+	cmd := exec.Command(python, relay, endpoint)
+	cmd.Stdin = strings.NewReader(`{"jsonrpc":"2.0","id":7,"method":"tools/list"}` + "\n")
+	output, err := cmd.Output()
+	if err != nil || !strings.Contains(string(output), `"id":7`) || !strings.Contains(string(output), `"error"`) {
+		t.Fatalf("output %q: %v", output, err)
 	}
 }
