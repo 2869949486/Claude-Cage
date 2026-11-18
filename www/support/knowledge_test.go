@@ -43,3 +43,33 @@ func TestImplementationLookupIncludesReturnAfterChunkBoundary(t *testing.T) {
 		t.Fatalf("missing the matched function or its fallback branch: %#v", hits)
 	}
 }
+
+func TestOnlyExplicitOwnerPolicyCanEnterFeishu(t *testing.T) {
+	d := decision{Status: "knowledge_gap", Policy: "service_commitment", Question: "是否提供预约指导？"}
+	for _, topic := range []string{"technical", "", "diagnose", "roadmap"} {
+		if (lookupPlan{Topic: topic}).canAskOwner(d) {
+			t.Fatalf("escalated topic %q", topic)
+		}
+	}
+	if !(lookupPlan{Topic: "service_commitment"}).canAskOwner(d) {
+		t.Fatal("lost actionable policy request")
+	}
+	d.Status = "answered"
+	if (lookupPlan{Topic: "service_commitment"}).canAskOwner(d) {
+		t.Fatal("escalated an answered question")
+	}
+}
+
+func TestProviderOutageQuotesOnlyRelevantProjectText(t *testing.T) {
+	refs := []source{
+		{Title: "项目维护者答复", Text: "可以为企业用户提供指导。"},
+		{Title: "打开项目", URL: "https://claude-cage.com/docs/workbench/", Text: "在项目选择窗口选中项目，点击编辑名称与文件夹，可以添加或解绑文件夹。"},
+	}
+	got := referenceOnly("项目选择窗口能否解绑文件夹？", refs)
+	if !strings.Contains(got, refs[1].Text) || !strings.Contains(got, "[2]") {
+		t.Fatal(got)
+	}
+	if strings.Contains(referenceOnly("Magpie", refs), refs[1].Text) {
+		t.Fatal("unrelated manual excerpt")
+	}
+}

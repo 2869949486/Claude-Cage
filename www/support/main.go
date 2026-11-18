@@ -88,6 +88,8 @@ type decision struct {
 	Issue     *issueDraft `json:"issue,omitempty"`
 	Answer    string      `json:"answer"`
 	Status    string      `json:"status"`
+	Policy    string      `json:"policy"`
+	Lookups   []string    `json:"lookups"`
 	Question  string      `json:"question"`
 }
 
@@ -280,24 +282,9 @@ func main() {
 		if in.LogExcerpt != "" {
 			query += " " + in.LogExcerpt
 		}
-		hints := ""
-		if implementationQuestion.MatchString(in.Question) {
-			// Translate a visitor’s vocabulary to code-search terms. Keep the
-			// original query even when the optional translation times out.
-			hintCtx, cancelHints := context.WithTimeout(ctx, 7*time.Second)
-			var result struct {
-				Terms []string `json:"terms"`
-			}
-			err := modelJSON(hintCtx, key, []message{
-				{"system", "将问题转成用于仓库全文搜索的至多八个英文关键词（函数名、配置名、HTTP 头或错误字符串）。输出 JSON 对象 terms 字符串数组。保留原有符号。不回答问题。"},
-				{"user", in.Question},
-			}, &result)
-			cancelHints()
-			if err == nil && len(result.Terms) <= 8 {
-				hints = strings.Join(result.Terms, " ")
-			}
-		}
-		refs := append(learned.sources(query), ix.search(query, hints)...)
+		plan := planLookup(ctx, key, in.Question)
+		refs := append(learned.sources(query), ix.search(query, "")...)
+		refs = ix.investigate(refs, plan.Queries)
 		external := 0
 		if in.Web {
 			webCtx, stop := context.WithTimeout(ctx, 5*time.Second)
@@ -306,23 +293,30 @@ func main() {
 			external = len(ws)
 			refs = append(refs, ws...)
 		}
-		var notes strings.Builder
-		for i, s := range refs {
-			fmt.Fprintf(&notes, "[%d] %s\n%s\n%s\n\n", i+1, s.Title, s.URL, s.Text)
-		}
 		system := prompt + "\n维护者规则：\n" + string(rules)
 		if in.SuggestTitle {
 			system += "\n本轮请同时生成历史对话标题：根据访客描述、近期对话和截图中的主题，在 JSON 的 chatTitle 字段给出一个便于日后查找的短标题。优先点明具体功能和问题，用访客的语言，例如「Windows 安装卡在启动环境」。中文通常 6–18 字，不加引号、序号、句号，不抄开场白、账号、路径、密钥或私人信息。仅有寒暄、尚无明确主题时省略 chatTitle。"
 		}
 		messages := append([]message{{"system", system}}, in.History...)
-		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n访客提供的诊断日志节选（不完整）：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, in.LogExcerpt, external, notes.String())})
+		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n访客提供的诊断日志节选（不完整）：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, in.LogExcerpt, external, numberedSources(refs, 0))})
 		answer, err := complete(ctx, key, messages)
 		if err != nil {
 			log.Printf("answer unavailable: %v", err)
-			fail(w, 502, "模型暂时没有返回回答，请稍后重试。")
+			respond(w, 200, map[string]any{"answer": referenceOnly(in.Question, refs), "sources": refs, "webCount": external, "observation": observation, "issue": nil})
 			return
 		}
-		if learned != nil && in.Collect && answer.Status == "knowledge_gap" {
+		reviewed := false
+		if answer.Status == "lookup" || answer.Status == "knowledge_gap" {
+			oldLen := len(refs)
+			refs = ix.investigate(refs, answer.Lookups)
+			follow := fmt.Sprintf("核查刚才的初稿。请结合新增检索到的资料和前文编号重新给出完整 JSON。不论技术细节是否查到，都直接回答能确认的部分或问访客要证据；查不到的兼容性要说明尚无实测。只有访客原本就在问尚未确定的商务条款、服务承诺或未来计划时可保留 knowledge_gap 并填 policy。不要将技术疑问改写为对维护者的政策提问。不要再发起 lookup。初稿：%s\n新增资料：\n%s", answer.Answer, numberedSources(refs[oldLen:], oldLen))
+			revised, reviewErr := complete(ctx, key, append(messages, message{"user", follow}))
+			if reviewErr == nil {
+				answer = revised
+				reviewed = true
+			}
+		}
+		if learned != nil && in.Collect && reviewed && plan.canAskOwner(answer) {
 			if err := learned.collect(answer.Question); err != nil {
 				log.Printf("question storage: %v", err)
 			}

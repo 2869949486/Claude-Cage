@@ -66,7 +66,7 @@ func loadIndex(archive, rev string) (*index, error) {
 			return nil, err
 		}
 		p := strings.TrimPrefix(h.Name, "source/")
-		doc := p == "README.md" || strings.HasPrefix(p, "docs/guide/")
+		doc := path.Base(p) == "README.md" || strings.HasPrefix(p, "docs/guide/")
 		if h.Typeflag != tar.TypeReg || h.Size > 512000 || strings.Contains(strings.ToLower(p), "test") {
 			continue
 		}
@@ -113,7 +113,7 @@ func loadIndex(archive, rev string) (*index, error) {
 			if len(body) > 35 {
 				id := len(ix.sections)
 				ix.sections = append(ix.sections, section{source{title, url, body}, doc})
-				for w := range tokens(p + " " + title + " " + body) {
+				for w := range tokens(strings.NewReplacer("_", " ", "-", " ", ".", " ").Replace(p) + " " + p + " " + title + " " + body) {
 					ix.terms[w] = append(ix.terms[w], id)
 				}
 			}
