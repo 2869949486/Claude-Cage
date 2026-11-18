@@ -34,45 +34,61 @@ func newHostApprovals() *hostApprovals {
 }
 
 func (a *hostApprovals) approve(ctx context.Context, request hostbridge.CommandRequest) error {
-	// A command the dialog cannot show faithfully is one the user cannot
+	return a.decide(ctx, request.Project, request.Command+request.Dir, len(request.Command),
+		"允许 Claude 在这台电脑上运行命令？", hostApprovalMessage(request))
+}
+
+// approveTool asks about one call to a plugin's tool. An answer for the
+// session covers that plugin.
+func (a *hostApprovals) approveTool(ctx context.Context, request hostbridge.ToolRequest) error {
+	return a.decide(ctx, "plugin:"+request.Plugin, request.Arguments, len(request.Arguments),
+		"允许 Claude 使用这台电脑上的插件？",
+		"插件「"+request.Plugin+"」\n工具　"+request.Tool+"\n\n"+request.Arguments+
+			"\n\n插件以你的用户权限运行。「本次会话都允许」对该插件生效，直到环境停止。")
+}
+
+// decide asks unless key was already allowed for the session. shown is the
+// text the user must be able to read in full to judge the request.
+func (a *hostApprovals) decide(ctx context.Context, key, shown string, length int, title, message string) error {
+	// A request the dialog cannot show faithfully is one the user cannot
 	// judge: control and invisible format characters can hide part of it.
-	if strings.ContainsFunc(request.Command+request.Dir, func(r rune) bool {
+	if strings.ContainsFunc(shown, func(r rune) bool {
 		return (unicode.IsControl(r) && r != '\n' && r != '\t') || unicode.Is(unicode.Cf, r)
 	}) {
-		return errors.New("the command contains control or invisible characters and was not run")
+		return errors.New("the request contains control or invisible characters and was not run")
 	}
-	if len(request.Command) > hostApprovalCommandMax {
-		return errors.New("the command is too long to show for approval and was not run; put it in a script file")
+	if length > hostApprovalCommandMax {
+		return errors.New("the request is too long to show for approval and was not run; put long content in a file")
 	}
-	if a.sessionAllowed(request.Project) {
+	if a.sessionAllowed(key) {
 		return nil
 	}
 	a.dialog.Lock()
 	defer a.dialog.Unlock()
 	// Another call may have been answered for the session while this one waited.
-	if a.sessionAllowed(request.Project) {
+	if a.sessionAllowed(key) {
 		return nil
 	}
 	ctx, cancel := context.WithTimeout(ctx, hostApprovalWait)
 	defer cancel()
-	scope, answered := a.ask(ctx, "允许 Claude 在这台电脑上运行命令？", hostApprovalMessage(request))
+	scope, answered := a.ask(ctx, title, message)
 	switch {
 	case !answered:
-		return errors.New("no approval dialog could be shown on the user's computer, so the command was not run")
+		return errors.New("no approval dialog could be shown on the user's computer, so nothing was run")
 	case scope == desktop.Session:
 		a.mu.Lock()
-		a.allowed[request.Project] = true
+		a.allowed[key] = true
 		a.mu.Unlock()
 	case scope != desktop.Once:
-		return errors.New("the user did not approve this command, so it was not run")
+		return errors.New("the user did not approve this request, so nothing was run")
 	}
 	return nil
 }
 
-func (a *hostApprovals) sessionAllowed(project string) bool {
+func (a *hostApprovals) sessionAllowed(key string) bool {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	return a.allowed[project]
+	return a.allowed[key]
 }
 
 func hostApprovalMessage(request hostbridge.CommandRequest) string {

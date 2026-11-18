@@ -38,9 +38,10 @@ var hostToolsRelayScript string
 // hostTools is the running tool server and the SSH process that forwards the
 // environment's port to it.
 type hostTools struct {
-	bridge *hostbridge.Bridge
-	cancel context.CancelFunc
-	done   chan struct{}
+	bridge  *hostbridge.Bridge
+	plugins []*hostbridge.External
+	cancel  context.CancelFunc
+	done    chan struct{}
 	// configured is when the environment's clients were last given the entry.
 	configured time.Time
 }
@@ -52,7 +53,12 @@ const hostToolsConfigInterval = time.Minute
 func (h *hostTools) close() {
 	h.cancel()
 	<-h.done
-	_ = h.bridge.Close()
+	if h.bridge != nil {
+		_ = h.bridge.Close()
+	}
+	for _, plugin := range h.plugins {
+		plugin.Close()
+	}
 }
 
 // ensureHostTools starts the tools when the preference is on and they are not
@@ -92,17 +98,31 @@ func (s *Server) startHostTools() error {
 	if err != nil {
 		return err
 	}
-	bridge, err := hostbridge.Start(token, hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: newHostApprovals().approve})
+	approvals := newHostApprovals()
+	ctx, cancel := context.WithCancel(s.lifetimeContext())
+	// Plugins the user installed run beside the built-in command tool. One
+	// that fails to load is left out; the rest still work.
+	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command"}, approvals.approveTool)
+	for _, failure := range failures {
+		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
+	}
+	plugins := []hostbridge.Plugin{hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: approvals.approve}}
+	for _, plugin := range external {
+		plugins = append(plugins, plugin)
+	}
+	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external}
+	bridge, err := hostbridge.Start(token, plugins...)
 	if err != nil {
+		close(tools.done)
+		tools.close()
 		return err
 	}
-	ctx, cancel := context.WithCancel(s.lifetimeContext())
-	tools := &hostTools{bridge: bridge, cancel: cancel, done: make(chan struct{})}
+	tools.bridge = bridge
 	forward := fmt.Sprintf("127.0.0.1:%d:%s", hostToolsPort, bridge.Addr())
 	cmd := s.sshCommandWithForwarding(ctx, "-o", "ExitOnForwardFailure=yes", "-N", "-T", "-R", forward, s.sshTarget())
 	if err = cmd.Start(); err != nil {
-		cancel()
-		_ = bridge.Close()
+		close(tools.done)
+		tools.close()
 		return err
 	}
 	go func() {

@@ -117,3 +117,29 @@ func TestHostApprovalShowsOneDialogAtATime(t *testing.T) {
 		t.Fatalf("%d dialogs at once, %d in all", most.Load(), asked.Load())
 	}
 }
+
+func TestHostApprovalForAPluginIsSeparateFromProjects(t *testing.T) {
+	var asked atomic.Int32
+	var shown string
+	approvals := approvalsAnswering(desktop.Session, true, &asked, &shown)
+	call := hostbridge.ToolRequest{Plugin: "screen-reader", Tool: "read_window", Arguments: `{"app":"Notes"}`}
+	for range 2 {
+		if err := approvals.approveTool(context.Background(), call); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, want := range []string{"screen-reader", "read_window", `{"app":"Notes"}`} {
+		if !strings.Contains(shown, want) {
+			t.Fatalf("the dialog does not show %q: %s", want, shown)
+		}
+	}
+	if err := approvals.approve(context.Background(), hostbridge.CommandRequest{Command: "ls", Dir: "/p/screen-reader", Project: "screen-reader"}); err != nil {
+		t.Fatal(err)
+	}
+	if asked.Load() != 2 {
+		t.Fatalf("asked %d times; a plugin's approval must not cover a project", asked.Load())
+	}
+	if err := approvals.approveTool(context.Background(), hostbridge.ToolRequest{Plugin: "other", Tool: "t", Arguments: "{\"a\":\"\u202e\"}"}); err == nil {
+		t.Fatal("arguments with invisible characters were approved")
+	}
+}
