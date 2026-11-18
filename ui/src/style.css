@@ -721,6 +721,7 @@ button.large {
 }
 .status-network-speed > span {
   display: inline-flex;
+  align-items: center;
   gap: 4px;
 }
 .status-network-speed > span > span {

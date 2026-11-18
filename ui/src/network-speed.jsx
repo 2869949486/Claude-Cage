@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from "react";
+import { ArrowUp, ArrowDown } from "lucide-react";
 import { api } from "./api";
 
 function speedLabel(value) {
@@ -59,8 +60,14 @@ export function NetworkSpeed({ enabled }) {
 
   return (
     <span className="status-network-speed" role="group" aria-label="代理实时速度">
-      <span>上行 <span>{speedLabel(enabled ? rates?.up : null)}</span></span>
-      <span>下行 <span>{speedLabel(enabled ? rates?.down : null)}</span></span>
+      <span>
+        <ArrowUp size={12} role="img" aria-label="上行速度" tabIndex={0} />
+        <span>{speedLabel(enabled ? rates?.up : null)}</span>
+      </span>
+      <span>
+        <ArrowDown size={12} role="img" aria-label="下行速度" tabIndex={0} />
+        <span>{speedLabel(enabled ? rates?.down : null)}</span>
+      </span>
     </span>
   );
 }
