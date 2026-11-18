@@ -226,8 +226,10 @@ func (s *Server) monitor(ctx context.Context) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 	skipped := 0
+	networkSkips := 0
 	for ctx.Err() == nil {
 		timing := s.startMonitorTiming()
+		checkNetwork := false
 		if s.op.TryLock() {
 			skipped = 0
 			if !s.busy() {
@@ -248,10 +250,7 @@ func (s *Server) monitor(ctx context.Context) {
 					}
 				}
 				timing.stage("environment_health")
-				if s.macosGuest != nil {
-					s.monitorNetworkTick()
-					timing.stage("network_tick")
-				}
+				checkNetwork = s.macosGuest != nil
 			} else {
 				timing.result = "job_running"
 			}
@@ -259,6 +258,10 @@ func (s *Server) monitor(ctx context.Context) {
 		} else {
 			skipped++
 			timing.result = "operation_lock_busy"
+		}
+		if checkNetwork {
+			s.runNetworkMonitorTick(ctx, &networkSkips)
+			timing.stage("network_tick")
 		}
 		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", skipped))
 		s.recordMonitorTiming("environment", timing)
@@ -663,25 +666,27 @@ func (s *Server) apply(v savedProfile, validate bool) error {
 	return nil
 }
 
-// Interface recovery uses the ordinary cancellable job queue. Location changes
-// remain governed by the saved exit policy and never replace its baseline.
-func (s *Server) monitorNetworkTick() {
-	timing := s.startMonitorTiming()
-	defer s.recordMonitorTiming("network", timing)
+func (s *Server) networkMonitorBlockedReason() string {
 	if s.storageRecoveryStatus().Required {
-		timing.result = "storage_recovery_pending"
-		return
+		return "storage_recovery_pending"
 	}
 	if s.macSetupPending() {
-		timing.result = "setup_pending"
+		return "setup_pending"
+	}
+	return ""
+}
+
+// Only this phase needs the lifecycle lock. Full safety observation runs in its
+// own loop, including while project operations hold the lifecycle lock.
+func (s *Server) monitorNetworkTick(observed proxyInterfaceObservation, timing *monitorTiming) {
+	if reason := s.networkMonitorBlockedReason(); reason != "" {
+		timing.result = reason
 		return
 	}
-	s.monitorProxyInterface()
-	timing.stage("physical_interface")
+	s.applyProxyInterfaceObservation(observed)
+	timing.stage("physical_interface_apply")
 	s.checkProxyHealth()
 	timing.stage("proxy_health")
-	s.monitorSafety()
-	timing.stage("safety")
 	s.recoverNetwork()
 	timing.stage("recovery")
 	s.refreshProxySubscriptions()
@@ -689,50 +694,76 @@ func (s *Server) monitorNetworkTick() {
 }
 
 func (s *Server) monitorNetwork(ctx context.Context) {
-	s.runNetworkMonitor(ctx, s.monitorNetworkTick)
+	runNetworkMonitor(ctx, func(skipped *int) { s.runNetworkMonitorTick(ctx, skipped) })
 }
 
-// Keep scheduling and lock ownership independent of the network probes so
-// concurrency tests can exercise the real loop without external I/O.
-func (s *Server) runNetworkMonitor(ctx context.Context, tick func()) {
-	ticker := time.NewTicker(5 * time.Second)
-	defer ticker.Stop()
+func runNetworkMonitor(ctx context.Context, tick func(*int)) {
 	skipped := 0
 	for ctx.Err() == nil {
-		s.mu.Lock()
-		// Publish ownership with acquisition and give project requests
-		// waiting on this round a chance before the next tick takes the lock.
-		yielded := s.projectOperationWaiters > 0
-		acquired := !yielded && s.op.TryLock()
-		if acquired {
-			s.networkMonitorDone = make(chan struct{})
+		tick(&skipped)
+		// Start the interval after the round finishes so a slow probe never
+		// causes another round to start immediately.
+		timer := time.NewTimer(5 * time.Second)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return
+		case <-timer.C:
 		}
-		s.mu.Unlock()
-		if acquired {
-			skipped = 0
-			tick()
+	}
+}
+
+func (s *Server) runNetworkMonitorTick(ctx context.Context, skipped *int) {
+	timing := s.startMonitorTiming()
+	defer s.recordMonitorTiming("network", timing)
+	if reason := s.networkMonitorBlockedReason(); reason != "" {
+		*skipped = 0
+		timing.result = reason
+		return
+	}
+	observed := s.observeProxyInterface(ctx)
+	timing.stage("physical_interface")
+	if ctx.Err() != nil {
+		timing.result = "cancelled"
+		return
+	}
+	s.withNetworkMonitorLock(timing, skipped, func() {
+		if ctx.Err() != nil {
+			timing.result = "cancelled"
+			return
+		}
+		s.monitorNetworkTick(observed, timing)
+	})
+}
+
+func (s *Server) withNetworkMonitorLock(timing *monitorTiming, skipped *int, tick func()) {
+	s.mu.Lock()
+	// Publish ownership with acquisition so project requests can distinguish
+	// the monitor from a lifecycle operation and wait only for the former.
+	yielded := s.projectOperationWaiters > 0
+	acquired := !yielded && s.op.TryLock()
+	if acquired {
+		s.networkMonitorDone = make(chan struct{})
+	}
+	s.mu.Unlock()
+	switch {
+	case acquired:
+		*skipped = 0
+		defer func() {
 			s.mu.Lock()
 			s.op.Unlock()
 			close(s.networkMonitorDone)
 			s.networkMonitorDone = nil
 			s.mu.Unlock()
-		} else if yielded {
-			skipped = 0
-			timing := s.startMonitorTiming()
-			timing.result = "project_operations_waiting"
-			s.recordMonitorTiming("network", timing)
-		} else {
-			skipped++
-			timing := s.startMonitorTiming()
-			timing.result = "operation_lock_busy"
-			timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", skipped))
-			s.recordMonitorTiming("network", timing)
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
+		}()
+		tick()
+	case yielded:
+		*skipped = 0
+		timing.result = "project_operations_waiting"
+	default:
+		*skipped += 1
+		timing.result = "operation_lock_busy"
+		timing.stages = append(timing.stages, fmt.Sprintf("consecutive_lock_skips=%d", *skipped))
 	}
 }
 

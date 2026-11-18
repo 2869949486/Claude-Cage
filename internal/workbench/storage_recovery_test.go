@@ -122,7 +122,8 @@ func TestStorageRecoveryKeepsHostAccessAndBlocksEnvironmentMutations(t *testing.
 	if _, err := s.submitJob("network-recovery", func() error { t.Error("background mutation ran"); return nil }); err == nil {
 		t.Fatal("background job bypassed recovery")
 	}
-	s.monitorNetworkTick()
+	var skipped int
+	s.runNetworkMonitorTick(context.Background(), &skipped)
 	if s.jobs.snapshot().ID != "" {
 		t.Fatal("recovery gate created an environment job")
 	}
