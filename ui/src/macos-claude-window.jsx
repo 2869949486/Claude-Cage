@@ -218,6 +218,11 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
       context.drawImage(next.video, 0, top, width, height, 0, 0, width, height);
       context.restore();
       next.video.close();
+      if (!browser && !decoded.current && !hasWindowContent(canvas, startupSample)) {
+        frame.current = null;
+        next.acknowledge?.();
+        return;
+      }
       const contentWidth = next.contentWidth || width, contentHeight = next.contentHeight || height;
       canvas.style.setProperty("--frame-width", contentWidth + "px");
       canvas.style.setProperty("--frame-aspect", contentWidth / contentHeight);
@@ -513,10 +518,6 @@ export function MacOSAppWindow({ browser = false, onOpenPage, visible, keyboard 
         <Monitor size={28} aria-hidden="true" />
         <strong>{phase === "stopped" ? `${appName} 已关闭` : phase === "uninstalled" ? `尚未安装 ${appName}` : phase === "permission" ? "需要允许显示窗口" : "窗口画面暂不可用"}</strong>
         <p>{phase === "stopped" ? "点击上方「打开应用」即可继续使用。" : error || "请按照上方提示完成设置。"}</p>
-      </div>}
-      {(error && image && phase !== "failed" || fileError) && <div className="mac-claude-alerts">
-        {error && image && phase !== "failed" && <p role="alert">{error}</p>}
-        {fileError && <p role="alert">{fileError}</p>}
       </div>}
       {image?.video && <canvas ref={surface} key={`video-${image.epoch}:${videoKey(image)}`} data-frame={videoKey(image)} role="img" aria-label={appName + " 客机窗口"} />}
       {image && !image.video && <img ref={surface} key={`${image.epoch}:${videoKey(image)}`} alt={appName + " 客机窗口"} src={image.src} draggable={false}

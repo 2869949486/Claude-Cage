@@ -154,11 +154,12 @@ try {
     const open = f.page.getByRole("button", { name: "确认文件夹并继续", exact: true });
     const dialog = f.page.getByRole("dialog", { name: "允许使用这个文件夹" });
     const enter = f.page.getByRole("button", { name: "进入工作台", exact: true });
-    await open.waitFor();
-    assert.equal(generation, 0, "polling must not request consent");
-    await f.page.reload();
-    await open.click();
     const allow = dialog.getByRole("button", { name: "允许使用此文件夹", exact: true });
+    await allow.waitFor();
+    assert.equal(generation, 1, "setup presents the scoped authorization automatically");
+    assert.equal(confirmations.length, 0, "opening the panel cannot approve access");
+    assert.equal(checks, 0, "opening the panel cannot start the network check");
+    await f.page.reload();
     await allow.waitFor();
     await dialog.getByText(f.state.settings.workspace, { exact: true }).waitFor();
     await dialog.getByRole("button", { name: "暂不授权", exact: true }).click();

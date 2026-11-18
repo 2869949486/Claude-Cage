@@ -32,7 +32,7 @@ try {
   assert.equal(await page.getByRole("button",{name:"Token 用量",exact:true}).count(),0);
   await page.getByRole("button",{name:/^账户菜单，/}).click();
   await page.getByRole("menuitem",{name:"设置",exact:true}).click();
-  const main=page.getByRole("region",{name:"Claude Code 本地用量",exact:true});
+  const main=page.getByRole("region",{name:"Claude 本地用量",exact:true});
   await main.getByRole("heading",{name:"2026 年活动"}).waitFor();
   await main.getByRole("button",{name:"刷新统计",exact:true}).waitFor();
   assert.equal(await main.locator("button.token-cell").count(),365);
