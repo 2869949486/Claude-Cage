@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 	"net/http/httptest"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -80,10 +81,11 @@ func TestInterfaceRecoveryRevokesGateAndPreservesManualPause(t *testing.T) {
 			s, gate := interfaceMonitorServer(t)
 			s.networkPaused, s.proxyNetworkLost = tc.paused, tc.lost
 			physicalProxyInterface = func(context.Context) (string, error) { return tc.next, nil }
+			observed := s.observeProxyInterface(context.Background())
 			// Keep the recovery queued: assert the synchronous revocation before
 			// any core can restart, then cancel through the normal stop path.
 			s.op.Lock()
-			s.monitorProxyInterface()
+			s.applyProxyInterfaceObservation(observed)
 			s.mu.Lock()
 			queued, paused := s.jobs.snapshot().Kind == "proxy-network" && s.jobs.snapshot().Running, s.networkPaused
 			s.mu.Unlock()
@@ -107,12 +109,24 @@ func TestInterfaceRecoveryRevokesGateAndPreservesManualPause(t *testing.T) {
 
 func TestMissingPhysicalInterfaceClosesGateWithoutUnboundFallback(t *testing.T) {
 	s, gate := interfaceMonitorServer(t)
+	grantTestGate(t, gate)
+	before := gate.Status()
+	destination := netip.MustParseAddrPort("8.8.8.8:443")
+	if before.Mode != cage.GateOpen || !gate.Allows("tcp", destination) {
+		t.Fatal("fixture did not grant public egress before the network failure")
+	}
 	previous := physicalProxyInterface
 	t.Cleanup(func() { physicalProxyInterface = previous })
-	physicalProxyInterface = func(context.Context) (string, error) { return "", errors.New("physical network unavailable") }
-	s.monitorProxyInterface()
-	if gate.Status().Mode != cage.GateClosed || s.networkPaused || !s.proxyNetworkLost || s.jobs.snapshot().Running || s.currentNetworkErrorLocked() == "" {
-		t.Fatal("missing uplink did not preserve offline recovery state")
+	const disconnected = "physical network unavailable"
+	physicalProxyInterface = func(context.Context) (string, error) { return "", errors.New(disconnected) }
+	observed := s.observeProxyInterface(context.Background())
+	s.op.Lock()
+	s.applyProxyInterfaceObservation(observed)
+	s.op.Unlock()
+	after := gate.Status()
+	if after.Mode != cage.GateClosed || after.Reason != disconnected || after.Epoch <= before.Epoch ||
+		gate.Allows("tcp", destination) || s.networkPaused || !s.proxyNetworkLost || s.jobs.snapshot().Running {
+		t.Fatalf("physical network failure did not revoke public egress: %+v", after)
 	}
 	data, _ := os.ReadFile(filepath.Join(s.profile, "proxy", "config.yaml"))
 	if !strings.Contains(string(data), "interface-name: en0") {
@@ -130,7 +144,7 @@ func TestInterfaceRecoveryRetainsFailureForRetry(t *testing.T) {
 	}
 	s.proxyNetworkLost = true
 	s.safety.monitorError = "old interface unavailable"
-	s.monitorProxyInterface()
+	s.applyProxyInterfaceObservation(s.observeProxyInterface(context.Background()))
 	failed := awaitJobIdle(t, &s.jobs)
 	s.op.Lock()
 	if failed.Error == "" {
@@ -141,14 +155,14 @@ func TestInterfaceRecoveryRetainsFailureForRetry(t *testing.T) {
 		t.Fatal("failed rebind lost its pending state or retained a stale error", s.proxyNetworkLost, s.safety.monitorError)
 	}
 	s.mu.Unlock()
-	s.monitorProxyInterface()
+	s.applyProxyInterfaceObservation(s.observeProxyInterface(context.Background()))
 	if s.jobs.snapshot().ID != failed.ID {
 		t.Fatal("recovery retried without waiting")
 	}
 	s.mu.Lock()
 	s.proxyNetworkRetry = time.Now().Add(-time.Second)
 	s.mu.Unlock()
-	s.monitorProxyInterface()
+	s.applyProxyInterfaceObservation(s.observeProxyInterface(context.Background()))
 	s.op.Unlock()
 	retried := awaitJobIdle(t, &s.jobs)
 	if retried.ID == failed.ID || retried.Error == "" {
@@ -161,7 +175,7 @@ func TestInterfaceRecoveryRetainsFailureForRetry(t *testing.T) {
 		t.Fatal(err)
 	}
 	s.proxyNetworkRetry = time.Time{}
-	s.monitorProxyInterface()
+	s.applyProxyInterfaceObservation(s.observeProxyInterface(context.Background()))
 	if s.jobs.snapshot().ID != retried.ID {
 		t.Fatal("stopped environment queued another rebind")
 	}
@@ -177,7 +191,7 @@ func TestInterfaceRecoveryClearsPendingOnlyAfterSuccessfulApply(t *testing.T) {
 	before := gate.Status()
 	s.networkPaused, s.proxyNetworkLost = true, true
 	s.safety.monitorError = "物理网卡暂时不可用"
-	s.monitorProxyInterface()
+	s.applyProxyInterfaceObservation(s.observeProxyInterface(context.Background()))
 	job := awaitJobIdle(t, &s.jobs)
 	s.op.Lock()
 	defer s.op.Unlock()
@@ -190,5 +204,36 @@ func TestInterfaceRecoveryClearsPendingOnlyAfterSuccessfulApply(t *testing.T) {
 	}
 	if !s.networkPaused || gate.Status().Mode != cage.GateClosed {
 		t.Fatal("rebind overrode the manual pause")
+	}
+}
+
+func TestPhysicalInterfaceObservationIsDiscardedAfterNetworkChange(t *testing.T) {
+	previous := physicalProxyInterface
+	physicalProxyInterface = func(context.Context) (string, error) { return "", errors.New("old physical network unavailable") }
+	t.Cleanup(func() { physicalProxyInterface = previous })
+	for _, changed := range []string{"configuration", "job"} {
+		t.Run(changed, func(t *testing.T) {
+			s, gate := interfaceMonitorServer(t)
+			grantTestGate(t, gate)
+			observed := s.observeProxyInterface(context.Background())
+			if changed == "configuration" {
+				cfg, err := loadConfig(s.configPath)
+				if err != nil {
+					t.Fatal(err)
+				}
+				cfg.Timezone = "Etc/GMT+1"
+				if err := writePrivate(s.configPath, cfg); err != nil {
+					t.Fatal(err)
+				}
+			} else {
+				s.setJobForTest(Job{ID: "completed-during-probe"})
+			}
+			s.op.Lock()
+			s.applyProxyInterfaceObservation(observed)
+			s.op.Unlock()
+			if gate.Status().Mode != cage.GateOpen || s.proxyNetworkLost || s.safety.monitorError != "" {
+				t.Fatal("a stale interface result revoked the current network state")
+			}
+		})
 	}
 }

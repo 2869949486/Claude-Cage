@@ -105,7 +105,7 @@ func TestMacOSNetworkTickDispatchesRecoveryOnlyAfterSetup(t *testing.T) {
 			s.recovery = networkRecovery{RunID: "isolated-retry", Next: time.Now().Add(-time.Second)}
 			// Inspect scheduling without starting a guest or executing a network check.
 			s.op.Lock()
-			s.monitorNetworkTick()
+			s.monitorNetworkTick(proxyInterfaceObservation{}, s.startMonitorTiming())
 			job := s.jobs.snapshot()
 			s.jobs.cancelRunning()
 			s.op.Unlock()

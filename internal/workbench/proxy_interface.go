@@ -13,21 +13,42 @@ import (
 
 var physicalProxyInterface = managedproxy.PhysicalInterface
 
-// The lifecycle lock is held by monitorNetwork. Schedule a regular job so a
-// user stop can cancel recovery and pause can still revoke the gate immediately.
-func (s *Server) monitorProxyInterface() {
-	if s.busy() {
-		return
+type proxyInterfaceObservation struct {
+	name, configuration, jobID string
+	err                        error
+}
+
+// Reading the host route can block inside the operating system and does not
+// need to serialize with projects, terminals or environment operations.
+func (s *Server) observeProxyInterface(ctx context.Context) proxyInterfaceObservation {
+	job := s.jobs.snapshot()
+	if job.Running {
+		return proxyInterfaceObservation{}
 	}
 	cfg, err := loadConfig(s.configPath)
 	if err != nil || cfg.RequireManagedProxy(s.profile) != nil {
+		return proxyInterfaceObservation{}
+	}
+	name, err := physicalProxyInterface(ctx)
+	return proxyInterfaceObservation{name: name, configuration: cfg.Fingerprint(), jobID: job.ID, err: err}
+}
+
+// The lifecycle lock covers effects such as revocation and recovery admission.
+// Discard observations made before a configuration change or a lifecycle job.
+func (s *Server) applyProxyInterfaceObservation(observed proxyInterfaceObservation) {
+	job := s.jobs.snapshot()
+	if observed.configuration == "" || job.Running || job.ID != observed.jobID {
 		return
 	}
-	name, err := physicalProxyInterface(s.lifetimeContext())
-	if err != nil {
-		_ = s.closeProxyGate(err.Error())
+	cfg, err := loadConfig(s.configPath)
+	if err != nil || cfg.Fingerprint() != observed.configuration || cfg.RequireManagedProxy(s.profile) != nil {
+		return
+	}
+	if observed.err != nil {
+		reason := observed.err.Error()
+		_ = s.closeProxyGate(reason)
 		s.mu.Lock()
-		s.safety.monitorError = err.Error()
+		s.safety.monitorError = reason
 		s.proxyNetworkLost = true
 		s.mu.Unlock()
 		return
@@ -37,7 +58,7 @@ func (s *Server) monitorProxyInterface() {
 	retry := s.proxyNetworkRetry
 	s.mu.Unlock()
 	bound, err := managedproxy.BoundInterface(filepath.Join(managedproxy.Dir(s.profile), "config.yaml"))
-	if err != nil || (bound == name && !lost) {
+	if err != nil || (bound == observed.name && !lost) {
 		return
 	}
 	if lost && time.Now().Before(retry) {
