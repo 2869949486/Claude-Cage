@@ -30,12 +30,17 @@ previous_loaded=()
 apps=()
 app_existed=()
 app_applied=0
+component_stage='校验现有应用与签名'
 cli_previous=''
 if [[ -L /usr/local/libexec/cage-cli ]]; then cli_previous=$(readlink /usr/local/libexec/cage-cli); fi
 
 finish() {
-    local status=$? index target label
+    local status=$1 failed_line=$2 index target label
     trap - EXIT
+    chmod 700 "$backup"
+    if (( status != 0 )); then
+        printf '原生组件同步失败：阶段=%s，脚本行=%s，退出码=%s。\n' "$component_stage" "$failed_line" "$status" >&2
+    fi
     if (( status != 0 )); then
         for ((index=0; index<${#loaded[@]}; index++)); do
             label=${loaded[$index]}
@@ -70,7 +75,7 @@ finish() {
     fi
     exit "$status"
 }
-trap finish EXIT
+trap 'finish $? "$LINENO"' EXIT
 trap 'exit 1' HUP INT TERM
 
 # Verify app ownership before stopping the corresponding GUI helpers.
@@ -105,6 +110,24 @@ for app in "$kit"/*.app "$kit"/project/*.app; do
     apps+=("$target")
     if [[ -d $target ]]; then app_existed+=(yes); else app_existed+=(no); fi
 done
+component_stage='检查项目访问助手是否已退出'
+# The host closes project shares and terminals, but the accessory GUI app is
+# persistent. Use the verified incoming helper to request an ordinary quit.
+for ((index=0; index<${#apps[@]}; index++)); do
+    if [[ ${apps[$index]} == /Applications/CageProjectAccess.app ]]; then
+        chmod 711 "$backup"
+        sudo -Hu "$user" "$backup/new-app-$index/Contents/MacOS/CageProjectAccess" --quit-for-update
+        chmod 700 "$backup"
+    fi
+done
+# A child or an application which refused to exit must still stop the update.
+while read -r pid owner executable; do
+    if [[ $owner == "$uid" && $executable == /Applications/CageProjectAccess.app/Contents/MacOS/CageProjectAccess ]]; then
+        printf '%s\n' '项目访问助手仍在运行，请先正常退出后再同步组件。' >&2
+        exit 1
+    fi
+done < <(ps -axo pid=,uid=,comm=)
+component_stage='正常停止组件服务'
 for label in dev.cage.GuestClaudeWindow dev.cage.GuestClipboard dev.cage.GuestBrowser; do
     if sudo -Hu "$user" /bin/launchctl print "gui/$uid/$label" >/dev/null 2>&1; then
         loaded+=("$label")
@@ -112,11 +135,8 @@ for label in dev.cage.GuestClaudeWindow dev.cage.GuestClipboard dev.cage.GuestBr
         sudo -Hu "$user" /bin/launchctl bootout "gui/$uid/$label"
     fi
 done
-# Project shares and workbench terminals have already been closed by the host.
-while read -r pid owner executable; do
-    if [[ $owner == "$uid" && $executable == /Applications/CageProjectAccess.app/Contents/MacOS/CageProjectAccess ]]; then kill -TERM "$pid" 2>/dev/null || true; fi
-done < <(ps -axo pid=,uid=,comm=)
 
+component_stage='替换已验证的应用组件'
 for ((index=0; index<${#apps[@]}; index++)); do
     target=${apps[$index]}
     if [[ ${app_existed[$index]} == yes ]]; then mv "$target" "$backup/old-app-$index"; fi
@@ -124,6 +144,7 @@ for ((index=0; index<${#apps[@]}; index++)); do
     mv "$backup/new-app-$index" "$target"
 done
 
+component_stage='更新辅助文件'
 while IFS= read -r -d '' source && IFS= read -r -d '' target; do
     # The CLI installer publishes a new immutable helper directory and moves
     # its owned symlink. It also generates the verified Python entry shebang.
@@ -154,6 +175,7 @@ while IFS= read -r -d '' source && IFS= read -r -d '' target; do
     mv -f "$stage" "$target"
 done < <(/usr/bin/perl "$kit/native-component-manifest.pl" targets "$manifest" "$kit")
 
+component_stage='同步命令行组件'
 if [[ $mode == tools ]]; then
     bash "$kit/install-macos-node.sh" "$kit/node.tgz"
     bash "$kit/install-macos-browser.sh" "$kit" --update-tools
@@ -179,6 +201,7 @@ for label in dev.cage.GuestClaudeWindow dev.cage.GuestClipboard dev.cage.GuestBr
     fi
     changed+=("$target")
 done
+component_stage='注册并激活组件服务'
 sudo -Hu "$user" /usr/local/libexec/cage-register-claude-window --prepare
 sudo -Hu "$user" /usr/local/libexec/cage-register-clipboard --prepare
 sudo -Hu "$user" /usr/local/libexec/cage-register-browser --prepare
@@ -192,14 +215,12 @@ for ((index=0; index<${#loaded[@]}; index++)); do
     label=${loaded[$index]}
     sudo -Hu "$user" /bin/launchctl bootstrap "gui/$uid" "/Users/$user/Library/LaunchAgents/$label.plist"
 done
+component_stage='验证并发布组件版本'
 /usr/bin/perl "$kit/native-component-manifest.pl" publish "$manifest" "$kit"
 # The new helpers accept both installation paths. Commit them before migrating
 # Claude so a later rollback cannot restore a helper that only knows the old
 # path. Migration failures retain the old application and can be retried.
 trap - EXIT
 rm -rf "$backup"
-# Guests set up before file indexing was turned off stop indexing here. Nobody
-# searches this hidden desktop; `mdutil -a -i on` turns it back on.
-mdutil -a -i off >/dev/null 2>&1 || true
 bash "$kit/claude-desktop-macos.sh" migrate "$user"
 printf '%s\n' '原生客机组件已更新并通过文件核验。'
