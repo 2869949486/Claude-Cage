@@ -1,6 +1,6 @@
 # 官网使用答疑
 
-访客从首页或使用手册进入 `/ask/`。页面保留最近两轮对话供追问，刷新后清空。勾选联网时，服务会用当前问题检索 Microsoft Learn 和中文维基百科。
+访客从首页或使用手册进入 `/ask/`。页面保留最近六轮对话供追问，刷新后清空。勾选联网时，服务会用当前问题检索 Microsoft Learn 和中文维基百科。
 
 ## 更新规则
 
@@ -32,3 +32,12 @@ HTTPS 入口 `https://token-link.shop/cage-support/ask` 将该路径改写为 `/
 服务使用独立的 Linux 用户 `cage-support`，其主目录为 `/var/lib/cage-support`。用这个用户配置飞书 CLI 的专用机器人，安装 CLI 到 `/opt/cage-support/lark-cli`。在 `/etc/cage-support/feishu.env` 中设置 `SUPPORT_FEISHU_OWNER=ou_…`，取值是维护者在该应用下的 open_id。机器人需要向该用户单聊发消息和读取这段单聊历史的权限。回复按应用身份、私聊、发言人和原问题匹配。
 
 问题、答复和读取进度保存在 `/var/lib/cage-support/knowledge/`。更新服务时保留此目录。暂时断网时问题留在队列，连接恢复后继续投递并补读回复。
+
+
+## 图片、文档与 Issue
+
+访客可上传、粘贴或拖入一张 PNG、JPEG 或 WebP 图片。浏览器会缩小并重新编码，服务使用 deepseek-flash 提取可见事实，再按问题和截图内容检索。手册引用可在对话中预览，完整文档链接使用网站构建时生成的章节锚点。
+
+访客要求反馈时，助手根据已知信息整理草稿。访客编辑并确认后，项目机器人向 Lee-xeo/Claude-Cage 创建公开 Issue，页面显示编号和链接。待确认草稿 24 小时内有效。每个来源 IP 每个 UTC 自然日最多代发 3 条，全站合计 25 条。服务使用本地提交记录处理重复点击和结果不明的重试。
+
+GitHub App 只需安装到上述仓库，配置 Issues 读写权限。将含数值字段 `id` 和 PEM 字符串字段 `pem` 的 `github-app.json` 放在服务的工作目录，由 root 拥有并允许服务组读取（0640）。短期安装令牌只申请此仓库的 Issues 权限。提交记录保存在知识库同级的 `issue-drafts/`。
