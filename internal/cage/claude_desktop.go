@@ -26,6 +26,9 @@ var desktopFinish string
 //go:embed desktop-identity.py
 var desktopIdentity string
 
+//go:embed desktop-history.py
+var desktopHistory string
+
 //go:embed desktop-auth-browser.py
 var desktopAuthBrowser string
 
@@ -50,6 +53,7 @@ func ClaudeDesktopInstallScript() string {
 func ClaudeDesktopProvisionScript() string {
 	return "set -euo pipefail\n" + clientRuntimeScript() + sharedClipboardScript() + nativeInputScript() + fileInputScript() + displayGovernorScript() +
 		"sudo install -d -m 0755 /etc/claude-cage\n" +
+		"sudo tee /usr/local/lib/desktop-history.py >/dev/null <<'DESKTOP_HISTORY'\n" + desktopHistory + "\nDESKTOP_HISTORY\n" +
 		"sudo tee /usr/local/bin/cage-claude-session >/dev/null <<'CAGE_CLAUDE_SESSION'\n" + claudeDesktopSession + "\nCAGE_CLAUDE_SESSION\n" +
 		"sudo tee /usr/local/bin/cage-claude-open >/dev/null <<'CAGE_CLAUDE_OPEN'\n" + claudeDesktopOpen + "\nCAGE_CLAUDE_OPEN\n" +
 		"sudo tee /usr/local/bin/cage-claude-start >/dev/null <<'CAGE_CLAUDE_START'\n" + claudeDesktopStart + "\nCAGE_CLAUDE_START\n" +

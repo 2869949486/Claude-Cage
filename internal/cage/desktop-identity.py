@@ -1,8 +1,10 @@
 """Publish only the latest native Desktop account observation to its runtime."""
+import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import runpy
 import sys
 from uuid import UUID
 
@@ -39,9 +41,9 @@ def collect(stream, publish):
                 result = {"logged_in": False}
             elif fields.get("isLoggedOut") == "false" and fields.get("emailAddress"):
                 try:
-                    UUID(fields.get("accountUuid", ""))
+                    account = str(UUID(fields.get("accountUuid", "")))
                     org = str(UUID(fields.get("organizationUuid", "")))
-                    result = {"logged_in": True, "email": fields["emailAddress"], "organization": org}
+                    result = {"logged_in": True, "email": fields["emailAddress"], "organization": org, "account_uuid": account}
                 except ValueError:
                     pass
             publish(result)
@@ -56,13 +58,24 @@ def main():
     os.umask(0o077)
     path = Path(sys.argv[1])
     temporary = path.with_suffix(".tmp")
+    history = sys.argv[2:]
     previous = object()
     def publish(value):
         nonlocal previous
         if value != previous:
-            temporary.write_text(json.dumps(value))
+            public = {key: entry for key, entry in value.items() if key != "account_uuid"} if value else None
+            temporary.write_text(json.dumps(public))
             temporary.replace(path)
             previous = value
+            if history and value and value["logged_in"]:
+                config, subject = history
+                identity = value["email"].strip().lower() + "\n" + value["organization"]
+                if hashlib.sha256(identity.encode()).hexdigest() == subject:
+                    try:
+                        recover = runpy.run_path(str(Path(__file__).with_name("desktop-history.py")))["recover"]
+                        recover(Path.home(), Path(config), value["account_uuid"], value["organization"])
+                    except OSError:
+                        print("Could not restore Desktop history; will retry on the next launch.", file=sys.stderr)
     collect(sys.stdin.buffer, publish)
 
 

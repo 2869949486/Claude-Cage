@@ -377,7 +377,8 @@ func (s *Server) defaultDesktopScope(ctx context.Context) (string, error) {
 		ns := "net-" + account.ID
 		config += "NetworkNamespacePath=/run/netns/" + ns + "\nBindReadOnlyPaths=/etc/netns/" + ns + "/resolv.conf:/etc/resolv.conf /etc/netns/" + ns + "/nsswitch.conf:/etc/nsswitch.conf\nInaccessiblePaths=-/run/systemd/resolve/io.systemd.Resolve -/run/dbus/system_bus_socket -/run/nscd/socket\n"
 	}
-	return "sudo install -d -m 0755 " + directory + "\nprintf '%s\\n' " + shellescape.Quote(account.ID+" "+mode+" "+account.guestID()) + " | sudo tee " + marker + " >/dev/null\nprintf %s " + shellescape.Quote(config) + " | sudo tee " + override + " >/dev/null\n", nil
+	subject := claudeIdentityHash(account.Email, account.Organization)
+	return "sudo install -d -m 0755 " + directory + "\nprintf '%s\\n' " + shellescape.Quote(account.ID+" "+mode+" "+account.guestID()+" "+subject) + " | sudo tee " + marker + " >/dev/null\nprintf %s " + shellescape.Quote(config) + " | sudo tee " + override + " >/dev/null\n", nil
 }
 
 // Native guests have one legacy Desktop. Its owner can change while it is
