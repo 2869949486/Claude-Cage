@@ -16,7 +16,7 @@ const base = import.meta.env.BASE_URL;
     <div class="controls"><label class="web"><input id="web" type="checkbox"/> 联网查阅资料</label><button class="button" id="send">提问 ↑</button></div>
   </form>
   <p id="status" role="status"></p>
-  <p class="note">问题和最近两轮对话会发送给 Token Link 模型服务。开启联网后，本次问题也会用于搜索 Microsoft Learn 和维基百科。请先移除密钥和个人资料。<a href={base+"privacy/"}>隐私说明</a></p>
+  <p class="note">问题和最近两轮对话会发送给 Token Link 模型服务。开启联网后，本次问题也会用于搜索 Microsoft Learn 和维基百科。答疑助手遇到资料缺口时，会将去除个人信息的问题摘要交给项目维护者补答，答复会用于后续答疑。请先移除密钥和个人资料。<a href={base+"privacy/"}>隐私说明</a></p>
   <noscript><p>请启用 JavaScript 提问，也可以直接阅读<a href={base+'docs/'}>使用手册</a>。</p></noscript>
 </main>
 </body></html>
@@ -48,7 +48,7 @@ form.addEventListener("submit", async (event) => {
     const response = await fetch("https://token-link.shop/cage-support/ask", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ question, history, web: web.checked }),
+      body: JSON.stringify({ question, history, collect: true, web: web.checked }),
       signal: AbortSignal.timeout(85000),
     });
     const data = await response.json();
@@ -91,7 +91,12 @@ form.addEventListener("submit", async (event) => {
     ];
     for (const id of ids) {
       const src = data.sources?.[id - 1];
-      if (!src || !src.url.startsWith("https://")) continue;
+      if (!src) continue;
+      if (!src.url && src.title === "项目维护者答复") {
+        paragraph(turn, "[" + id + "] 项目维护者答复", "note");
+        continue;
+      }
+      if (!src.url?.startsWith("https://")) continue;
       const a = document.createElement("a");
       a.href = src.url;
       a.textContent = "[" + id + "] " + src.title;

@@ -32,6 +32,7 @@ type request struct {
 	Question string    `json:"question"`
 	History  []message `json:"history"`
 	Web      bool      `json:"web"`
+	Collect  bool      `json:"collect"`
 }
 type quota struct {
 	sync.Mutex
@@ -68,30 +69,41 @@ func respond(w http.ResponseWriter, status int, data any) {
 func fail(w http.ResponseWriter, status int, msg string) {
 	respond(w, status, map[string]string{"error": msg})
 }
-func complete(ctx context.Context, key string, messages []message) (string, error) {
-	body, _ := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": messages, "max_tokens": 1800, "stream": false, "thinking": map[string]string{"type": "disabled"}})
+
+type decision struct {
+	Answer   string `json:"answer"`
+	Status   string `json:"status"`
+	Question string `json:"question"`
+}
+
+func complete(ctx context.Context, key string, messages []message) (decision, error) {
+	body, _ := json.Marshal(map[string]any{"model": "deepseek-flash", "messages": messages, "response_format": map[string]string{"type": "json_object"}, "max_tokens": 1800, "stream": false, "thinking": map[string]string{"type": "disabled"}})
 	req, err := http.NewRequestWithContext(ctx, "POST", "https://api.token-link.shop/v1/chat/completions", bytes.NewReader(body))
 	if err != nil {
-		return "", err
+		return decision{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+key)
 	req.Header.Set("Content-Type", "application/json")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		return "", err
+		return decision{}, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return "", fmt.Errorf("model status %d", resp.StatusCode)
+		return decision{}, fmt.Errorf("model status %d", resp.StatusCode)
 	}
 	var result struct{ Choices []struct{ Message message } }
 	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&result); err != nil {
-		return "", err
+		return decision{}, err
 	}
 	if len(result.Choices) == 0 || strings.TrimSpace(result.Choices[0].Message.Content) == "" {
-		return "", errors.New("empty model response")
+		return decision{}, errors.New("empty model response")
 	}
-	return result.Choices[0].Message.Content, nil
+	var reply decision
+	if err := json.Unmarshal([]byte(result.Choices[0].Message.Content), &reply); err != nil || strings.TrimSpace(reply.Answer) == "" {
+		return decision{}, errors.New("invalid answer JSON")
+	}
+	return reply, nil
 }
 func main() {
 	key := os.Getenv("TOKEN_LINK_API_KEY")
@@ -109,6 +121,20 @@ func main() {
 	ix, err := loadIndex("corpus.tar.gz", sha)
 	if err != nil {
 		log.Fatal(err)
+	}
+	var learned *lessons
+	if dir := os.Getenv("SUPPORT_LEARNING_DIR"); dir != "" {
+		learned, err = openLessons(dir)
+		if err != nil {
+			log.Fatal(err)
+		}
+		if owner := os.Getenv("SUPPORT_FEISHU_OWNER"); owner != "" {
+			cli := os.Getenv("SUPPORT_FEISHU_CLI")
+			if cli == "" {
+				cli = "lark-cli"
+			}
+			go (feishu{learned, owner, cli}).run()
+		}
 	}
 	mux := http.NewServeMux()
 	lim := &quota{}
@@ -176,7 +202,7 @@ func main() {
 			fail(w, 503, "答疑规则暂不可用，请稍后再试。")
 			return
 		}
-		refs := ix.search(query)
+		refs := append(learned.sources(query), ix.search(query)...)
 		external := 0
 		if in.Web {
 			webCtx, stop := context.WithTimeout(ctx, 5*time.Second)
@@ -198,7 +224,12 @@ func main() {
 			fail(w, 502, "模型暂时没有返回回答，请稍后重试。")
 			return
 		}
-		respond(w, 200, map[string]any{"answer": answer, "sources": refs, "webCount": external})
+		if learned != nil && in.Collect && answer.Status == "knowledge_gap" {
+			if err := learned.collect(answer.Question); err != nil {
+				log.Printf("question storage: %v", err)
+			}
+		}
+		respond(w, 200, map[string]any{"answer": answer.Answer, "sources": refs, "webCount": external})
 	})
 	server := &http.Server{Addr: "127.0.0.1:18152", Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 82 * time.Second, IdleTimeout: 35 * time.Second}
 	log.Fatal(server.ListenAndServe())
