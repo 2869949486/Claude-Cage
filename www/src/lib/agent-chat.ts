@@ -67,13 +67,22 @@ function notice(text: string, chat = active) {
   chat.notice = text;
   if (chat === active) $("status").textContent = text;
 }
+function chatName(chat: Chat) {
+  return (
+    chat.customTitle ||
+    chat.summaryTitle ||
+    (chat.title !== "新对话"
+      ? chat.title
+      : chat.draft.trim().slice(0, 26) || chat.photo?.name || chat.title)
+  );
+}
 function sync() {
   $("welcome").hidden = active.turns.length > 0;
   $("shortcuts").hidden = $("welcome").hidden;
   document
     .querySelector(".chat")!
     .classList.toggle("has-turns", active.turns.length > 0);
-  $("chat-title").textContent = active.title;
+  $("chat-title").textContent = chatName(active);
   $("status").textContent = active.notice;
   $("attachment").hidden = !active.photo;
   if (active.photo) {
@@ -110,6 +119,8 @@ function metadata(c: Chat): SavedChat {
     id: c.id,
     updated: c.updated,
     title: c.title,
+    summaryTitle: c.summaryTitle,
+    customTitle: c.customTitle,
     draft: c.draft,
     web: c.web,
     photo: c.photo,
@@ -134,20 +145,27 @@ function historyNav() {
   const rows = [...chats].sort((a, b) => b.updated - a.updated);
   $("history").replaceChildren(
     ...rows.map((chat) => {
-      const name =
-        chat.turns.length || chat.title !== "新对话"
-          ? chat.title
-          : chat.draft.trim().slice(0, 26) || chat.photo?.name || "新对话";
+      const name = chatName(chat);
       const row = el("div", "history-row");
       const button = btn("", () => void select(chat), "history-item");
       button.setAttribute("aria-current", String(chat === active));
       button.append(template("history-icon"), el("span", "", name));
       row.append(button);
       if (chat.saved || chat.turns.length || chat.draft || chat.photo) {
+        const rename = btn(
+          "",
+          () => openRename(chat),
+          "history-action history-rename",
+        );
+        rename.dataset.chatId = chat.id;
+        rename.dataset.tip = "重命名";
+        rename.setAttribute("aria-label", "重命名对话：" + name);
+        rename.append(template("rename-icon"));
+        row.append(rename);
         const remove = btn(
           "",
           () => confirmRemoval(chat, name),
-          "history-delete",
+          "history-action history-delete",
         );
         remove.setAttribute("aria-label", "删除对话：" + name);
         remove.dataset.tip = "删除对话";
@@ -161,6 +179,7 @@ function historyNav() {
 function dropChat(chat: Chat) {
   const at = chats.indexOf(chat);
   if (at < 0) return;
+  if (renameTarget === chat && renameDialog.open) renameDialog.close();
   chats.splice(at, 1);
   chat.loadingPhoto = 0;
   if (active === chat) {
@@ -169,6 +188,42 @@ function dropChat(chat: Chat) {
     else createBlank();
   } else historyNav();
 }
+const renameDialog = $<HTMLDialogElement>("rename-chat");
+const renameInput = $<HTMLInputElement>("new-title");
+let renameTarget: Chat | undefined;
+function openRename(chat: Chat) {
+  renameTarget = chat;
+  renameInput.value = chatName(chat);
+  renameInput.setCustomValidity("");
+  renameDialog.showModal();
+  renameInput.focus();
+  renameInput.select();
+}
+$("cancel-rename").onclick = () => renameDialog.close();
+renameInput.oninput = () => renameInput.setCustomValidity("");
+$<HTMLFormElement>("rename-form").onsubmit = (e) => {
+  e.preventDefault();
+  const chat = renameTarget;
+  if (!chat || !chats.includes(chat)) {
+    renameDialog.close();
+    return;
+  }
+  const title = renameInput.value.trim();
+  if (!title) {
+    renameInput.setCustomValidity("请输入对话标题。");
+    renameInput.reportValidity();
+    return;
+  }
+  chat.customTitle = title;
+  persist(chat, { customTitle: title });
+  renameDialog.close();
+  historyNav();
+  if (active === chat) sync();
+  const row = Array.from(
+    $("history").querySelectorAll<HTMLButtonElement>(".history-rename"),
+  ).find((button) => button.dataset.chatId === chat.id);
+  row?.focus();
+};
 const deleteDialog = $<HTMLDialogElement>("delete-chat");
 let deleteTarget: Chat | undefined;
 function confirmRemoval(chat: Chat, name: string) {
@@ -262,6 +317,7 @@ document.addEventListener("keydown", (e) => {
   if (
     e.key === "Escape" &&
     !deleteDialog.open &&
+    !renameDialog.open &&
     !dialog.open &&
     $("workspace").classList.contains("rail-open")
   ) {
@@ -736,10 +792,12 @@ async function run(chat: Chat, turn: Turn) {
       },
     ]);
   try {
+    const suggestTitle = !chat.customTitle && !chat.summaryTitle;
     const res = await fetch(endpoint, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
+        suggestTitle,
         question: turn.question,
         history,
         collect: true,
@@ -758,7 +816,18 @@ async function run(chat: Chat, turn: Turn) {
     turn.webCount = data.webCount;
     turn.error = undefined;
     showAnswer(chat, turn);
-    persist(chat, {}, turn);
+    const suggestion =
+      suggestTitle &&
+      !chat.customTitle &&
+      !chat.summaryTitle &&
+      typeof data.chatTitle === "string"
+        ? data.chatTitle.trim()
+        : "";
+    if (suggestion) {
+      chat.summaryTitle = suggestion;
+      historyNav();
+    }
+    persist(chat, suggestion ? { summaryTitle: suggestion } : {}, turn);
   } catch (e) {
     turn.error =
       e instanceof Error && !/fetch|timeout|JSON|load failed/i.test(e.message)

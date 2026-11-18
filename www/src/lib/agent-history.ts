@@ -11,6 +11,8 @@ export type SavedChat = {
   id: string;
   updated: number;
   title: string;
+  summaryTitle?: string;
+  customTitle?: string;
   draft: string;
   web: boolean;
   photo?: Photo;

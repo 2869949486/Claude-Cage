@@ -30,15 +30,16 @@ type message struct {
 	Content string `json:"content"`
 }
 type request struct {
-	Action   string    `json:"action"`
-	Ticket   string    `json:"ticket"`
-	Title    string    `json:"title"`
-	Body     string    `json:"body"`
-	Question string    `json:"question"`
-	History  []message `json:"history"`
-	Web      bool      `json:"web"`
-	Photo    string    `json:"photo,omitempty"`
-	Collect  bool      `json:"collect"`
+	SuggestTitle bool      `json:"suggestTitle"`
+	Action       string    `json:"action"`
+	Ticket       string    `json:"ticket"`
+	Title        string    `json:"title"`
+	Body         string    `json:"body"`
+	Question     string    `json:"question"`
+	History      []message `json:"history"`
+	Web          bool      `json:"web"`
+	Photo        string    `json:"photo,omitempty"`
+	Collect      bool      `json:"collect"`
 }
 type quota struct {
 	sync.Mutex
@@ -82,10 +83,11 @@ type issueDraft struct {
 	Body   string `json:"body"`
 }
 type decision struct {
-	Issue    *issueDraft `json:"issue,omitempty"`
-	Answer   string      `json:"answer"`
-	Status   string      `json:"status"`
-	Question string      `json:"question"`
+	ChatTitle string      `json:"chatTitle,omitempty"`
+	Issue     *issueDraft `json:"issue,omitempty"`
+	Answer    string      `json:"answer"`
+	Status    string      `json:"status"`
+	Question  string      `json:"question"`
 }
 
 func modelJSON(ctx context.Context, key string, messages []message, output any) error {
@@ -280,6 +282,9 @@ func main() {
 			fmt.Fprintf(&notes, "[%d] %s\n%s\n%s\n\n", i+1, s.Title, s.URL, s.Text)
 		}
 		system := prompt + "\n维护者规则：\n" + string(rules)
+		if in.SuggestTitle {
+			system += "\n本轮请同时生成历史对话标题：根据访客描述、近期对话和截图中的主题，在 JSON 的 chatTitle 字段给出一个便于日后查找的短标题。优先点明具体功能和问题，用访客的语言，例如「Windows 安装卡在启动环境」。中文通常 6–18 字，不加引号、序号、句号，不抄开场白、账号、路径、密钥或私人信息。仅有寒暄、尚无明确主题时省略 chatTitle。"
+		}
 		messages := append([]message{{"system", system}}, in.History...)
 		messages = append(messages, message{"user", fmt.Sprintf("用户问题：\n%s\n\n截图中可见的信息：\n%s\n\n可参考资料（外部搜索命中 %d 条）：\n%s", in.Question, observation, external, notes.String())})
 		answer, err := complete(ctx, key, messages)
@@ -303,7 +308,12 @@ func main() {
 				}
 			}
 		}
-		respond(w, 200, map[string]any{"answer": answer.Answer, "sources": refs, "webCount": external, "observation": observation, "issue": answer.Issue})
+		reply := map[string]any{"answer": answer.Answer, "sources": refs, "webCount": external, "observation": observation, "issue": answer.Issue}
+		if title := strings.Join(strings.Fields(answer.ChatTitle), " "); in.SuggestTitle && title != "" && !privateDetails.MatchString(title) {
+			runes := []rune(title)
+			reply["chatTitle"] = string(runes[:min(len(runes), 48)])
+		}
+		respond(w, 200, reply)
 	})
 	server := &http.Server{Addr: "127.0.0.1:18152", Handler: mux, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, WriteTimeout: 82 * time.Second, IdleTimeout: 35 * time.Second}
 	log.Fatal(server.ListenAndServe())
