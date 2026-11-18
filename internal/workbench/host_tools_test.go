@@ -49,7 +49,7 @@ func TestHostToolsConfigInputWritesTheEntry(t *testing.T) {
 		t.Skip("python3 is unavailable")
 	}
 	home := t.TempDir()
-	cmd := exec.Command(python, "-", "computer")
+	cmd := exec.Command(python, "-", "computer", "add")
 	cmd.Env = append(os.Environ(), "HOME="+home)
 	cmd.Stdin = strings.NewReader(hostToolsConfigInput([]byte(`{"type":"http","url":"http://127.0.0.1:18962/","headers":{"Authorization":"Bearer \"q\\"}}`)))
 	if output, err := cmd.CombinedOutput(); err != nil {

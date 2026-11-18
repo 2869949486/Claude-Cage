@@ -41,7 +41,13 @@ type hostTools struct {
 	bridge *hostbridge.Bridge
 	cancel context.CancelFunc
 	done   chan struct{}
+	// configured is when the environment's clients were last given the entry.
+	configured time.Time
 }
+
+// hostToolsConfigInterval is how often a running environment is checked for
+// Claude profiles created since the entry was written.
+const hostToolsConfigInterval = time.Minute
 
 func (h *hostTools) close() {
 	h.cancel()
@@ -62,6 +68,9 @@ func (s *Server) ensureHostTools() {
 	s.mu.Unlock()
 	if !enabled || closing {
 		s.closeHostTools()
+		if !closing {
+			s.removeHostToolsConfig()
+		}
 		return
 	}
 	if current != nil {
@@ -69,6 +78,7 @@ func (s *Server) ensureHostTools() {
 		case <-current.done:
 			s.closeHostTools()
 		default:
+			s.refreshHostToolsConfig(current)
 			return
 		}
 	}
@@ -101,14 +111,55 @@ func (s *Server) startHostTools() error {
 	}()
 	configure, finish := context.WithTimeout(ctx, 15*time.Second)
 	defer finish()
-	if err = s.writeHostToolsConfig(configure, token); err != nil {
+	if err = s.writeHostToolsConfig(configure, token, "add"); err != nil {
 		tools.close()
 		return err
 	}
+	tools.configured = time.Now()
 	s.mu.Lock()
 	s.hostTools = tools
+	s.hostToolsRemoved = false
 	s.mu.Unlock()
 	return nil
+}
+
+// refreshHostToolsConfig gives the entry to profiles created while the
+// environment runs. Unchanged files are not rewritten.
+func (s *Server) refreshHostToolsConfig(tools *hostTools) {
+	if time.Since(tools.configured) < hostToolsConfigInterval {
+		return
+	}
+	tools.configured = time.Now()
+	token, err := s.hostToolsToken()
+	if err != nil {
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.lifetimeContext(), 15*time.Second)
+	defer cancel()
+	if err = s.writeHostToolsConfig(ctx, token, "add"); err != nil {
+		diagnostics.Log("warn", "host-tools", fmt.Sprintf("refresh error=%v", err))
+	}
+}
+
+// removeHostToolsConfig takes the entry back out of the environment once
+// after the preference is turned off, so clients do not keep a server that
+// no longer answers.
+func (s *Server) removeHostToolsConfig() {
+	s.mu.Lock()
+	removed, ready := s.hostToolsRemoved, s.ready
+	s.mu.Unlock()
+	if removed || !ready {
+		return
+	}
+	ctx, cancel := context.WithTimeout(s.lifetimeContext(), 15*time.Second)
+	defer cancel()
+	if err := s.writeHostToolsConfig(ctx, "", "remove"); err != nil {
+		diagnostics.Log("warn", "host-tools", fmt.Sprintf("remove error=%v", err))
+		return
+	}
+	s.mu.Lock()
+	s.hostToolsRemoved = true
+	s.mu.Unlock()
 }
 
 func (s *Server) closeHostTools() {
@@ -165,14 +216,14 @@ func hostToolsEntry(token string) map[string]any {
 	}
 }
 
-// writeHostToolsConfig adds the entry to each Claude Code profile and to the
-// desktop app in the environment. The token travels on SSH stdin, never argv.
-func (s *Server) writeHostToolsConfig(ctx context.Context, token string) error {
+// writeHostToolsConfig adds the entry to, or removes it from, each Claude
+// Code profile and the desktop app in the environment. The token travels on SSH stdin, never argv.
+func (s *Server) writeHostToolsConfig(ctx context.Context, token, action string) error {
 	entry, err := json.Marshal(hostToolsEntry(token))
 	if err != nil {
 		return err
 	}
-	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec python3 - computer")
+	cmd := s.sshCommand(ctx, "-T", s.sshTarget(), "--", "exec python3 - computer "+action)
 	cmd.Stdin = strings.NewReader(hostToolsConfigInput(entry))
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr

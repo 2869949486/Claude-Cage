@@ -121,6 +121,7 @@ type Server struct {
 	audioClients                                     int
 	projectShares                                    map[string]*projectShare
 	hostTools                                        *hostTools
+	hostToolsRemoved                                 bool
 	projectErrors                                    []projectShareError
 	clientMounts                                     map[string]*guestClientMount
 	clientWorkspace                                  string

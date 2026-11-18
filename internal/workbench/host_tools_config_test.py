@@ -93,6 +93,26 @@ class HostToolsConfigTests(unittest.TestCase):
         self.assertFalse((self.home / ".local/share/mcp-relay").exists())
         self.assertIn("computer", json.loads((self.home / ".claude.json").read_text())["mcpServers"])
 
+    def test_removal_takes_back_only_what_was_added(self):
+        desktop = self.home / ".config/Claude"
+        desktop.mkdir(parents=True)
+        (desktop / "claude_desktop_config.json").write_text(json.dumps({"preferences": {"a": 1}}))
+        code = self.home / ".claude.json"
+        code.write_text(json.dumps({"theme": "dark", "mcpServers": {"other": {"command": "x"}}}))
+        config.configure(self.home, "computer", ENTRY, "# relay\n")
+        config.unconfigure(self.home, "computer", ENTRY)
+        self.assertEqual(json.loads(code.read_text()), {"theme": "dark", "mcpServers": {"other": {"command": "x"}}})
+        self.assertEqual(json.loads((desktop / "claude_desktop_config.json").read_text()), {"preferences": {"a": 1}})
+        self.assertFalse((self.home / ".config/mcp-relay").exists())
+        self.assertFalse((self.home / ".local/share/mcp-relay").exists())
+
+    def test_removal_keeps_the_users_own_server_of_that_name(self):
+        code = self.home / ".claude.json"
+        own = {"type": "http", "url": "https://example.com/mcp"}
+        code.write_text(json.dumps({"mcpServers": {"computer": own}}))
+        config.unconfigure(self.home, "computer", ENTRY)
+        self.assertEqual(json.loads(code.read_text())["mcpServers"]["computer"], own)
+
 
 if __name__ == "__main__":
     unittest.main()
