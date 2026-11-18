@@ -2,6 +2,8 @@ package workbench
 
 import (
 	"context"
+	"slices"
+	"sync"
 	"testing"
 	"testing/synctest"
 	"time"
@@ -14,10 +16,19 @@ func TestNetworkMonitorWaitsAfterSlowPhysicalProbe(t *testing.T) {
 				s := testServer(t)
 				previous := physicalProxyInterface
 				defer func() { physicalProxyInterface = previous }()
+				var mu sync.Mutex
 				var starts []time.Time
+				probeStarts := func() []time.Time {
+					mu.Lock()
+					defer mu.Unlock()
+					return slices.Clone(starts)
+				}
 				physicalProxyInterface = func(context.Context) (string, error) {
+					mu.Lock()
 					starts = append(starts, time.Now())
-					if len(starts) == 1 {
+					first := len(starts) == 1
+					mu.Unlock()
+					if first {
 						time.Sleep(probeDuration)
 					}
 					return "en0", nil
@@ -27,8 +38,8 @@ func TestNetworkMonitorWaitsAfterSlowPhysicalProbe(t *testing.T) {
 				go func() { defer close(done); s.monitorNetwork(ctx) }()
 				defer func() { cancel(); <-done }()
 				synctest.Wait()
-				if len(starts) != 1 {
-					t.Fatalf("initial monitor should run immediately, starts=%d", len(starts))
+				if n := len(probeStarts()); n != 1 {
+					t.Fatalf("initial monitor should run immediately, starts=%d", n)
 				}
 				if s.op.TryLock() {
 					s.op.Unlock()
@@ -36,8 +47,8 @@ func TestNetworkMonitorWaitsAfterSlowPhysicalProbe(t *testing.T) {
 				}
 				time.Sleep(probeDuration)
 				synctest.Wait()
-				if len(starts) != 1 {
-					t.Fatalf("slow probe triggered an immediate catch-up round: %d", len(starts))
+				if n := len(probeStarts()); n != 1 {
+					t.Fatalf("slow probe triggered an immediate catch-up round: %d", n)
 				}
 				if !s.op.TryLock() {
 					t.Fatal("lifecycle lock was not released between rounds")
@@ -45,13 +56,13 @@ func TestNetworkMonitorWaitsAfterSlowPhysicalProbe(t *testing.T) {
 				s.op.Unlock()
 				time.Sleep(5*time.Second - time.Nanosecond)
 				synctest.Wait()
-				if len(starts) != 1 {
+				if len(probeStarts()) != 1 {
 					t.Fatal("monitor restarted before the full post-round interval")
 				}
 				time.Sleep(time.Nanosecond)
 				synctest.Wait()
-				if len(starts) != 2 || starts[1].Sub(starts[0]) != probeDuration+5*time.Second {
-					t.Fatalf("wrong post-round schedule: %v", starts)
+				if got := probeStarts(); len(got) != 2 || got[1].Sub(got[0]) != probeDuration+5*time.Second {
+					t.Fatalf("wrong post-round schedule: %v", got)
 				}
 			})
 		})
