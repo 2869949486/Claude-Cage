@@ -11,27 +11,37 @@ const thread = $("thread"),
   dialog = $<HTMLDialogElement>("document");
 const guides: { path: string; title: string; sections: [string, string][] }[] =
   JSON.parse($("doc-map").textContent!);
-type Photo = { name: string; url: string };
-type Source = { title: string; url: string };
-type Draft = { title: string; body: string; ticket: string };
-type Turn = {
-  question: string;
-  photo?: Photo;
-  web: boolean;
-  answer?: string;
-  observation?: string;
-  nodes: HTMLElement[];
-};
-type Chat = {
-  title: string;
+import {
+  openHistory,
+  listChats,
+  readChat,
+  readTurn,
+  readTurns,
+  saveChange,
+  eraseChat,
+  type SavedChat,
+  type SavedTurn,
+  type Source,
+  type Draft,
+} from "./agent-history";
+type Turn = SavedTurn & { nodes: HTMLElement[] };
+type Chat = SavedChat & {
   turns: Turn[];
-  draft: string;
-  web: boolean;
-  photo?: Photo;
+  loaded: boolean;
+  saved: boolean;
   loadingPhoto: number;
   busy: boolean;
   notice: string;
 };
+let persistent = false;
+
+let channel: BroadcastChannel | undefined;
+try {
+  channel = new BroadcastChannel("cage-assistant-history");
+} catch {
+  /* Storage still works without live tab notifications. */
+}
+const selectionKey = "cage-assistant-selected";
 const chats: Chat[] = [];
 let active: Chat;
 function el<K extends keyof HTMLElementTagNameMap>(
@@ -80,25 +90,131 @@ function sync() {
   input.style.height = "auto";
   input.style.height = Math.min(140, input.scrollHeight) + "px";
 }
+function memoryChat(meta: SavedChat, saved: boolean): Chat {
+  return {
+    ...meta,
+    turns: [],
+    loaded: !saved,
+    saved,
+    loadingPhoto: 0,
+    busy: false,
+    notice: "",
+  };
+}
+function storageError() {
+  $("storage-warning").textContent =
+    "浏览器未能保存最近的更改。请检查站点存储权限或可用空间。";
+}
+function metadata(c: Chat): SavedChat {
+  return {
+    id: c.id,
+    updated: c.updated,
+    title: c.title,
+    draft: c.draft,
+    web: c.web,
+    photo: c.photo,
+  };
+}
+function persist(chat: Chat, patch: Partial<SavedChat>, turn?: Turn) {
+  if (!persistent || !chats.includes(chat)) return;
+  const create = !chat.saved;
+  chat.saved = true;
+  chat.updated = Date.now();
+  const data = turn ? (({ nodes, ...record }) => record)(turn) : undefined;
+  void saveChange(metadata(chat), create, patch, data)
+    .then((saved) => {
+      if (saved) channel?.postMessage({ id: chat.id, turnId: turn?.id });
+    })
+    .catch(() => {
+      if (create) chat.saved = false;
+      storageError();
+    });
+}
 function historyNav() {
+  const rows = [...chats].sort((a, b) => b.updated - a.updated);
   $("history").replaceChildren(
-    ...chats.map((chat) => {
-      const button = btn("", () => select(chat), "history-item");
+    ...rows.map((chat) => {
+      const name =
+        chat.turns.length || chat.title !== "新对话"
+          ? chat.title
+          : chat.draft.trim().slice(0, 26) || chat.photo?.name || "新对话";
+      const row = el("div", "history-row");
+      const button = btn("", () => void select(chat), "history-item");
       button.setAttribute("aria-current", String(chat === active));
-      button.append(template("history-icon"), el("span", "", chat.title));
-      return button;
+      button.append(template("history-icon"), el("span", "", name));
+      row.append(button);
+      if (chat.saved || chat.turns.length || chat.draft || chat.photo) {
+        const remove = btn(
+          "",
+          () => confirmRemoval(chat, name),
+          "history-delete",
+        );
+        remove.setAttribute("aria-label", "删除对话：" + name);
+        remove.dataset.tip = "删除对话";
+        remove.append(template("delete-icon"));
+        row.append(remove);
+      }
+      return row;
     }),
   );
 }
+function dropChat(chat: Chat) {
+  const at = chats.indexOf(chat);
+  if (at < 0) return;
+  chats.splice(at, 1);
+  chat.loadingPhoto = 0;
+  if (active === chat) {
+    if (chats.length)
+      void select([...chats].sort((a, b) => b.updated - a.updated)[0]);
+    else createBlank();
+  } else historyNav();
+}
+const deleteDialog = $<HTMLDialogElement>("delete-chat");
+let deleteTarget: Chat | undefined;
+function confirmRemoval(chat: Chat, name: string) {
+  deleteTarget = chat;
+  $("delete-name").textContent =
+    "「" + name + "」的消息、截图和草稿将从此浏览器删除。";
+  deleteDialog.showModal();
+  $("cancel-delete").focus();
+}
+$("cancel-delete").onclick = () => deleteDialog.close();
+$("confirm-delete").onclick = async () => {
+  const target = deleteTarget;
+  if (!target) return;
+  try {
+    if (persistent) await eraseChat(target.id);
+    channel?.postMessage({ id: target.id, deleted: true });
+    deleteDialog.close();
+    dropChat(target);
+  } catch {
+    deleteDialog.close();
+    storageError();
+  }
+};
 function rail(open: boolean) {
   $("workspace").classList.toggle("rail-open", open);
   $("backdrop").hidden = !open;
   $("menu").setAttribute("aria-expanded", String(open));
   if (open) $("new-chat").focus();
 }
-function select(chat: Chat) {
-  if (active) active.draft = input.value;
+async function select(chat: Chat) {
   active = chat;
+  try {
+    localStorage.setItem(selectionKey, chat.id);
+    sessionStorage.setItem(selectionKey, chat.id);
+  } catch {}
+  if (!chat.loaded) {
+    input.disabled = true;
+    thread.replaceChildren();
+    try {
+      await restoreTurns(chat);
+    } catch {
+      storageError();
+    }
+    if (active !== chat) return;
+  }
+  input.disabled = false;
   input.value = chat.draft;
   thread.replaceChildren(...chat.turns.flatMap((t) => t.nodes));
   rail(false);
@@ -112,15 +228,24 @@ function newChat() {
     input.focus();
     return;
   }
-  const chat: Chat = {
-    title: "新对话",
-    turns: [],
-    draft: "",
-    web: false,
-    busy: false,
-    loadingPhoto: 0,
-    notice: "",
-  };
+  const blank = chats.find(
+    (c) =>
+      !c.saved && !c.turns.length && !c.draft && !c.photo && !c.loadingPhoto,
+  );
+  if (blank) void select(blank);
+  else createBlank();
+}
+function createBlank() {
+  const chat = memoryChat(
+    {
+      id: crypto.randomUUID(),
+      updated: Date.now(),
+      title: "新对话",
+      draft: "",
+      web: false,
+    },
+    false,
+  );
   chats.unshift(chat);
   select(chat);
 }
@@ -134,13 +259,20 @@ $("backdrop").onclick = () => {
   $("menu").focus();
 };
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && $("workspace").classList.contains("rail-open")) {
+  if (
+    e.key === "Escape" &&
+    !deleteDialog.open &&
+    !dialog.open &&
+    $("workspace").classList.contains("rail-open")
+  ) {
     rail(false);
     $("menu").focus();
   }
 });
 input.oninput = () => {
   active.draft = input.value;
+  persist(active, { draft: active.draft });
+  historyNav();
   sync();
 };
 input.onkeydown = (e) => {
@@ -151,12 +283,15 @@ input.onkeydown = (e) => {
 };
 $("web").onclick = () => {
   active.web = !active.web;
+  if (active.saved) persist(active, { web: active.web });
   sync();
 };
 $("attach").onclick = $("diagnose").onclick = () => file.click();
 $("remove-photo").onclick = () => {
   active.loadingPhoto = 0;
   active.photo = undefined;
+  persist(active, { photo: undefined });
+  historyNav();
   sync();
   input.focus();
 };
@@ -196,6 +331,8 @@ async function attach(f: File) {
       throw Error("图片细节过多，请裁剪到需要查看的区域。");
     if (chat.loadingPhoto === job) {
       chat.photo = { name: f.name || "粘贴的截图", url: data };
+      persist(chat, { photo: chat.photo });
+      historyNav();
       notice("", chat);
     }
   } catch (e) {
@@ -381,8 +518,28 @@ function richAnswer(text: string, refs: Source[]) {
   for (const id of used) sources.append(citation(refs[id - 1], id, false));
   return [block, sources];
 }
-function draftCard(draft: Draft) {
+function draftCard(draft: Draft, changed: () => void) {
   const card = el("section", "issue");
+  function receipt() {
+    const link = el("a", "", "查看 Issue #" + draft.issueNumber + " ↗");
+    link.href =
+      "https://github.com/Lee-xeo/Claude-Cage/issues/" + draft.issueNumber;
+    link.target = "_blank";
+    link.rel = "noopener noreferrer";
+    card.replaceChildren(
+      el("h3", "", "Issue 已提交"),
+      el("p", "", draft.title),
+      link,
+    );
+  }
+  if (
+    draft.issueNumber &&
+    Number.isSafeInteger(draft.issueNumber) &&
+    draft.issueNumber > 0
+  ) {
+    receipt();
+    return card;
+  }
   card.append(el("h3", "", "GitHub Issue 草稿"));
   const title = el("input");
   title.value = draft.title;
@@ -390,6 +547,11 @@ function draftCard(draft: Draft) {
   const body = el("textarea");
   body.value = draft.body;
   body.maxLength = 6500;
+  title.oninput = body.oninput = () => {
+    draft.title = title.value;
+    draft.body = body.value;
+    changed();
+  };
   for (const [name, field] of [
     ["标题", title],
     ["正文", body],
@@ -431,15 +593,9 @@ function draftCard(draft: Draft) {
         )
       )
         throw Error("未取得 Issue 链接，请重试。");
-      const link = el("a", "", "查看 Issue #" + data.number + " ↗");
-      link.href = data.url;
-      link.target = "_blank";
-      link.rel = "noopener noreferrer";
-      card.replaceChildren(
-        el("h3", "", "Issue 已提交"),
-        el("p", "", title.value),
-        link,
-      );
+      draft.issueNumber = Number(data.number);
+      changed();
+      receipt();
     } catch (e) {
       publish.disabled = false;
       title.readOnly = body.readOnly = false;
@@ -460,24 +616,94 @@ function sendMessage(question: string) {
     photo = chat.photo;
   question = question.trim();
   if (!question && !photo) return;
-  const u = el("div", "user-turn");
-  if (photo) {
-    const im = el("img", "user-photo");
-    im.alt = "你发送的图片";
-    im.src = photo.url;
-    u.append(im);
-  }
-  if (question) u.append(el("div", "bubble", question));
-  if (!question) question = "请帮我看看这张图片。";
-  const a = el("div", "bot-turn"),
-    turn: Turn = { question, photo, web: chat.web, nodes: [u, a] };
+  const turn = makeTurn({
+    id: crypto.randomUUID(),
+    chatId: chat.id,
+    created: Date.now(),
+    question: question || "请帮我看看这张图片。",
+    photo,
+    web: chat.web,
+  });
   chat.turns.push(turn);
-  if (chat.turns.length === 1) chat.title = question.slice(0, 26);
+  if (chat.turns.length === 1) chat.title = turn.question.slice(0, 26);
   chat.photo = undefined;
   chat.draft = input.value = "";
-  thread.append(u, a);
+  persist(
+    chat,
+    { title: chat.title, draft: "", photo: undefined, web: chat.web },
+    turn,
+  );
+  thread.append(...turn.nodes);
   historyNav();
   void run(chat, turn);
+}
+function makeTurn(data: SavedTurn): Turn {
+  const u = el("div", "user-turn");
+  if (data.photo) {
+    const im = el("img", "user-photo");
+    im.alt = "你发送的图片";
+    im.src = data.photo.url;
+    u.append(im);
+  }
+  u.append(el("div", "bubble", data.question));
+  return { ...data, nodes: [u, el("div", "bot-turn")] };
+}
+function showAnswer(chat: Chat, turn: Turn) {
+  const a = turn.nodes[1];
+  a.replaceChildren(speaker(), ...richAnswer(turn.answer!, turn.sources || []));
+  if (turn.issue?.ticket)
+    a.append(draftCard(turn.issue, () => persist(chat, {}, turn)));
+  if (turn.web && !turn.webCount)
+    a.append(el("p", "progress-note", "本次联网查询未取得资料。"));
+  const actions = el("div", "turn-tools");
+  const copy = btn("复制回答", async () => {
+    try {
+      await navigator.clipboard.writeText(turn.answer!);
+      copy.textContent = "已复制";
+    } catch {
+      notice("请选中回答文字后复制。", chat);
+    }
+  });
+  actions.append(copy);
+  if (!turn.issue)
+    actions.append(
+      btn("整理为 Issue", () => {
+        if (!chat.busy)
+          sendMessage(
+            "请把刚才关于“" +
+              turn.question.slice(0, 150) +
+              "”的问题和已经确认的信息整理成 GitHub Issue 草稿。",
+          );
+      }),
+    );
+  a.append(actions);
+}
+function showRetry(chat: Chat, turn: Turn) {
+  const a = turn.nodes[1];
+  const retry = btn(
+    "重试",
+    () => {
+      if (!chat.busy) void run(chat, turn);
+    },
+    "retry",
+  );
+  a.replaceChildren(
+    speaker(),
+    el("p", "", turn.error || "上次回答尚未完成，可点重试继续。"),
+    retry,
+  );
+}
+async function restoreTurns(chat: Chat) {
+  const records = await readTurns(chat.id);
+  chat.turns = records
+    .sort((a, b) => a.created - b.created || a.id.localeCompare(b.id))
+    .map((record) => {
+      const turn = makeTurn(record);
+      if (turn.answer) showAnswer(chat, turn);
+      else showRetry(chat, turn);
+      return turn;
+    });
+  chat.loaded = true;
 }
 async function run(chat: Chat, turn: Turn) {
   chat.busy = true;
@@ -527,55 +753,19 @@ async function run(chat: Chat, turn: Turn) {
       throw Error(data.error || "暂时没有收到回答。");
     turn.answer = data.answer;
     turn.observation = data.observation;
-    a.replaceChildren(
-      speaker(),
-      ...richAnswer(data.answer, data.sources || []),
-    );
-    if (data.issue?.title && data.issue?.body && data.issue?.ticket)
-      a.append(draftCard(data.issue));
-    if (turn.web && !data.webCount)
-      a.append(el("p", "progress-note", "本次联网查询未取得资料。"));
-    const actions = el("div", "turn-tools");
-    const copy = btn("复制回答", async () => {
-      try {
-        await navigator.clipboard.writeText(data.answer);
-        copy.textContent = "已复制";
-      } catch {
-        notice("请选中回答文字后复制。", chat);
-      }
-    });
-    actions.append(copy);
-    if (!data.issue)
-      actions.append(
-        btn("整理为 Issue", () => {
-          if (!chat.busy)
-            sendMessage(
-              "请把刚才关于“" +
-                turn.question.slice(0, 150) +
-                "”的问题和已经确认的信息整理成 GitHub Issue 草稿。",
-            );
-        }),
-      );
-    a.append(actions);
+    turn.sources = data.sources || [];
+    turn.issue = data.issue;
+    turn.webCount = data.webCount;
+    turn.error = undefined;
+    showAnswer(chat, turn);
+    persist(chat, {}, turn);
   } catch (e) {
-    const retry = btn(
-      "重试",
-      () => {
-        if (!chat.busy) void run(chat, turn);
-      },
-      "retry",
-    );
-    a.replaceChildren(
-      speaker(),
-      el(
-        "p",
-        "",
-        e instanceof Error && !/fetch|timeout|JSON|load failed/i.test(e.message)
-          ? e.message
-          : "连接暂时失败，消息仍在这里。",
-      ),
-      retry,
-    );
+    turn.error =
+      e instanceof Error && !/fetch|timeout|JSON|load failed/i.test(e.message)
+        ? e.message
+        : "连接暂时失败，消息仍在这里。";
+    showRetry(chat, turn);
+    persist(chat, {}, turn);
   } finally {
     chat.busy = false;
     if (active === chat) {
@@ -589,4 +779,80 @@ form.onsubmit = (e) => {
   e.preventDefault();
   sendMessage(input.value);
 };
-newChat();
+
+async function initialize() {
+  input.disabled = true;
+  $<HTMLButtonElement>("new-chat").disabled = true;
+  form.inert = true;
+  $("shortcuts").inert = true;
+  let selected = "";
+  try {
+    await openHistory();
+    const records = await listChats();
+    records.sort((a, b) => b.updated - a.updated);
+    chats.push(...records.map((r) => memoryChat(r, true)));
+    persistent = true;
+    try {
+      selected =
+        sessionStorage.getItem(selectionKey) ||
+        localStorage.getItem(selectionKey) ||
+        "";
+    } catch {}
+  } catch {
+    storageError();
+  }
+  if (chats.length)
+    await select(chats.find((c) => c.id === selected) ?? chats[0]);
+  else createBlank();
+  input.disabled = false;
+  $<HTMLButtonElement>("new-chat").disabled = false;
+  form.inert = false;
+  $("shortcuts").inert = false;
+}
+if (channel)
+  channel.onmessage = async ({ data }) => {
+    if (!persistent || typeof data?.id !== "string") return;
+    try {
+      const record = await readChat(data.id);
+      let chat = chats.find((c) => c.id === data.id);
+      if (!record) {
+        if (chat) dropChat(chat);
+        return;
+      }
+      if (!chat) {
+        chat = memoryChat(record, true);
+        chats.push(chat);
+      } else {
+        Object.assign(chat, record);
+        if (data.turnId && chat.loaded) {
+          const saved = await readTurn(data.turnId);
+          if (saved && chats.includes(chat)) {
+            const existing = chat.turns.find((t) => t.id === saved.id);
+            if (existing) {
+              Object.assign(existing, saved);
+              if (existing.answer) showAnswer(chat, existing);
+              else showRetry(chat, existing);
+            } else {
+              const turn = makeTurn(saved);
+              if (turn.answer) showAnswer(chat, turn);
+              else showRetry(chat, turn);
+              chat.turns.push(turn);
+              chat.turns.sort(
+                (a, b) => a.created - b.created || a.id.localeCompare(b.id),
+              );
+            }
+            if (chat === active)
+              thread.replaceChildren(...chat.turns.flatMap((t) => t.nodes));
+          }
+        }
+        if (chat === active) {
+          if (input.value !== chat.draft) input.value = chat.draft;
+          sync();
+        }
+      }
+      historyNav();
+    } catch {
+      storageError();
+    }
+  };
+void initialize();
