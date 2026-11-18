@@ -280,28 +280,36 @@ final class ClaudeCanvasSession {
                               geometry: String, after: String?, wait: Bool, keyframe: Bool) async throws -> [String:Any]? {
         let (base, level) = MacWindowVideoEncoder.split(after)
         let refining = level < MacWindowVideoEncoder.refinements
+        let motion = MacWindowMotion.shared
         let captureStarted = Date()
+        // A viewer holding a half density picture is owed the full one as soon
+        // as the scroll ends, whether or not the window changes again.
         let (buffer, sequence) = try await stream.latest(filter: filter, configuration: config, identity: geometry, after: base,
-                                                         wait: wait && !keyframe, seconds: refining ? 0.25 : 2)
+                                                         wait: wait && !keyframe,
+                                                         seconds: video.reduced ? max(0.02, motion.remaining) : refining ? 0.25 : 2)
         let captureMs = Date().timeIntervalSince(captureStarted) * 1000
         guard try liveBounds(layout.id, layout.pid) == layout.frame,
               try owns(layout.pid) else { throw Failure(7, "window_changed") }
+        // A window captured at single density is already small enough.
+        let moving = layout.scale >= 1.5 && motion.remaining > 0
         var next = sequence
         if sequence == base && !keyframe {
-            guard refining else { return ["unchanged": true, "sequence": after ?? sequence, "geometry": geometry] }
+            // Refinement waits for the scroll to end: it would be spent on a
+            // picture that is about to be replaced.
+            guard !moving, refining || video.reduced else { return ["unchanged": true, "sequence": after ?? sequence, "geometry": geometry] }
             next = MacWindowVideoEncoder.refined(sequence, level: level + 1)
         }
-        let width = CVPixelBufferGetWidth(buffer), height = CVPixelBufferGetHeight(buffer)
-        let top = Int((layout.cropTop * CGFloat(height) / layout.frame.height).rounded())
-        guard top >= 0, top < height else { throw Failure(7, "window_changed") }
+        guard layout.cropTop >= 0, layout.cropTop < layout.frame.height else { throw Failure(7, "window_changed") }
         let encodeStarted = Date()
         let frame: MacWindowVideoFrame
-        do { frame = try await video.encode(buffer, identity: geometry, forceKey: keyframe) }
+        do { frame = try await video.encode(buffer, identity: geometry, forceKey: keyframe, reduce: moving) }
         catch {
             video.fail()
             GuestDiagnostic.record("window", "video_encoder_unavailable")
             return nil
         }
+        let width = frame.width, height = frame.height
+        let top = min(height - 1, Int((layout.cropTop * CGFloat(height) / layout.frame.height).rounded()))
         // The second ownership check covers the time spent encoding.
         guard try liveBounds(layout.id, layout.pid) == layout.frame,
               try owns(layout.pid) else { throw Failure(7, "window_changed") }

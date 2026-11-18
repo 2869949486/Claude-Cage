@@ -10,6 +10,31 @@ struct MacWindowVideoFrame {
     let config: Data?
     let edge: String?
     let corner: Int
+    let width, height: Int
+}
+
+// A scroll redraws the whole window many times a second, and encoding every
+// one of those pictures at full density takes longer than the pictures are
+// apart. While scroll input is arriving, and briefly after it, the window is
+// sent at half density; the first picture after that is sent in full.
+final class MacWindowMotion: @unchecked Sendable {
+    static let shared = MacWindowMotion()
+    private static let hold: TimeInterval = 0.15
+    private let lock = NSLock()
+    private var last: TimeInterval = -1
+
+    func mark() {
+        lock.lock()
+        last = ProcessInfo.processInfo.systemUptime
+        lock.unlock()
+    }
+
+    // Seconds until the window counts as still again.
+    var remaining: TimeInterval {
+        lock.lock()
+        defer { lock.unlock() }
+        return last < 0 ? 0 : max(0, last + Self.hold - ProcessInfo.processInfo.systemUptime)
+    }
 }
 
 // One encoder belongs to one frame connection. Each frame it produces is sent
@@ -21,18 +46,36 @@ final class MacWindowVideoEncoder: @unchecked Sendable {
     static let refinements = 2
     private static let marker = "+q"
 
-    private var session: VTCompressionSession?
-    private var width = 0, height = 0, identity = ""
+    // The full and the half density pictures each keep their own encoder, so
+    // going from one to the other does not build an encoder again.
+    private final class Track {
+        var session: VTCompressionSession?
+        var width = 0, height = 0
+        var edge: String?
+        var corner = 0
+        func close() {
+            if let session { VTCompressionSessionInvalidate(session) }
+            session = nil
+        }
+    }
+    private let full = Track(), half = Track()
+    private var identity = ""
     private var count: Int64 = 0
-    private var edge: String?
-    private var corner = 0
+    private var scaler: VTPixelTransferSession?
+    private var pool: CVPixelBufferPool?
+    private var poolWidth = 0, poolHeight = 0
+    private var scalingFailed = false
+    // Whether the frame the viewer holds is a half density one.
+    private(set) var reduced = false
     private(set) var failed = false
 
     deinit { close() }
 
     func close() {
-        if let session { VTCompressionSessionInvalidate(session) }
-        session = nil
+        full.close(); half.close()
+        if let scaler { VTPixelTransferSessionInvalidate(scaler) }
+        scaler = nil
+        pool = nil
     }
 
     func fail() { failed = true; close() }
@@ -47,7 +90,6 @@ final class MacWindowVideoEncoder: @unchecked Sendable {
     static func refined(_ sequence: String, level: Int) -> String { sequence + marker + String(level) }
 
     private func open(width: Int, height: Int) throws -> VTCompressionSession {
-        close()
         var created: VTCompressionSession?
         // Low-latency rate control emits each frame as soon as it is submitted
         // and holds the bitrate more closely. Fall back to the default encoder.
@@ -141,18 +183,66 @@ final class MacWindowVideoEncoder: @unchecked Sendable {
         }
     }
 
-    func encode(_ buffer: CVPixelBuffer, identity next: String, forceKey: Bool) async throws -> MacWindowVideoFrame {
+    // A copy of the surface at half its width and height, or nil when this
+    // system cannot make one; the caller then encodes the surface itself.
+    private func halved(_ buffer: CVPixelBuffer) -> CVPixelBuffer? {
+        let width = CVPixelBufferGetWidth(buffer) / 2, height = CVPixelBufferGetHeight(buffer) / 2
+        guard !scalingFailed, width >= 16, height >= 16 else { return nil }
+        if scaler == nil {
+            var created: VTPixelTransferSession?
+            guard VTPixelTransferSessionCreate(allocator: nil, pixelTransferSessionOut: &created) == noErr, created != nil else {
+                scalingFailed = true
+                return nil
+            }
+            scaler = created
+        }
+        if pool == nil || width != poolWidth || height != poolHeight {
+            let attributes: [CFString: Any] = [
+                kCVPixelBufferPixelFormatTypeKey: NSNumber(value: CVPixelBufferGetPixelFormatType(buffer)),
+                kCVPixelBufferWidthKey: NSNumber(value: width),
+                kCVPixelBufferHeightKey: NSNumber(value: height),
+                kCVPixelBufferIOSurfacePropertiesKey: [:] as CFDictionary,
+            ]
+            var created: CVPixelBufferPool?
+            guard CVPixelBufferPoolCreate(nil, nil, attributes as CFDictionary, &created) == kCVReturnSuccess, created != nil else {
+                scalingFailed = true
+                return nil
+            }
+            pool = created; poolWidth = width; poolHeight = height
+        }
+        var output: CVPixelBuffer?
+        guard let pool, let scaler, CVPixelBufferPoolCreatePixelBuffer(nil, pool, &output) == kCVReturnSuccess, let output,
+              VTPixelTransferSessionTransferImage(scaler, from: buffer, to: output) == noErr else {
+            scalingFailed = true
+            return nil
+        }
+        return output
+    }
+
+    func encode(_ surface: CVPixelBuffer, identity next: String, forceKey: Bool, reduce: Bool = false) async throws -> MacWindowVideoFrame {
+        if next != identity {
+            close()
+            identity = next
+        }
+        let small = reduce ? halved(surface) : nil
+        let buffer = small ?? surface
+        let track = small == nil ? full : half
         let bufferWidth = CVPixelBufferGetWidth(buffer), bufferHeight = CVPixelBufferGetHeight(buffer)
         guard bufferWidth >= 16, bufferHeight >= 16 else { throw Failure(8, "video_encoder_unavailable") }
-        if session == nil || bufferWidth != width || bufferHeight != height || next != identity {
-            session = try open(width: bufferWidth, height: bufferHeight)
-            width = bufferWidth; height = bufferHeight; identity = next
-            (edge, corner) = surround(buffer)
+        if track.session == nil || bufferWidth != track.width || bufferHeight != track.height {
+            track.close()
+            track.session = try open(width: bufferWidth, height: bufferHeight)
+            track.width = bufferWidth; track.height = bufferHeight
+            (track.edge, track.corner) = surround(buffer)
         }
-        guard let session else { throw Failure(8, "video_encoder_unavailable") }
+        guard let session = track.session else { throw Failure(8, "video_encoder_unavailable") }
+        // The viewer has one decoder. A picture of the other density starts
+        // it again, so that picture has to be a key frame.
+        let startsKey = forceKey || (small != nil) != reduced
+        reduced = small != nil
         let time = CMTime(value: count, timescale: 30)
         count += 1
-        let options: CFDictionary? = forceKey ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as [CFString: Any] as CFDictionary : nil
+        let options: CFDictionary? = startsKey ? [kVTEncodeFrameOptionKey_ForceKeyFrame: true] as [CFString: Any] as CFDictionary : nil
         let sample: CMSampleBuffer = try await withCheckedThrowingContinuation { continuation in
             let completion = Completion(continuation)
             let status = VTCompressionSessionEncodeFrame(session, imageBuffer: buffer, presentationTimeStamp: time,
@@ -179,6 +269,7 @@ final class MacWindowVideoEncoder: @unchecked Sendable {
         guard copied == noErr else { throw Failure(8, "video_encoder_unavailable") }
         let attachments = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[CFString: Any]]
         let key = attachments?.first?[kCMSampleAttachmentKey_NotSync] as? Bool != true
-        return MacWindowVideoFrame(data: data, key: key, config: key ? try configuration(sample) : nil, edge: edge, corner: corner)
+        return MacWindowVideoFrame(data: data, key: key, config: key ? try configuration(sample) : nil, edge: track.edge, corner: track.corner,
+                                   width: bufferWidth, height: bufferHeight)
     }
 }

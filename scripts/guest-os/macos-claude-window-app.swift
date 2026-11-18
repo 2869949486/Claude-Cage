@@ -227,6 +227,7 @@ func sendInput(_ input: Request, window: SCWindow, canvas: ClaudeCanvas? = nil, 
             let horizontal = input.deltaX ?? scrollX
             guard let delta = input.delta, delta.isFinite, horizontal.isFinite,
                   (-maxScroll...maxScroll).contains(delta), (-maxScroll...maxScroll).contains(horizontal) else { throw Failure(8, "invalid_input") }
+            MacWindowMotion.shared.mark()
             events = [CGEvent(scrollWheelEvent2Source: source, units: .pixel, wheelCount: horizontal == 0 ? 1 : 2, wheel1: Int32(-delta), wheel2: Int32(-horizontal), wheel3: 0)]
         } else {
             // Address the NSEvent to this window using its unflipped local
