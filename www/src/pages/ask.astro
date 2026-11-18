@@ -1,0 +1,230 @@
+---
+import '../styles/cage.css';
+import GoogleAnalytics from '../components/GoogleAnalytics.astro';
+const base = import.meta.env.BASE_URL;
+---
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"/><meta name="viewport" content="width=device-width,initial-scale=1"/><GoogleAnalytics/><link rel="canonical" href={new URL(base+"ask/",Astro.site)}/><title>使用答疑 · Claude Cage</title><link rel="icon" href={base+'cage-icon.png'}/></head>
+<body>
+<header class="wrap nav"><a class="brand" href={base}><img src={base+'cage-icon.png'} width="40" height="40" alt=""/> Claude Cage</a><a class="text-link" href={base+'docs/'}>使用手册 ↗</a></header>
+<main>
+  <h1>使用答疑</h1><p class="intro">安装卡在哪一步？想知道某个功能怎么用？可以直接描述问题。</p>
+  <section id="thread" aria-label="本次对话"></section>
+  <form id="ask">
+    <label for="question">你的问题</label>
+    <textarea id="question" rows="4" required maxlength="1400" placeholder="例如：如何让 Cage 读取我电脑上的项目文件夹？"></textarea>
+    <div class="controls"><label class="web"><input id="web" type="checkbox"/> 联网查阅资料</label><button class="button" id="send">提问 ↑</button></div>
+  </form>
+  <p id="status" role="status"></p>
+  <p class="note">问题和最近两轮对话会发送给 Token Link 模型服务。开启联网后，本次问题也会用于搜索 Microsoft Learn 和维基百科。请先移除密钥和个人资料。<a href={base+"privacy/"}>隐私说明</a></p>
+  <noscript><p>请启用 JavaScript 提问，也可以直接阅读<a href={base+'docs/'}>使用手册</a>。</p></noscript>
+</main>
+</body></html>
+<script>
+import { marked } from "marked";
+import DOMPurify from "dompurify";
+const form = document.querySelector<HTMLFormElement>("#ask")!;
+const input = document.querySelector<HTMLTextAreaElement>("#question")!;
+const status = document.querySelector<HTMLElement>("#status")!;
+const send = document.querySelector<HTMLButtonElement>("#send")!;
+const web = document.querySelector<HTMLInputElement>("#web")!;
+const thread = document.querySelector<HTMLElement>("#thread")!;
+let history: { role: string; content: string }[] = [];
+function paragraph(parent: HTMLElement, text: string, className: string) {
+  const p = document.createElement("p");
+  p.className = className;
+  p.textContent = text;
+  parent.append(p);
+}
+form.addEventListener("submit", async (event) => {
+  event.preventDefault();
+  const question = input.value.trim();
+  if (!question || send.disabled) return;
+  send.disabled = true;
+  input.readOnly = true;
+  web.disabled = true;
+  status.textContent = "正在查阅资料并准备回答…";
+  try {
+    const response = await fetch("https://token-link.shop/cage-support/ask", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ question, history, web: web.checked }),
+      signal: AbortSignal.timeout(85000),
+    });
+    const data = await response.json();
+    if (!response.ok || typeof data.answer !== "string")
+      throw new Error(data.error || "暂时无法取得回答，请稍后重试。");
+    const turn = document.createElement("article");
+    const title = document.createElement("h2");
+    title.textContent = question;
+    turn.append(title);
+    const answer = document.createElement("div");
+    answer.className = "answer";
+    answer.append(
+      DOMPurify.sanitize(marked.parse(data.answer, { async: false }), {
+        ALLOWED_TAGS: [
+          "p",
+          "br",
+          "strong",
+          "em",
+          "code",
+          "pre",
+          "ul",
+          "ol",
+          "li",
+          "h2",
+          "h3",
+          "h4",
+          "blockquote",
+        ],
+        ALLOWED_ATTR: [],
+        RETURN_DOM_FRAGMENT: true,
+      }),
+    );
+    turn.append(answer);
+    const ids = [
+      ...new Set(
+        Array.from((data.answer as string).matchAll(/\[(\d+)\]/g), (m) =>
+          Number(m[1]),
+        ),
+      ),
+    ];
+    for (const id of ids) {
+      const src = data.sources?.[id - 1];
+      if (!src || !src.url.startsWith("https://")) continue;
+      const a = document.createElement("a");
+      a.href = src.url;
+      a.textContent = "[" + id + "] " + src.title;
+      a.target = "_blank";
+      a.rel = "noopener noreferrer";
+      turn.append(a);
+    }
+    if (web.checked && !data.webCount)
+      paragraph(turn, "此次联网查询未取得资料。", "note");
+    thread.append(turn);
+    history = [
+      ...history,
+      { role: "user", content: question },
+      {
+        role: "assistant",
+        content: Array.from(data.answer as string)
+          .slice(0, 1800)
+          .join(""),
+      },
+    ].slice(-4);
+    input.value = "";
+    status.textContent = "已回答，可以继续追问。";
+    title.tabIndex = -1;
+    title.focus();
+  } catch (e) {
+    status.textContent =
+      e instanceof Error &&
+      e.message &&
+      !/fetch|network|JSON|timeout|load failed/i.test(e.message)
+        ? e.message
+        : "连接暂时失败，请重试。";
+  } finally {
+    send.disabled = false;
+    input.readOnly = false;
+    web.disabled = false;
+  }
+});
+</script>
+<style>
+main {
+  width: min(730px, calc(100% - 36px));
+  margin: clamp(32px, 6vw, 76px) auto 64px;
+}
+h1 {
+  font-size: clamp(36px, 5vw, 52px);
+}
+.intro {
+  margin: 12px 0 28px;
+  color: var(--muted);
+}
+form {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: #fffdf9;
+}
+label {
+  font-weight: 550;
+}
+textarea {
+  display: block;
+  width: 100%;
+  font: inherit;
+  font-size: 17px;
+  line-height: 1.6;
+  margin: 12px 0 16px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: white;
+  color: inherit;
+  resize: vertical;
+  min-height: 95px;
+}
+.controls {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.web {
+  font-weight: 400;
+}
+.web input {
+  accent-color: var(--accent);
+}
+button {
+  border: 0;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.6;
+}
+.note,
+#status {
+  font-size: 14px;
+  color: var(--muted);
+  margin-top: 10px;
+}
+#status:empty {
+  display: none;
+}
+#thread :global(article) {
+  padding: 18px 0 24px;
+  border-top: 1px solid var(--line);
+  overflow-wrap: anywhere;
+}
+#thread :global(h2) {
+  font-size: 21px;
+}
+#thread :global(.answer) {
+  margin: 12px 0;
+}
+#thread :global(a) {
+  display: block;
+  color: var(--accent);
+  text-decoration: underline;
+  margin: 6px 0;
+}
+.answer :global(pre),
+#thread :global(pre) {
+  overflow-x: auto;
+  padding: 12px;
+  background: #f1ede6;
+}
+#thread :global(.answer p),
+#thread :global(.answer h3) {
+  margin: 10px 0;
+}
+#thread :global(.answer h2) {
+  font-size: 18px;
+}
+#thread :global(.answer li) {
+  margin-block: 6px;
+}
+</style>
