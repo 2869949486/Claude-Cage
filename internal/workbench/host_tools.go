@@ -40,6 +40,7 @@ var hostToolsRelayScript string
 type hostTools struct {
 	bridge  *hostbridge.Bridge
 	plugins []*hostbridge.External
+	jobs    *hostbridge.Jobs
 	cancel  context.CancelFunc
 	done    chan struct{}
 	// configured is when the environment's clients were last given the entry.
@@ -58,6 +59,9 @@ func (h *hostTools) close() {
 	}
 	for _, plugin := range h.plugins {
 		plugin.Close()
+	}
+	if h.jobs != nil {
+		h.jobs.Close()
 	}
 }
 
@@ -99,18 +103,19 @@ func (s *Server) startHostTools() error {
 		return err
 	}
 	approvals := newHostApprovals()
+	jobs := hostbridge.NewJobs()
 	ctx, cancel := context.WithCancel(s.lifetimeContext())
 	// Plugins the user installed run beside the built-in command tool. One
 	// that fails to load is left out; the rest still work.
-	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command"}, approvals.approveTool)
+	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, approvals.approveTool)
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
 	}
-	plugins := []hostbridge.Plugin{hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: approvals.approve}}
+	plugins := []hostbridge.Plugin{hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: approvals.approve, Jobs: jobs}}
 	for _, plugin := range external {
 		plugins = append(plugins, plugin)
 	}
-	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external}
+	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs}
 	bridge, err := hostbridge.Start(token, plugins...)
 	if err != nil {
 		close(tools.done)

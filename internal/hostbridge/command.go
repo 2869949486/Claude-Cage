@@ -18,6 +18,9 @@ const (
 	defaultCommandTimeout = 2 * time.Minute
 	maxCommandTimeout     = 30 * time.Minute
 	commandOutputLimit    = 64 << 10
+
+	defaultBackgroundTimeout = 30 * time.Minute
+	maxBackgroundTimeout     = 6 * time.Hour
 )
 
 // Command runs shell commands on this computer.
@@ -31,10 +34,14 @@ const (
 //
 // Approve, if set, is asked before each command and refuses it by returning
 // an error, whose text the caller sees.
+//
+// Jobs, if set, lets a command run in the background: the call returns at
+// once and the caller reads the outcome later. Without it every call waits.
 type Command struct {
 	Dirs    func() []string
 	MapDir  func(string) string
 	Approve func(context.Context, CommandRequest) error
+	Jobs    *Jobs
 }
 
 // CommandRequest is one command awaiting approval. Dir is the directory it
@@ -49,10 +56,13 @@ type CommandRequest struct {
 type commandInput struct {
 	Command        string `json:"command" jsonschema:"the shell command to run"`
 	Dir            string `json:"dir,omitempty" jsonschema:"absolute directory to run in; defaults to the first project directory"`
-	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"stop the command after this many seconds; default 120, at most 1800"`
+	TimeoutSeconds int    `json:"timeout_seconds,omitempty" jsonschema:"stop the command after this many seconds; default 120, at most 1800; a background command defaults to 1800, at most 21600"`
+	Background     bool   `json:"background,omitempty" jsonschema:"return at once with a job id instead of waiting; use for builds, test suites and anything that may take more than a minute, then read the result with command_job"`
 }
 
 type commandOutput struct {
+	Job       string `json:"job,omitempty"`
+	Running   bool   `json:"running,omitempty"`
 	ExitCode  int    `json:"exit_code"`
 	Output    string `json:"output"`
 	Truncated bool   `json:"truncated,omitempty"`
@@ -72,6 +82,9 @@ func (c Command) Register(server *mcp.Server) {
 		out, err := c.run(ctx, in)
 		return nil, out, err
 	})
+	if c.Jobs != nil {
+		c.Jobs.register(server)
+	}
 }
 
 func (c Command) run(ctx context.Context, in commandInput) (commandOutput, error) {
@@ -87,16 +100,32 @@ func (c Command) run(ctx context.Context, in commandInput) (commandOutput, error
 			return commandOutput{}, err
 		}
 	}
+	if in.Background {
+		if c.Jobs == nil {
+			return commandOutput{}, errors.New("background commands are not available")
+		}
+		timeout := defaultBackgroundTimeout
+		if in.TimeoutSeconds > 0 {
+			timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxBackgroundTimeout)
+		}
+		return c.Jobs.start(in.Command, dir, timeout)
+	}
 	timeout := defaultCommandTimeout
 	if in.TimeoutSeconds > 0 {
 		timeout = min(time.Duration(in.TimeoutSeconds)*time.Second, maxCommandTimeout)
 	}
+	output := &cappedBuffer{limit: commandOutputLimit}
+	return execute(ctx, in.Command, dir, timeout, output)
+}
+
+// execute runs the command until it exits, the timeout passes or ctx ends,
+// collecting its output in output, which may be read meanwhile.
+func execute(ctx context.Context, command, dir string, timeout time.Duration, output *cappedBuffer) (commandOutput, error) {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 
-	cmd := shellCommand(in.Command)
+	cmd := shellCommand(command)
 	cmd.Dir = dir
-	output := &cappedBuffer{limit: commandOutputLimit}
 	cmd.Stdout, cmd.Stderr = output, output
 	if err := cmd.Start(); err != nil {
 		return commandOutput{}, err

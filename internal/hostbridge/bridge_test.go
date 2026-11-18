@@ -206,3 +206,87 @@ func TestToolsDescribeOnlyWhatTheyDo(t *testing.T) {
 		t.Errorf("an ordinary description was refused for %q", word)
 	}
 }
+
+func TestBackgroundCommandIsReadLater(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the commands are for a POSIX shell")
+	}
+	dir := t.TempDir()
+	jobs := NewJobs()
+	defer jobs.Close()
+	command := Command{Dirs: func() []string { return []string{dir} }, Jobs: jobs}
+	ctx := context.Background()
+	started, err := command.run(ctx, commandInput{Command: "echo first; sleep 1; echo second; exit 4", Background: true})
+	if err != nil || started.Job == "" || !started.Running {
+		t.Fatalf("start: %+v %v", started, err)
+	}
+	finished, err := jobs.read(ctx, jobInput{Job: started.Job, Wait: 20})
+	if err != nil || finished.Running || finished.ExitCode != 4 || !strings.Contains(finished.Output, "first") || !strings.Contains(finished.Output, "second") {
+		t.Fatalf("finished: %+v %v", finished, err)
+	}
+	if _, err := jobs.read(ctx, jobInput{Job: "job-999"}); err == nil {
+		t.Fatal("an unknown job was read")
+	}
+}
+
+func TestBackgroundCommandShowsOutputWhileRunningAndCanBeStopped(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the commands are for a POSIX shell")
+	}
+	dir := t.TempDir()
+	jobs := NewJobs()
+	defer jobs.Close()
+	command := Command{Dirs: func() []string { return []string{dir} }, Jobs: jobs}
+	ctx := context.Background()
+	started, err := command.run(ctx, commandInput{Command: "echo begun; sleep 60 & sleep 60", Background: true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for {
+		now, err := jobs.read(ctx, jobInput{Job: started.Job})
+		if err != nil || !now.Running {
+			t.Fatalf("while running: %+v %v", now, err)
+		}
+		if strings.Contains(now.Output, "begun") {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("no output was visible while the command ran")
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	begun := time.Now()
+	stopped, err := jobs.read(ctx, jobInput{Job: started.Job, Stop: true})
+	if err != nil || stopped.Running || stopped.ExitCode != -1 || time.Since(begun) > 10*time.Second {
+		t.Fatalf("stopped: %+v %v after %s", stopped, err, time.Since(begun))
+	}
+}
+
+func TestBackgroundCommandsAreBoundedAndEndWithTheBridge(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the commands are for a POSIX shell")
+	}
+	dir := t.TempDir()
+	jobs := NewJobs()
+	command := Command{Dirs: func() []string { return []string{dir} }, Jobs: jobs}
+	for range maxRunningJobs {
+		if _, err := command.run(context.Background(), commandInput{Command: "sleep 60", Background: true}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := command.run(context.Background(), commandInput{Command: "sleep 60", Background: true}); err == nil {
+		t.Fatal("more background commands than the limit were started")
+	}
+	begun := time.Now()
+	jobs.Close()
+	if time.Since(begun) > 15*time.Second {
+		t.Fatalf("closing took %s", time.Since(begun))
+	}
+	if _, err := command.run(context.Background(), commandInput{Command: "true", Background: true}); err == nil {
+		t.Fatal("a background command started after closing")
+	}
+	if _, err := (Command{Dirs: func() []string { return []string{dir} }}).run(context.Background(), commandInput{Command: "true", Background: true}); err == nil {
+		t.Fatal("a background command started without Jobs")
+	}
+}
