@@ -23,6 +23,7 @@ import (
 
 type Preferences struct {
 	ReuseClaudeLogin      bool   `json:"reuse_claude_login"`
+	TransferAllowUnclean  bool   `json:"transfer_allow_unclean"`
 	BalancedDisplay       bool   `json:"balanced_display"`
 	ProjectFileCache      bool   `json:"project_file_cache"`
 	MobileRelay           string `json:"mobile_relay,omitempty"`

@@ -770,6 +770,7 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.BalancedDisplay = s.preferences.BalancedDisplay
 	input.ProjectFileCache = s.preferences.ProjectFileCache
 	input.ReuseClaudeLogin = s.preferences.ReuseClaudeLogin
+	input.TransferAllowUnclean = s.preferences.TransferAllowUnclean
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	s.mu.Unlock()
