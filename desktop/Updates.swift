@@ -7,12 +7,8 @@ let cageUpdateBundleID = "io.github.lee-xeo.claude-cage"
 
 enum CageProfile {
     static var clientOnly: Bool { Bundle.main.object(forInfoDictionaryKey: "CageClientOnly") as? Bool == true }
-    static var macGuestTrial: Bool { Bundle.main.bundleIdentifier == cageUpdateBundleID + ".macos-trial" }
     static var intelMacTest: Bool { Bundle.main.bundleIdentifier == cageUpdateBundleID + ".intel-macos-test" }
     static func configURL() -> URL {
-        if macGuestTrial {
-            return FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".claude-cage/macos-trial/config.json")
-        }
         if let path = ProcessInfo.processInfo.environment["CLAUDE_CAGE_CONFIG"], !path.isEmpty {
             return URL(fileURLWithPath: path).standardizedFileURL
         }
@@ -285,12 +281,6 @@ final class CageAppUpdater {
         if Bundle(url: bundleURL)?.bundleIdentifier == cageUpdateBundleID + ".intel-macos-test" {
             if state["phase"] as? String != "manual" {
                 change(["phase": "manual", "message": "Intel 测试版通过独立测试包更新。"])
-            }
-            return state
-        }
-        if Bundle(url: bundleURL)?.bundleIdentifier == cageUpdateBundleID + ".macos-trial" {
-            if state["phase"] as? String != "manual" {
-                change(["phase": "manual", "message": "macOS 客机试用版通过本机安装更新。"])
             }
             return state
         }
