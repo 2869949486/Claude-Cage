@@ -12,7 +12,7 @@ ssh token-link-server 'set -eu; tmp=$(mktemp /opt/cage-support/rules.XXXXXX); ca
 
 ## 更新程序和知识库
 
-在仓库根目录执行以下命令。将生成的程序、语料及其提交标识同步到服务器的 `/opt/cage-support/`，再重启 `cage-support.service`。语料取自指定提交，包含使用手册和应用源码。源码引用指向该提交的具体行。
+在仓库根目录执行以下命令。将生成的程序、语料及其提交标识同步到服务器的 `/opt/cage-support/`，再重启 `cage-support.service`。语料取自指定提交，包含使用手册和应用源码。源码引用指向该提交的具体行。访客询问实现细节时，服务会将产品用语转换为代码检索词，优先匹配问题中点名的函数或配置项，并读取相邻代码段，以覆盖跨段的分支和返回值。
 
 ```sh
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -o /tmp/server ./www/support

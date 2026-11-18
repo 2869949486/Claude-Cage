@@ -280,7 +280,24 @@ func main() {
 		if in.LogExcerpt != "" {
 			query += " " + in.LogExcerpt
 		}
-		refs := append(learned.sources(query), ix.search(query)...)
+		hints := ""
+		if implementationQuestion.MatchString(in.Question) {
+			// Translate a visitor’s vocabulary to code-search terms. Keep the
+			// original query even when the optional translation times out.
+			hintCtx, cancelHints := context.WithTimeout(ctx, 7*time.Second)
+			var result struct {
+				Terms []string `json:"terms"`
+			}
+			err := modelJSON(hintCtx, key, []message{
+				{"system", "将问题转成用于仓库全文搜索的至多八个英文关键词（函数名、配置名、HTTP 头或错误字符串）。输出 JSON 对象 terms 字符串数组。保留原有符号。不回答问题。"},
+				{"user", in.Question},
+			}, &result)
+			cancelHints()
+			if err == nil && len(result.Terms) <= 8 {
+				hints = strings.Join(result.Terms, " ")
+			}
+		}
+		refs := append(learned.sources(query), ix.search(query, hints)...)
 		external := 0
 		if in.Web {
 			webCtx, stop := context.WithTimeout(ctx, 5*time.Second)
