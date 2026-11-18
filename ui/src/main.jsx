@@ -57,6 +57,7 @@ import { SafetyChecklistContext, SafetyMessage } from "./safety-message";
 import { networkState, isGuestLocalURL } from "./safety-state.mjs";
 import { needsProxySetup } from "./onboarding-state.mjs";
 import { NetworkLatency } from "./network-latency";
+import { NetworkSpeed } from "./network-speed";
 import { useWindowVisibility } from "./window-visibility";
 import { AppUpdateButton, AppUpdateDialog, useAppUpdates } from "./app-updates";
 import "./appearance.css";
@@ -1912,6 +1913,10 @@ function App() {
               revision={proxy?.revision}
               selected={proxy?.selected}
             />
+            <NetworkSpeed
+              key={`speed:${proxy?.selected}:${proxy?.revision}:${running}:${busy}:${Boolean(connectionError)}`}
+              enabled={running && !busy && !connectionError}
+            />
             <span className="status-spacer" />
             <AudioControls audio={audio} />
             <EnvironmentClock timezone={settings.timezone} clock12Hour={settings.clock_12_hour} />
@@ -1921,7 +1926,7 @@ function App() {
                   ? status.job.message
                   : running
                     ? status.ready
-                      ? isRemoteClient() ? "文件保存在云端" : "文件与本机同步"
+                      ? isRemoteClient() ? "文件保存在云端" : ""
                       : "环境运行中 · 浏览器待恢复"
                     : "")} />
             </span>
