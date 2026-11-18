@@ -112,12 +112,18 @@ func startCodexConversation(ctx context.Context, bin, project string) (*codexCon
 	life, cancel := context.WithCancel(ctx)
 	// Start outside the shared project so its executable configuration is
 	// never loaded by the host. Tools receive only the approved project root.
-	cmd := exec.CommandContext(life, bin,
-		"-c", `permissions.delegated.filesystem={":root"="deny",":minimal"="read",":workspace_roots"={"."="write",".git"="read",".agents"="read",".codex"="read"}}`,
+	args, err := codexBuildConfig(ctx, dir, project)
+	if err != nil {
+		cancel()
+		_ = os.RemoveAll(dir)
+		return nil, err
+	}
+	args = append(args,
 		"-c", "permissions.delegated.network.enabled=false",
 		"-c", `shell_environment_policy.inherit="none"`,
 		"-c", "features.hooks=false", "-c", "features.plugins=false", "-c", "features.memories=false", "-c", "features.apps=false",
 		"-c", `web_search="disabled"`, "app-server", "--listen", "stdio://")
+	cmd := exec.CommandContext(life, bin, args...)
 	cmd.Dir = dir
 	cmd.WaitDelay = 2 * time.Second
 	w, err := cmd.StdinPipe()

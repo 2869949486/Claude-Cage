@@ -91,6 +91,10 @@ Cage 的共享 Claude 会话会先显示“正在准备 Claude 会话…”，�
 
 Codex 可以在授权项目内读取和修改文件。专用会话关闭了命令联网和个人 MCP 工具；需要额外授权的操作可能失败。Claude 可以看到 Codex 写入最终回答的内容，用户在其他 Codex 聊天中的消息不会被送入通信窗口。
 
+Mac 主机上的专用 Codex 会话可以使用已安装的 Go、Node/npm 和 Xcode 工具链。构建脚本可用 `mktemp -d` 或 `$TMPDIR` 创建临时产物。需要保留的结果请放进项目目录；会话结束时会清理专用临时目录和编译缓存。
+
+Go 项目可以使用离线模块包。在 Mac 上运行 `uv run --no-project python scripts/prepare-codex-go-proxy.py "/项目绝对路径"`，即可从本机已有的 Go 缓存复制该项目已提交的 `go.sum` 对应的依赖。使用本地替换模块时，可重复传入 `--sum` 指定各个校验文件。npm 构建可直接使用项目已安装的 `node_modules`。
+
 Linux 客机里的 **Claude Desktop → Code** 也支持这个窗口。在本地预览中，宿主机把允许使用的 Desktop 账号与已共享项目记录在配置目录的 `codex-desktop-projects.json` 中。Cage 只为匹配的本地 Code 项目登记 `codex` 连接器，并按每段对话单独分配 Codex 会话。首次登记后，新开同项目的 Code 对话即可加载；已有对话可能需要重开。工作台侧栏切换项目不会改变这段对话的委派目标。
 
 ## 管理标签与分屏
