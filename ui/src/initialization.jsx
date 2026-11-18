@@ -74,6 +74,7 @@ function Initialization({ initial, onComplete }) {
   const [approvalWorkspace, setApprovalWorkspace] = useState("");
   const [proxyDirty, setProxyDirty] = useState(false);
   const [automaticMessage, setAutomaticMessage] = useState("");
+  const freshInstallation = useRef(false);
   const automaticAttempts = useRef(new Set());
   const alive = useRef(true);
   const pollNow = useRef(null);
@@ -84,7 +85,7 @@ function Initialization({ initial, onComplete }) {
   const busy = submitting || Boolean(job.running);
   const network = networkState(status);
   const exitCandidate = status?.guest_system === "macos" && status.safety?.macos_exit_candidate?.ip;
-  const needsExitRestart = status?.guest_system === "macos" && status.safety?.error === "已保存固定出口。请重启 macOS 客机，登录后重新检测。";
+  const needsExitRestart = status?.guest_system === "macos" && network.mode !== "open" && (status.safety?.error === "已保存固定出口。请重启 macOS 客机，登录后重新检测。" || initializationRecovery(status)?.recovery === "environment-restart");
   const ready = Boolean(status?.ready && status.vm_running && !busy && !job.error && !needsExitRestart && network.mode === "open");
   const confirm = options => new Promise(resolve => setDialog({ ...options, resolve }));
   const settleDialog = value => { dialog?.resolve(value); setDialog(null); };
@@ -112,6 +113,7 @@ function Initialization({ initial, onComplete }) {
         if (results[0].status === "fulfilled") setProxy(results[0].value);
         if (results[1].status === "fulfilled") {
           const install = results[1].value;
+          if (install?.fresh && !install.pending && !initial.started && !initial.prepared && !next.vm_running) freshInstallation.current = true;
           if (install?.pending?.system === "macos" && !install?.activate) {
             try { setMacRecovery(await api("/macos/install-recovery")); setRecoveryError(""); }
             catch (error) { if (alive.current) { setMacRecovery(null); setRecoveryError(error.message); } }
@@ -260,8 +262,9 @@ function Initialization({ initial, onComplete }) {
     let key, message, action;
     if (ready) {
       key = "enter"; message = "检查已通过，正在打开工作台…"; action = enter;
-    } else if (needsExitRestart || recovery?.recovery === "environment-restart") {
-      key = `restart:${status.safety?.error || recovery.message}`;
+    } else if (needsExitRestart) {
+      if (!freshInstallation.current) return;
+      key = `restart:${status.safety?.error || recovery?.message}`;
       message = "正在重启虚拟 Mac 并继续检查，系统和文件会保留…";
       action = () => restart({ automatic: true });
     } else if (recovery?.recovery === "environment-update") {
@@ -307,7 +310,7 @@ function Initialization({ initial, onComplete }) {
           {step === "proxy" && <><ProxySettings initializing status={status} onConfirm={confirm} onDirty={setProxyDirty} onApplied={async () => { setProxy(await api("/proxy")); pollNow.current?.(); }} />{choice?.clone && !needsProxySetup(null, status, proxy) && <HostCloneSummary pending={choice.pending} onChange={setChoice} />}</>}
           {step === "install" && (ready ? <div className="initialization-ready"><ShieldCheck size={36} /><h2>环境已就绪</h2><p>{status.guest_system === "macos" ? "虚拟 Mac" : "独立系统"}已安装，工具、文件和登录状态会持续保存。以后打开 Cage 可直接进入工作台。</p></div> : <>
             {exitCandidate && <section className="initialization-notice" aria-label="确认固定出口"><p>客机终端、浏览器和代理已测得一致出口。请确认是否将它绑定为固定出口。</p><button disabled={busy || Boolean(connectionError)} onClick={bindExit}>绑定检测到的固定出口 {exitCandidate}</button></section>}
-            {needsExitRestart && <section className="initialization-notice" aria-label="固定出口已保存"><p>固定出口已保存。重启客机并重新检测后才能进入工作台。</p><button className="primary" disabled={busy || Boolean(connectionError)} onClick={restart}>{status.vm_running ? "重启客机并重新检测" : "启动客机并重新检测"}</button></section>}
+            {needsExitRestart && <section className="initialization-notice" aria-label="需要重启客机"><p>环境设置已变化。请先保存工作，再重启客机并重新检测。</p><button className="primary" disabled={busy || Boolean(connectionError)} onClick={restart}>{status.vm_running ? "重启客机并重新检测" : "启动客机并重新检测"}</button></section>}
             {progress ? <SetupProgress job={progress} onDetails={() => setDetails(true)} onStop={stop} onRetry={needsExitRestart ? restart : install} disconnected={Boolean(connectionError) || submitting} /> : (busy || status.guest_system !== "macos" || !networkPending) && <div className="initialization-operation" role="status">{busy && <LoaderCircle size={22} className="spin" />}<p>{stopped ? "安装已停止，已有下载和磁盘会保留。点击「继续安装」接着完成。" : job.message || (status.vm_running ? "请完成客机连接和网络检查。" : "准备继续原安装，已有文件和磁盘会保留。")}</p>{!busy && !job.error && !needsExitRestart && <button className="primary" disabled={Boolean(connectionError)} onClick={install}>{status.ready ? "重新启动并检查" : "继续安装"}</button>}{busy && <button onClick={stop} disabled={submitting}>停止安装</button>}</div>}
             {pending?.system === "macos" && macRecovery?.available && <section hidden={busy && !job.gui_authorization} className="initialization-notice" aria-label="恢复 macOS 组件安装">
               <h2>{job.gui_authorization ? "继续完成安装授权" : "需要在客机内完成安装授权？"}</h2>
