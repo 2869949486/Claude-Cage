@@ -266,7 +266,9 @@ func exprs(s Settings) ([]string, error) {
 		// default 127.0.0.1 leaves the listeners on 0.0.0.0 forwarded.
 		// Last, after the VM's own rules, which win (Lima takes the first
 		// rule that matches); one made earlier is replaced, not repeated.
-		e = append(e, fmt.Sprintf(`.portForwards = ((.portForwards // []) | map(select(((.guestPortRange // []) | join("-")) != "%d-%d"))) + [{"guestIP": "0.0.0.0", "guestIPMustBeZero": false, "guestPortRange": [%d, %d], "proto": "any", "ignore": true}]`, ephemeralPorts[0], ephemeralPorts[1], ephemeralPorts[0], ephemeralPorts[1]))
+		for _, ports := range [][2]int{ephemeralPorts, hostToolsPort} {
+			e = append(e, fmt.Sprintf(`.portForwards = ((.portForwards // []) | map(select(((.guestPortRange // []) | join("-")) != "%d-%d"))) + [{"guestIP": "0.0.0.0", "guestIPMustBeZero": false, "guestPortRange": [%d, %d], "proto": "any", "ignore": true}]`, ports[0], ports[1], ports[0], ports[1]))
+		}
 	}
 	if s.MountType != nil {
 		if *s.MountType == "" {

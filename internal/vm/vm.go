@@ -102,6 +102,12 @@ type Settings struct {
 // notification.
 var ephemeralPorts = [2]int{32768, 60999}
 
+// hostToolsPort is where programs in the guest reach the tools served by the
+// host, over a forward made from the host. Never forwarded back: that would
+// only open the same port on the host's loopback, leading through the guest
+// to where it started.
+var hostToolsPort = [2]int{18962, 18962}
+
 // ShellOpts is a command run in a running VM.
 type ShellOpts struct {
 	// Workdir is where the command runs; it fails when it cannot cd there.
