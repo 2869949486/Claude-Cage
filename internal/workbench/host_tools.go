@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/sylvinus/agent-vm/internal/containerenv"
@@ -128,7 +129,17 @@ func (s *Server) startHostTools() error {
 	}
 	tools.bridge = bridge
 	forward := fmt.Sprintf("127.0.0.1:%d:%s", hostToolsPort, bridge.Addr())
+	s.releaseHostToolsPort(ctx)
 	cmd := s.sshCommandWithForwarding(ctx, "-o", "ExitOnForwardFailure=yes", "-N", "-T", "-R", forward, s.sshTarget())
+	// Ask SSH to end the connection itself. Killed outright, it leaves the
+	// environment holding the port for minutes, and no new forward can bind.
+	cmd.Cancel = func() error {
+		if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
+			return cmd.Process.Kill()
+		}
+		return nil
+	}
+	cmd.WaitDelay = 3 * time.Second
 	if err = cmd.Start(); err != nil {
 		close(tools.done)
 		tools.close()
@@ -150,6 +161,24 @@ func (s *Server) startHostTools() error {
 	s.hostToolsRemoved = false
 	s.mu.Unlock()
 	return nil
+}
+
+// hostToolsReleaseScript ends the SSH session in the environment that still
+// holds the port for a forward whose other end is gone, as after this
+// application was stopped abruptly. Anything else on the port is left alone.
+// Only root can see which process holds another session's socket.
+const hostToolsReleaseScript = `pid=$(sudo -n ss -H -ltnp 'sport = :%d' 2>/dev/null | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -n 1)
+case "$(cat "/proc/$pid/comm" 2>/dev/null)" in sshd*) kill "$pid" ;; esac
+exit 0`
+
+func (s *Server) releaseHostToolsPort(ctx context.Context) {
+	release, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := s.sshCommand(release, "-T", s.sshTarget(), "--", "exec /bin/sh")
+	cmd.Stdin = strings.NewReader(fmt.Sprintf(hostToolsReleaseScript, hostToolsPort))
+	if err := cmd.Run(); err != nil {
+		diagnostics.Log("warn", "host-tools", fmt.Sprintf("release error=%v", err))
+	}
 }
 
 // refreshHostToolsConfig gives the entry to profiles created while the
