@@ -155,3 +155,41 @@ func TestHostToolsRelayAnswersWhenTheServerIsGone(t *testing.T) {
 		t.Fatalf("output %q: %v", output, err)
 	}
 }
+
+func TestHostToolsViewListsPluginFolders(t *testing.T) {
+	s := &Server{profile: t.TempDir()}
+	write := func(name, manifest string) {
+		dir := filepath.Join(s.hostPluginDir(), name)
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if manifest != "" {
+			if err := os.WriteFile(filepath.Join(dir, hostbridge.ManifestFile), []byte(manifest), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	write("clock", `{"name":"clock","version":"1.0.0","description":"Tells the time","permissions":[],"command":["python3","server.py"]}`)
+	write("broken", `{"name":"broken"}`)
+	write("renamed", `{"name":"other","version":"1","permissions":["files"],"command":["x"]}`)
+	write("notes", "")
+	view := s.hostToolsView()
+	if view.Enabled || view.Running || !view.Available || view.Folders == nil {
+		t.Fatalf("view %+v", view)
+	}
+	var names []string
+	byName := map[string]hostPluginView{}
+	for _, plugin := range view.Plugins {
+		names = append(names, plugin.Name)
+		byName[plugin.Name] = plugin
+	}
+	if want := []string{"commands", "broken", "clock", "renamed"}; !reflect.DeepEqual(names, want) {
+		t.Fatalf("plugins %v, want %v", names, want)
+	}
+	if clock := byName["clock"]; clock.Loaded || !clock.Supported || clock.Problem != "" || clock.Version != "1.0.0" || clock.Permissions == nil {
+		t.Fatalf("clock %+v", clock)
+	}
+	if byName["broken"].Problem == "" || byName["renamed"].Problem == "" || !byName["commands"].BuiltIn {
+		t.Fatalf("plugins %+v", view.Plugins)
+	}
+}

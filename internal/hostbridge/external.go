@@ -156,6 +156,23 @@ func (e *External) Tools() []string {
 	return names
 }
 
+// ToolInfo is a tool's name and what it says it does.
+type ToolInfo struct {
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+}
+
+// ToolList describes the plugin's tools, once started.
+func (e *External) ToolList() []ToolInfo {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	list := make([]ToolInfo, len(e.tools))
+	for i, tool := range e.tools {
+		list[i] = ToolInfo{Name: tool.Name, Description: tool.Description}
+	}
+	return list
+}
+
 // Register offers the plugin's tools on server.
 func (e *External) Register(server *mcp.Server) {
 	e.mu.Lock()

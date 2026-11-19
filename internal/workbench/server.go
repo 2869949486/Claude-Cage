@@ -360,6 +360,8 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/account", s.accountStatus)
 	mux.HandleFunc("POST /api/account/{action}", s.accountAction)
 	mux.HandleFunc("GET /api/settings", s.getSettings)
+	mux.HandleFunc("GET /api/host-tools", s.getHostTools)
+	mux.HandleFunc("POST /api/host-tools", s.setHostTools)
 	mux.HandleFunc("GET /api/client/about", s.appAbout)
 	mux.HandleFunc("POST /api/client/about", s.appAbout)
 	mux.HandleFunc("POST /api/projects/open", s.openProject)

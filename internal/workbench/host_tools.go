@@ -41,8 +41,10 @@ type hostTools struct {
 	bridge  *hostbridge.Bridge
 	plugins []*hostbridge.External
 	jobs    *hostbridge.Jobs
-	cancel  context.CancelFunc
-	done    chan struct{}
+	// problems are the reasons plugins were left out, for the user to read.
+	problems []string
+	cancel   context.CancelFunc
+	done     chan struct{}
 	// configured is when the environment's clients were last given the entry.
 	configured time.Time
 }
@@ -108,14 +110,16 @@ func (s *Server) startHostTools() error {
 	// Plugins the user installed run beside the built-in command tool. One
 	// that fails to load is left out; the rest still work.
 	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, approvals.approveTool)
+	var problems []string
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
+		problems = append(problems, failure.Error())
 	}
 	plugins := []hostbridge.Plugin{hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: approvals.approve, Jobs: jobs}}
 	for _, plugin := range external {
 		plugins = append(plugins, plugin)
 	}
-	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs}
+	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs, problems: problems}
 	bridge, err := hostbridge.Start(token, plugins...)
 	if err != nil {
 		close(tools.done)
