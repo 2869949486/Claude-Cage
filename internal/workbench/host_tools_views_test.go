@@ -107,6 +107,14 @@ func TestPluginViewFilesAreServedConfined(t *testing.T) {
 		}
 	}
 	s.preferences.HostPluginsOff = ""
+	// A plugin on this computer has nothing behind its page while the tools
+	// are turned off.
+	for _, plugin := range s.hostToolsView().Plugins {
+		if plugin.Name == "notes" && plugin.Contributes.Views[0].URL != "" {
+			t.Errorf("address given with the tools turned off: %q", plugin.Contributes.Views[0].URL)
+		}
+	}
+	s.preferences.HostTools = true
 	for _, plugin := range s.hostToolsView().Plugins {
 		if plugin.Name == "notes" && plugin.Contributes.Views[0].URL != base {
 			t.Errorf("address %q, want %q", plugin.Contributes.Views[0].URL, base)

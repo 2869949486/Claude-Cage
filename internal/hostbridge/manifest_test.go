@@ -217,3 +217,20 @@ func TestLoadPluginsRunsGuestPluginsWhereTold(t *testing.T) {
 		t.Fatalf("call: %v %+v", err, result)
 	}
 }
+
+// With only guest plugins wanted, those on this computer are left unstarted.
+func TestLoadPluginsCanLeaveHostPluginsOut(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	dir := t.TempDir()
+	if err := InstallFromCatalog("clock", dir); err != nil {
+		t.Fatal(err)
+	}
+	started := false
+	plugins, failures := LoadPlugins(context.Background(), dir, LoadOptions{GuestOnly: true,
+		Guest: func(context.Context, Manifest, string) (*exec.Cmd, error) { started = true; return nil, nil }})
+	if len(plugins) != 0 || len(failures) != 0 || started {
+		t.Fatalf("a plugin on this computer was started: %d %v", len(plugins), failures)
+	}
+}

@@ -50,6 +50,10 @@ type hostTools struct {
 	done     chan struct{}
 	// configured is when the environment's clients were last given the entry.
 	configured time.Time
+	// serving is false when the tools for Claude are turned off: plugins
+	// inside the environment still run, for their own pages, but there is
+	// no server, no forward and nothing on this computer is started.
+	serving bool
 }
 
 // hostCommandsPlugin is the name of the built-in plugin that runs commands.
@@ -80,39 +84,51 @@ func (h *hostTools) close() {
 	}
 }
 
-// ensureHostTools starts the tools when the preference is on and they are not
-// already running, and stops them when it is off. Called under the lifecycle
-// lock whenever the environment is known to be reachable, so a forward that
+// ensureHostTools brings what runs in line with the preference. With it on,
+// the tools are served to Claude; with it off, only the plugins inside the
+// environment run, for their own pages. Called under the lifecycle lock
+// whenever the environment is known to be reachable, so a forward that
 // dropped is replaced on the next check.
 func (s *Server) ensureHostTools() {
 	if containerenv.Configured(s.profile) {
 		return
 	}
 	s.mu.Lock()
-	enabled, closing, current := s.preferences.HostTools, s.closing, s.hostTools
+	enabled, closing, ready, current := s.preferences.HostTools, s.closing, s.ready, s.hostTools
 	s.mu.Unlock()
-	if !enabled || closing {
+	if closing {
 		s.closeHostTools()
-		if !closing {
-			s.removeHostToolsConfig()
-		}
 		return
 	}
+	if !enabled {
+		s.removeHostToolsConfig()
+	}
 	if current != nil {
+		dropped := false
 		select {
 		case <-current.done:
-			s.closeHostTools()
+			dropped = current.serving
 		default:
-			s.refreshHostToolsConfig(current)
+		}
+		if current.serving == enabled && !dropped {
+			if enabled {
+				s.refreshHostToolsConfig(current)
+			}
 			return
 		}
+		s.closeHostTools()
 	}
-	if err := s.startHostTools(); err != nil {
+	// Plugins inside the environment need it reachable; with the tools for
+	// Claude on, starting has always been attempted regardless.
+	if !enabled && !ready {
+		return
+	}
+	if err := s.startHostTools(enabled); err != nil {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("start error=%v", err))
 	}
 }
 
-func (s *Server) startHostTools() error {
+func (s *Server) startHostTools(serving bool) error {
 	token, err := s.hostToolsToken()
 	if err != nil {
 		return err
@@ -127,7 +143,7 @@ func (s *Server) startHostTools() error {
 	s.mu.Unlock()
 	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), hostbridge.LoadOptions{
 		Taken: []string{"run_command", "command_job"}, Off: off, Version: version.Version,
-		Approve: approvals.approveTool, Guest: s.guestPluginCommand})
+		Approve: approvals.approveTool, Guest: s.guestPluginCommand, GuestOnly: !serving})
 	var problems []string
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
@@ -150,7 +166,16 @@ func (s *Server) startHostTools() error {
 			approvals.unasked[plugin.Manifest.Name] = true
 		}
 	}
-	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs, problems: problems}
+	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs, problems: problems, serving: serving}
+	if !serving {
+		// Nothing is served and nothing forwarded; done only marks the end.
+		close(tools.done)
+		s.mu.Lock()
+		s.hostTools = tools
+		s.mu.Unlock()
+		diagnostics.Log("info", "host-tools", fmt.Sprintf("started pages only plugins=%d left_out=%d", len(external), len(problems)))
+		return nil
+	}
 	bridge, err := hostbridge.Start(token, plugins...)
 	if err != nil {
 		close(tools.done)

@@ -388,6 +388,8 @@ type LoadOptions struct {
 	// manifest and where its files are here. Nil where there is nowhere to
 	// run one.
 	Guest func(ctx context.Context, manifest Manifest, dir string) (*exec.Cmd, error)
+	// GuestOnly leaves the plugins that run on this computer unstarted.
+	GuestOnly bool
 }
 
 // LoadPlugins starts every plugin found in the subdirectories of dir that
@@ -443,6 +445,9 @@ func LoadPlugins(ctx context.Context, dir string, options LoadOptions) ([]*Exter
 			schemes[scheme] = manifest.Name
 		}
 		if manifest.Unavailable(version, options.Guest != nil) != "" || len(manifest.serverCommand()) == 0 {
+			continue
+		}
+		if options.GuestOnly && manifest.Kind != KindGuest {
 			continue
 		}
 		plugin := &External{Manifest: manifest, Dir: path, Approve: approve}

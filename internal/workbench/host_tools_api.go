@@ -135,7 +135,7 @@ func (s *Server) hostToolsView() hostToolsView {
 	s.mu.Lock()
 	enabled, tools, off := s.preferences.HostTools, s.hostTools, hostPluginsOff(s.preferences)
 	s.mu.Unlock()
-	view := hostToolsView{Available: !containerenv.Configured(s.profile), Enabled: enabled, Running: tools != nil,
+	view := hostToolsView{Available: !containerenv.Configured(s.profile), Enabled: enabled, Running: tools != nil && tools.serving,
 		Directory: s.hostPluginDir(), Folders: s.hostToolDirs()}
 	if view.Folders == nil {
 		view.Folders = []string{}
@@ -149,7 +149,7 @@ func (s *Server) hostToolsView() hostToolsView {
 	}
 	view.Plugins = []hostPluginView{{Name: hostCommandsPlugin, BuiltIn: true, Supported: true, Enabled: !slices.Contains(off, hostCommandsPlugin),
 		AlwaysProjects: s.hostGrantStore().projects(),
-		Loaded:         tools != nil && !slices.Contains(off, hostCommandsPlugin), Permissions: []string{"commands"},
+		Loaded:         tools != nil && tools.serving && !slices.Contains(off, hostCommandsPlugin), Permissions: []string{"commands"},
 		Tools: []hostbridge.ToolInfo{{Name: "run_command"}, {Name: "command_job"}}}}
 	entries, _ := os.ReadDir(view.Directory)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
@@ -169,7 +169,10 @@ func (s *Server) hostToolsView() hostToolsView {
 		plugin := hostPluginView{Name: manifest.Name, DisplayName: manifest.DisplayName, Version: manifest.Version, Description: manifest.Description,
 			Permissions: manifest.Permissions, Kind: manifest.Kind, Contributes: hostContributes(manifest.Contributes),
 			Supported: manifest.Supported() && unavailable == "", Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
-		if plugin.Supported && plugin.Enabled && manifest.Name == entry.Name() && plugin.Contributes != nil {
+		// A page of a plugin on this computer has nothing to call while the
+		// tools are turned off; one inside the environment still does.
+		if plugin.Supported && plugin.Enabled && manifest.Name == entry.Name() && plugin.Contributes != nil &&
+			(enabled || manifest.Kind == hostbridge.KindGuest) {
 			for index := range plugin.Contributes.Views {
 				plugin.Contributes.Views[index].URL = s.hostViewURL(manifest.Name, plugin.Contributes.Views[index].ID)
 			}
