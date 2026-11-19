@@ -174,7 +174,10 @@ func (s *Server) hostToolsView() hostToolsView {
 				plugin.Contributes.Views[index].URL = s.hostViewURL(manifest.Name, plugin.Contributes.Views[index].ID)
 			}
 		}
-		plugin.Always = s.hostGrantStore().allowed(hostGrantPlugin+manifest.Name, manifest.Permissions)
+		// A plugin inside the environment that declares nothing is never
+		// asked about.
+		plugin.Always = manifest.Kind == hostbridge.KindGuest && len(manifest.Permissions) == 0 ||
+			s.hostGrantStore().allowed(hostGrantPlugin+manifest.Name, manifest.Permissions)
 		if manifest.Name != entry.Name() {
 			plugin.Problem = "文件夹名称须与插件名称 " + manifest.Name + " 一致"
 			plugin.Name = entry.Name()
@@ -238,11 +241,13 @@ func (s *Server) setHostPluginAlways(name, project string, always bool) error {
 		if always {
 			return errors.New("命令的长期授权按项目在确认窗口里给出")
 		}
-		key := hostGrantProject
-		if project != "" {
-			key += project
+		var err error
+		if project == "" {
+			err = grants.revokeProjects()
+		} else {
+			err = grants.revoke(hostGrantProject + project)
 		}
-		if err := grants.revoke(key); err != nil {
+		if err != nil {
 			return err
 		}
 		s.closeHostTools()

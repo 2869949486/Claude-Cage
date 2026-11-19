@@ -243,22 +243,47 @@ func (e *External) ToolSpecs() []*mcp.Tool {
 	return slices.Clone(e.tools)
 }
 
+// ErrCallTimedOut is a tool that did not answer within the time it was given.
+var ErrCallTimedOut = errors.New("the tool did not answer in time")
+
 // CallFromView calls one of the plugin's tools for the plugin's own page.
 // It goes through the same approval as a call from the model. A call not
-// let through fails with a RefusedError.
-func (e *External) CallFromView(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+// let through fails with a RefusedError. The tool has wait to answer once
+// the call is let through, or it fails with ErrCallTimedOut; the time the
+// user takes to decide does not count.
+func (e *External) CallFromView(ctx context.Context, name string, arguments json.RawMessage, wait time.Duration) (*mcp.CallToolResult, error) {
 	if !slices.Contains(e.Tools(), name) {
 		return nil, &RefusedError{fmt.Errorf("plugin %s has no tool %s", e.Manifest.Name, name)}
 	}
-	return e.call(ctx, name, arguments, true)
+	return e.callWithin(ctx, name, arguments, true, wait)
 }
 
 func (e *External) call(ctx context.Context, name string, arguments json.RawMessage, fromView bool) (*mcp.CallToolResult, error) {
+	return e.callWithin(ctx, name, arguments, fromView, 0)
+}
+
+func (e *External) callWithin(ctx context.Context, name string, arguments json.RawMessage, fromView bool, wait time.Duration) (*mcp.CallToolResult, error) {
 	if e.Approve != nil {
 		if err := e.Approve(ctx, ToolRequest{Plugin: e.Manifest.Name, Tool: name, Arguments: string(arguments), FromView: fromView}); err != nil {
 			return nil, &RefusedError{err}
 		}
 	}
+	if wait > 0 {
+		outer := ctx
+		limited, cancel := context.WithTimeout(ctx, wait)
+		defer cancel()
+		ctx = limited
+		result, err := e.run(ctx, name, arguments)
+		if err != nil && limited.Err() != nil && outer.Err() == nil {
+			return nil, ErrCallTimedOut
+		}
+		return result, err
+	}
+	return e.run(ctx, name, arguments)
+}
+
+// run calls the tool, starting the plugin's program again once if it is gone.
+func (e *External) run(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
 	params := &mcp.CallToolParams{Name: name}
 	if len(arguments) > 0 {
 		params.Arguments = arguments

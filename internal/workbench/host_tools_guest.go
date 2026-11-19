@@ -62,12 +62,12 @@ func packPlugin(dir string) ([]byte, string, error) {
 		if info.Mode().Perm()&0o111 != 0 || filepath.Separator == '\\' {
 			header.Mode = 0o755
 		}
+		if int64(buffer.Len())+info.Size() > guestPluginLimit {
+			return errors.New("the plugin is too large")
+		}
 		data, err := os.ReadFile(path)
 		if err != nil {
 			return err
-		}
-		if buffer.Len()+len(data) > guestPluginLimit {
-			return errors.New("the plugin is too large")
 		}
 		header.Typeflag, header.Size = tar.TypeReg, int64(len(data))
 		if err := archive.WriteHeader(header); err != nil {
@@ -97,6 +97,25 @@ printf '%s' "$2" > "$dir.new/.digest"
 rm -rf "$dir"
 mv "$dir.new" "$dir"`
 
+// guestPluginRunScript runs the plugin's program in its folder. $1 is the
+// folder, the rest the program and its arguments. The program is taken from
+// the folder when it is there, as on this computer, and from PATH otherwise.
+// One still running from before, as when it does not stop when its input
+// closes, is ended first: it is known by the folder it runs in.
+const guestPluginRunScript = `dir="$HOME/$1"
+shift
+note="$dir.pid"
+if [ -f "$note" ]; then
+  old=$(cat "$note")
+  case "$(readlink "/proc/$old/cwd" 2>/dev/null)" in "$dir"|"$dir (deleted)") kill "$old" 2>/dev/null ;; esac
+fi
+cd "$dir" || exit 1
+echo $$ > "$note"
+program=$1
+shift
+case "$program" in /*) ;; *) [ -f "./$program" ] && program="./$program" ;; esac
+exec "$program" "$@"`
+
 // guestPluginCommand copies the plugin's files into the environment, unless
 // they are there already, and returns the command that runs its server
 // there, with its standard input and output carried over SSH.
@@ -120,14 +139,8 @@ func (s *Server) guestPluginCommand(ctx context.Context, manifest hostbridge.Man
 			return nil, fmt.Errorf("copying the plugin: %w: %s", err, strings.TrimSpace(string(output)))
 		}
 	}
-	// A program named with a path is taken from the plugin's folder, as on
-	// this computer; a bare name is looked up on PATH.
-	program := command[0]
-	if !strings.HasPrefix(program, "/") && strings.Contains(program, "/") {
-		program = "./" + program
-	}
-	line := "cd \"$HOME\"/" + shellQuote(folder) + " && exec " + shellQuote(program)
-	for _, argument := range command[1:] {
+	line := "sh -c " + shellQuote(guestPluginRunScript) + " sh " + shellQuote(folder)
+	for _, argument := range command {
 		line += " " + shellQuote(argument)
 	}
 	// Not tied to ctx, which ends with the call that starts the program: the

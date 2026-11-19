@@ -84,15 +84,23 @@ func (g *hostGrants) grant(key string, permissions []string) error {
 	return g.save()
 }
 
-// revoke takes back every grant whose key is key or, for a key ending in a
-// colon, starts with it.
+// revoke takes back the grant for key.
 func (g *hostGrants) revoke(key string) error {
+	return g.remove(func(name string) bool { return name == key })
+}
+
+// revokeProjects takes back every project's grant for commands.
+func (g *hostGrants) revokeProjects() error {
+	return g.remove(func(name string) bool { return strings.HasPrefix(name, hostGrantProject) })
+}
+
+func (g *hostGrants) remove(match func(string) bool) error {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.load()
 	changed := false
 	for name := range g.grants {
-		if name == key || strings.HasSuffix(key, ":") && strings.HasPrefix(name, key) {
+		if match(name) {
 			delete(g.grants, name)
 			changed = true
 		}

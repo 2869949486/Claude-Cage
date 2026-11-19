@@ -48,7 +48,7 @@ func TestPluginViewFilesAreServedConfined(t *testing.T) {
 	if page.Code != 200 || page.Body.String() != "<p>page</p>" || !strings.HasPrefix(page.Header().Get("Content-Type"), "text/html") {
 		t.Fatalf("page: %d %q %q", page.Code, page.Body, page.Header().Get("Content-Type"))
 	}
-	for _, want := range []string{"default-src 'none'", "connect-src 'none'", "script-src http://localhost:1234/plugin-views/notes/;", "frame-ancestors http://localhost:1234", "form-action 'none'", "base-uri 'none'"} {
+	for _, want := range []string{"default-src 'none'", "connect-src 'none'", "script-src http://localhost:1234/plugin-views/notes/;", "frame-ancestors http://localhost:1234", "form-action 'none'", "base-uri 'none'", "sandbox allow-scripts"} {
 		if !strings.Contains(policy, want) {
 			t.Errorf("policy lacks %q: %s", want, policy)
 		}
@@ -56,7 +56,10 @@ func TestPluginViewFilesAreServedConfined(t *testing.T) {
 	if page.Header().Get("X-Frame-Options") != "" || page.Header().Get("X-Content-Type-Options") != "nosniff" || page.Header().Get("Cache-Control") != "no-store" {
 		t.Errorf("headers %v", page.Header())
 	}
-	if script := get(base + "app.js"); script.Code != 200 || script.Body.String() != "1" {
+	if page.Header().Get("Access-Control-Allow-Origin") != "*" {
+		t.Error("fonts and module scripts could not be fetched by the page")
+	}
+	if script := get(base + "app.js"); script.Code != 200 || script.Body.String() != "1" || script.Header().Get("Content-Type") != "text/javascript; charset=utf-8" {
 		t.Fatalf("script: %d", script.Code)
 	}
 	for name, path := range map[string]string{

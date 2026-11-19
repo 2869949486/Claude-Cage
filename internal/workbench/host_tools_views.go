@@ -1,18 +1,17 @@
 package workbench
 
 import (
-	"context"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"mime"
 	"net/http"
 	"os"
 	"path"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -27,6 +26,19 @@ const hostViewPrefix = "/plugin-views/"
 
 // hostViewCallWait is how long a page's tool call may take.
 const hostViewCallWait = 60 * time.Second
+
+// hostViewFileLimit is the largest file served for a page.
+const hostViewFileLimit = 20 << 20
+
+var hostViewTypes = map[string]string{
+	".html": "text/html; charset=utf-8", ".htm": "text/html; charset=utf-8",
+	".js": "text/javascript; charset=utf-8", ".mjs": "text/javascript; charset=utf-8",
+	".css": "text/css; charset=utf-8", ".json": "application/json", ".txt": "text/plain; charset=utf-8",
+	".svg": "image/svg+xml", ".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg",
+	".gif": "image/gif", ".webp": "image/webp", ".ico": "image/x-icon",
+	".woff": "font/woff", ".woff2": "font/woff2", ".ttf": "font/ttf", ".otf": "font/otf",
+	".wasm": "application/wasm",
+}
 
 // hostViewKey is the path segment that stands for the plugin's pages while
 // this application runs.
@@ -94,25 +106,31 @@ func (s *Server) servePluginView(w http.ResponseWriter, r *http.Request) {
 	if rest == "" {
 		name = view.Entry
 	}
+	// Every step a real folder and the last a plain file: a link, a junction
+	// or anything else on the way could lead out of the plugin.
 	file := root
-	for _, part := range strings.Split(name, "/") {
+	steps := strings.Split(name, "/")
+	if info, err := os.Lstat(root); err != nil || info.Mode().Type() != os.ModeDir {
+		http.NotFound(w, r)
+		return
+	}
+	for index, part := range steps {
 		file = filepath.Join(file, part)
-		if info, err := os.Lstat(file); err != nil || info.Mode()&os.ModeSymlink != 0 {
+		info, err := os.Lstat(file)
+		last := index == len(steps)-1
+		if err != nil || (!last && info.Mode().Type() != os.ModeDir) || (last && (!info.Mode().IsRegular() || info.Size() > hostViewFileLimit)) {
 			http.NotFound(w, r)
 			return
 		}
-	}
-	info, err := os.Stat(file)
-	if err != nil || !info.Mode().IsRegular() {
-		http.NotFound(w, r)
-		return
 	}
 	data, err := os.ReadFile(file)
 	if err != nil {
 		http.NotFound(w, r)
 		return
 	}
-	kind := mime.TypeByExtension(strings.ToLower(path.Ext(name)))
+	// A fixed table: what the system says a type is differs from machine to
+	// machine, and a wrong one stops a script or style from loading.
+	kind := hostViewTypes[strings.ToLower(path.Ext(name))]
 	if kind == "" {
 		kind = "application/octet-stream"
 	}
@@ -120,11 +138,18 @@ func (s *Server) servePluginView(w http.ResponseWriter, r *http.Request) {
 	header := w.Header()
 	header.Del("X-Frame-Options")
 	header.Set("Content-Security-Policy", "default-src 'none'; script-src "+own+"; style-src "+own+" 'unsafe-inline'; img-src "+own+
-		" data:; font-src "+own+"; connect-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors "+s.origin)
+		" data:; font-src "+own+"; connect-src 'none'; frame-src 'none'; worker-src 'none'; form-action 'none'; base-uri 'none'; frame-ancestors "+s.origin+
+		// Never an origin of this workbench, however the page comes to be
+		// loaded: not only when the frame around it says so.
+		"; sandbox allow-scripts")
+	// The page has no origin of its own, so its fonts and module scripts are
+	// fetched as from elsewhere. The files are static and carry no session.
+	header.Set("Access-Control-Allow-Origin", "*")
 	header.Set("X-Content-Type-Options", "nosniff")
 	header.Set("Cache-Control", "no-store")
 	header.Set("Referrer-Policy", "no-referrer")
 	header.Set("Content-Type", kind)
+	header.Set("Content-Length", strconv.Itoa(len(data)))
 	if r.Method == http.MethodHead {
 		return
 	}
@@ -165,13 +190,6 @@ func (s *Server) callHostTool(w http.ResponseWriter, r *http.Request) {
 		hostCallError(w, http.StatusForbidden, hostCallNotAllowed, "这个页面不属于已启用的插件")
 		return
 	}
-	// A plugin on this computer acts on it; only this computer's window may
-	// drive one. A plugin inside the environment acts where any signed-in
-	// workbench already does.
-	if manifest.Kind != hostbridge.KindGuest && !s.hasTrustedView(r) {
-		hostCallError(w, http.StatusForbidden, hostCallNotAllowed, "请在本机 Cage 窗口使用这个插件页面")
-		return
-	}
 	s.mu.Lock()
 	tools := s.hostTools
 	s.mu.Unlock()
@@ -187,6 +205,14 @@ func (s *Server) callHostTool(w http.ResponseWriter, r *http.Request) {
 		hostCallError(w, http.StatusConflict, hostCallUnavailable, "插件没有在运行，或这个页面没有可调用的服务")
 		return
 	}
+	// By what is running, not what the folder says now. A plugin on this
+	// computer acts on it; only this computer's window may drive one. A
+	// plugin inside the environment acts where any signed-in workbench
+	// already does.
+	if plugin.Manifest.Kind != hostbridge.KindGuest && !s.hasTrustedView(r) {
+		hostCallError(w, http.StatusForbidden, hostCallNotAllowed, "请在本机 Cage 窗口使用这个插件页面")
+		return
+	}
 	switch body.Method {
 	case "tools/list":
 		list := []map[string]any{}
@@ -199,17 +225,16 @@ func (s *Server) callHostTool(w http.ResponseWriter, r *http.Request) {
 			hostCallError(w, http.StatusBadRequest, -32602, "参数无效")
 			return
 		}
-		ctx, cancel := context.WithTimeout(r.Context(), hostViewCallWait)
-		defer cancel()
-		result, err := plugin.CallFromView(ctx, body.Name, body.Arguments)
+		// The limit is on the tool; the user may take longer to decide.
+		result, err := plugin.CallFromView(r.Context(), body.Name, body.Arguments, hostViewCallWait)
 		var refused *hostbridge.RefusedError
 		switch {
 		case err == nil:
 			jsonReply(w, result)
+		case errors.Is(err, hostbridge.ErrCallTimedOut):
+			hostCallError(w, http.StatusGatewayTimeout, hostCallTimedOut, "工具在 60 秒内没有返回结果")
 		case errors.As(err, &refused):
 			hostCallError(w, http.StatusForbidden, hostCallRefused, "没有获得允许："+refused.Error())
-		case ctx.Err() != nil:
-			hostCallError(w, http.StatusGatewayTimeout, hostCallTimedOut, "工具在 60 秒内没有返回结果")
 		default:
 			hostCallError(w, http.StatusBadGateway, hostCallFailed, "工具执行出错："+err.Error())
 		}

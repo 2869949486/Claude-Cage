@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 )
 
 // The archive holds the plugin's files, programs still programs, and the
@@ -64,6 +65,41 @@ func TestGuestPluginFilesAreCopiedWhole(t *testing.T) {
 	}
 	if output, err := exec.Command(filepath.Join(home, folder, "bin", "tool")).Output(); err != nil || string(output) != "ran\n" {
 		t.Fatalf("the program did not run: %v %q", err, output)
+	}
+	// The program is found in the folder by its bare name, and one left
+	// running from before is ended when the next starts.
+	run := func(arguments ...string) *exec.Cmd {
+		cmd := exec.Command("sh", append([]string{"-c", guestPluginRunScript, "sh", folder}, arguments...)...)
+		cmd.Env = append(os.Environ(), "HOME="+home)
+		return cmd
+	}
+	if err := os.WriteFile(filepath.Join(home, folder, "tool"), []byte("#!/bin/sh\necho bare \"$1\"\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if output, err := run("tool", "a b").Output(); err != nil || string(output) != "bare a b\n" {
+		t.Fatalf("bare program: %v %q", err, output)
+	}
+	left := run("sleep", "60")
+	if err := left.Start(); err != nil {
+		t.Fatal(err)
+	}
+	done := make(chan error, 1)
+	go func() { done <- left.Wait() }()
+	for range 50 {
+		if _, err := os.Stat(filepath.Join(home, folder+".pid")); err == nil {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if output, err := run("tool", "next").Output(); err != nil || string(output) != "bare next\n" {
+		t.Fatalf("second start: %v %q", err, output)
+	}
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		_ = left.Process.Kill()
+		t.Fatal("the program left from before kept running")
 	}
 	write("link", "", 0o644)
 	if err := os.Remove(filepath.Join(source, "link")); err != nil {

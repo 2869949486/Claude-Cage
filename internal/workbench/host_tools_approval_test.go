@@ -114,7 +114,7 @@ func TestHostGrantIsRememberedAndTakenBack(t *testing.T) {
 	if projects := grants.projects(); len(projects) != 2 || projects[0] != "/p/a" {
 		t.Fatalf("projects %v", projects)
 	}
-	if err := grants.revoke(hostGrantProject); err != nil || len(grants.projects()) != 0 {
+	if err := grants.revokeProjects(); err != nil || len(grants.projects()) != 0 {
 		t.Fatalf("projects %v: %v", grants.projects(), err)
 	}
 }
