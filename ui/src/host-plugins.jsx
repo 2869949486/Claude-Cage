@@ -102,6 +102,7 @@ function entryInfo(entry, view) {
   let state = { tone: "", label: "可安装" };
   if (plugin) {
     state = plugin.problem ? { tone: "problem", label: "无法使用" }
+      : plugin.enabled === false ? { tone: "off", label: "已停用" }
       : !plugin.supported ? { tone: "problem", label: "不支持此系统" }
       : !view.enabled ? { tone: "", label: "未开启" }
       : plugin.loaded ? { tone: "online", label: "运行中" }
@@ -182,7 +183,7 @@ function PluginRow({ entry, view, selected, busy, onSelect, onInstall }) {
   const action = !entry.plugin ? info.item.supported && "安装" : entry.offer && "更新";
   const installing = busy === `install:${entry.name}`;
   return (
-    <div className={`plugin-row ${selected ? "selected" : ""}`}>
+    <div className={`plugin-row ${selected ? "selected" : ""} ${entry.plugin?.enabled === false ? "off" : ""}`}>
       <button type="button" className="plugin-row-main" aria-current={selected ? "page" : undefined} onClick={onSelect}
         title={`${info.title}${info.version ? ` ${info.version}` : ""}\n${info.text}`}>
         <PluginIcon name={entry.name} src={entry.icon} builtIn={entry.source === "builtin"} />
@@ -374,14 +375,15 @@ function Detail({ model, name, onConfirm, onPage }) {
   const tools = plugin?.tools || [];
   const declared = (plugin || offer).permissions || [];
   const separator = view.directory.includes("\\") ? "\\" : "/";
-  const installing = busy === `install:${name}`, removing = busy === `remove:${name}`;
+  const installing = busy === `install:${name}`, removing = busy === `remove:${name}`, switching = busy === `switch:${name}`;
+  const on = plugin?.enabled !== false;
   const remove = async () => {
     if (!await onConfirm({ title: `卸载「${info.title}」？`, body: "插件会停止运行。它的文件夹不会被删除，而是移到数据目录的 plugins-removed 中保留。", confirm: "卸载" })) return;
     // A plugin the market offers stays on its page, ready to install again.
     if (await change({ remove: name }, `remove:${name}`) && entry.source === "local") onPage(null);
   };
   return (
-    <article className="plugin-page">
+    <article className={`plugin-page ${plugin && !on ? "off" : ""}`}>
       {!plugin && <button type="button" className="plugin-breadcrumb" onClick={() => onPage({ kind: "market" })}><ArrowLeft size={14} />插件市场</button>}
       <header className="plugin-hero">
         <PluginIcon name={name} src={entry.icon} builtIn={entry.source === "builtin"} size={96} />
@@ -395,6 +397,14 @@ function Detail({ model, name, onConfirm, onPage }) {
           </div>
           <p>{pluginText(plugin || offer)}</p>
           <div className="plugin-hero-actions">
+            {plugin && <label className={`plugin-enable ${on ? "on" : ""}`}>
+              <span className="plugin-switch small">
+                <input role="switch" type="checkbox" checked={on} disabled={Boolean(busy)} aria-label={`启用 ${info.title}`}
+                  onChange={() => change({ plugin: name, on: !on }, `switch:${name}`)} />
+                <span aria-hidden="true" />
+              </span>
+              {switching ? on ? "正在停用…" : "正在启用…" : on ? "已启用" : "已停用"}
+            </label>}
             {!plugin && <button type="button" className="primary" disabled={Boolean(busy) || !offer.supported} onClick={() => installPlugin(model, entry, onConfirm)}>
               {installing ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}{!offer.supported ? "不支持此系统" : installing ? "正在安装…" : "安装"}
             </button>}
@@ -408,6 +418,10 @@ function Detail({ model, name, onConfirm, onPage }) {
           </div>
         </div>
       </header>
+      {plugin && !on && <div className="plugin-banner" role="status"><CircleAlert size={17} /><div>
+        <strong>{plugin.built_in && name === "commands" ? "命令已停用" : "插件已停用"}</strong>
+        <p>{plugin.built_in && name === "commands" ? "Claude 将不能在这台电脑上运行命令。打开上方开关即可恢复。" : "插件不会运行，Claude 也看不到它提供的工具。打开上方开关即可恢复。"}</p>
+      </div></div>}
       {plugin?.problem && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div><strong>插件无法加载</strong><p>{plugin.problem}</p></div></div>}
       <nav className="plugin-tabs" role="tablist" aria-label={`${info.title} 的内容`}>
         <button type="button" role="tab" aria-selected={tab === "tools"} onClick={() => setTab("tools")}>工具<em>{tools.length}</em></button>
@@ -422,7 +436,7 @@ function Detail({ model, name, onConfirm, onPage }) {
             </li>)}
           </ul> : <div className="plugin-empty compact">
             <Wrench size={22} />
-            <p>{!plugin ? "安装并运行后，这里会列出插件提供给 Claude 的工具。" : plugin.problem ? "插件无法加载，没有可用的工具。" : !view.enabled ? "开启主机工具后，这里会列出插件提供的工具。" : "插件运行后，这里会列出它提供的工具。"}</p>
+            <p>{!plugin ? "安装并运行后，这里会列出插件提供给 Claude 的工具。" : plugin.problem ? "插件无法加载，没有可用的工具。" : !on ? "启用插件后，这里会列出它提供的工具。" : !view.enabled ? "开启主机工具后，这里会列出插件提供的工具。" : "插件运行后，这里会列出它提供的工具。"}</p>
           </div> : <>
             <p className="plugin-page-lead">权限由插件自行声明，供你在安装前判断；每次调用仍需你在系统弹窗中同意。</p>
             {declared.length ? <ul className="plugin-permission-list">
