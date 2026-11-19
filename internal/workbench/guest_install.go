@@ -71,6 +71,9 @@ func (s *Server) guestInstallView() (guestInstallView, error) {
 	if !hostimage.IsLinux(pending.System) {
 		// Recorded by an earlier version for a guest that is no longer run.
 		v.Reason = abandonedGuestMessage(pending.System)
+		if pending.System == guestos.MacOS || pending.System == guestos.Windows11 {
+			v.Reselect = true
+		}
 		return v, nil
 	}
 	// Debian images matched to the host were offered on x86_64 Linux hosts.

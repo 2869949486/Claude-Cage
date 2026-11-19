@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-func TestInstallationKeepsChoiceAndRefusesToClearVM(t *testing.T) {
+func TestInstallationKeepsChoiceAndWithdrawsWithoutTouchingVM(t *testing.T) {
 	p := t.TempDir()
 	first := Installation{Version: 1, System: MacOS, ID: uuid.New()}
 	if err := SaveInstallation(p, first); err != nil {
@@ -31,22 +31,16 @@ func TestInstallationKeepsChoiceAndRefusesToClearVM(t *testing.T) {
 	if err := os.MkdirAll(disk, 0700); err != nil {
 		t.Fatal(err)
 	}
-	if err := ClearUnstartedInstallation(p, first.ID); err == nil {
-		t.Fatal("forgot a partially installed VM")
-	}
-	got, err := LoadInstallation(p)
-	if err != nil || got == nil || *got != first {
-		t.Fatalf("changed original selection: %v %v", got, err)
-	}
-	if err := os.Remove(disk); err != nil {
-		t.Fatal(err)
-	}
+	// The installation can no longer continue, so the record goes while
+	// whatever was created for it stays.
 	if err := ClearUnstartedInstallation(p, first.ID); err != nil {
 		t.Fatal(err)
 	}
-	got, err = LoadInstallation(p)
-	if err != nil || got != nil {
-		t.Fatal("failed to clear media-only choice")
+	if got, err := LoadInstallation(p); err != nil || got != nil {
+		t.Fatalf("record remains: %v %v", got, err)
+	}
+	if _, err := os.Stat(disk); err != nil {
+		t.Fatalf("partial VM was touched: %v", err)
 	}
 }
 

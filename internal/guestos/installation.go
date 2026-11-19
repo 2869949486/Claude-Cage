@@ -230,12 +230,16 @@ func ClearUnstartedInstallation(profile string, id uuid.UUID) error {
 	if pending == nil || pending.ID != id {
 		return errors.New("客户机安装选择已改变")
 	}
-	canClear, err := UnstartedInstallation(profile, *pending)
-	if err != nil {
-		return err
-	}
-	if !canClear {
-		return errors.New("已开始创建客户机，请继续原安装")
+	// A macOS or Windows installation can no longer continue, so its record
+	// is withdrawn even after it started. Whatever it created stays on disk.
+	if pending.System != MacOS && pending.System != Windows11 {
+		canClear, err := UnstartedInstallation(profile, *pending)
+		if err != nil {
+			return err
+		}
+		if !canClear {
+			return errors.New("已开始创建客户机，请继续原安装")
+		}
 	}
 	if hostimage.IsLinux(pending.System) || hostimage.AbandonedLinux(pending.System) {
 		if err := hostimage.ClearLinuxTemplate(filepath.Join(profile, "state"), pending.Source); err != nil {
