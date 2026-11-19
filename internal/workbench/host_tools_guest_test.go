@@ -66,6 +66,16 @@ func TestGuestPluginFilesAreCopiedWhole(t *testing.T) {
 	if output, err := exec.Command(filepath.Join(home, folder, "bin", "tool")).Output(); err != nil || string(output) != "ran\n" {
 		t.Fatalf("the program did not run: %v %q", err, output)
 	}
+	write("link", "", 0o644)
+	if err := os.Remove(filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("/etc/passwd", filepath.Join(source, "link")); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := packPlugin(source); err == nil {
+		t.Fatal("packed a link")
+	}
 	// The program is found in the folder by its bare name, and one left
 	// running from before is ended when the next starts.
 	run := func(arguments ...string) *exec.Cmd {
@@ -78,6 +88,11 @@ func TestGuestPluginFilesAreCopiedWhole(t *testing.T) {
 	}
 	if output, err := run("tool", "a b").Output(); err != nil || string(output) != "bare a b\n" {
 		t.Fatalf("bare program: %v %q", err, output)
+	}
+	// Knowing a program by the folder it runs in needs /proc, which the
+	// environment has; elsewhere only the rest of the script is checked.
+	if runtime.GOOS != "linux" {
+		return
 	}
 	left := run("sleep", "60")
 	if err := left.Start(); err != nil {
@@ -100,15 +115,5 @@ func TestGuestPluginFilesAreCopiedWhole(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		_ = left.Process.Kill()
 		t.Fatal("the program left from before kept running")
-	}
-	write("link", "", 0o644)
-	if err := os.Remove(filepath.Join(source, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Symlink("/etc/passwd", filepath.Join(source, "link")); err != nil {
-		t.Fatal(err)
-	}
-	if _, _, err := packPlugin(source); err == nil {
-		t.Fatal("packed a link")
 	}
 }
