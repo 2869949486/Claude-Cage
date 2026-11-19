@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Blocks, Check, ChevronDown, ChevronRight, CircleAlert, Clock, Copy, Download, Folder, FolderOpen, Globe2,
-  Keyboard, LoaderCircle, Monitor, RefreshCw, Search, Settings, ShieldCheck, SquareTerminal, Trash2, TriangleAlert, Wrench,
+  Keyboard, LoaderCircle, Monitor, RefreshCw, Search, Settings, ShieldCheck, SquareTerminal, Store, Trash2, TriangleAlert, Wrench,
 } from "lucide-react";
 import { api, writeClipboard } from "./api";
 import { runtimeURL } from "./client-context.mjs";
@@ -111,6 +111,7 @@ function entryInfo(entry, view) {
 }
 
 export function pluginPageTitle(model, page) {
+  if (page.kind === "market") return "插件市场";
   if (page.kind !== "plugin") return "插件设置";
   const { installed, available } = pluginEntries(model);
   const entry = [...installed, ...available].find(item => item.name === page.name);
@@ -153,9 +154,9 @@ async function installPlugin(model, entry, onConfirm) {
 }
 
 // HostPluginsNav is the main sidebar's way into the plugin sidebar.
-export function HostPluginsNav({ selected, onOpen }) {
+export function HostPluginsNav({ onOpen }) {
   return (
-    <button className={`sidebar-link host-plugins-entry ${selected ? "selected" : ""}`} onClick={onOpen} aria-label="MCP 插件">
+    <button className="sidebar-link host-plugins-entry" onClick={onOpen} aria-label="MCP 插件">
       <Blocks size={17} />MCP 插件<ChevronRight size={15} className="trailing-icon" />
     </button>
   );
@@ -198,67 +199,146 @@ function PluginRow({ entry, view, selected, busy, onSelect, onInstall }) {
   );
 }
 
+// marketQuery matches a plugin against what the user typed.
+const matches = (entry, query) => {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return true;
+  const item = entry.plugin || entry.offer;
+  return [entry.name, pluginTitle(item), pluginText(item)].some(text => text.toLowerCase().includes(needle));
+};
+
 // HostPluginsSidebar replaces the main sidebar while plugins are browsed,
-// like an editor's extensions view; what is chosen opens in the workspace.
+// like an editor's extensions view. Opening it changes nothing in the
+// workspace; a plugin, the market or the settings open there when chosen.
 export function HostPluginsSidebar({ model, page, onPage, onBack, onConfirm }) {
   const { view, error, busy, market } = model;
   const [query, setQuery] = useState("");
-  const [open, setOpen] = useState({ installed: true, available: true });
+  const [open, setOpen] = useState(true);
   const { installed, available } = useMemo(() => pluginEntries(model), [model]);
-  const match = entry => {
-    const needle = query.trim().toLowerCase();
-    if (!needle) return true;
-    const item = entry.plugin || entry.offer;
-    return [entry.name, pluginTitle(item), pluginText(item)].some(text => text.toLowerCase().includes(needle));
-  };
-  const shownInstalled = installed.filter(match), shownAvailable = available.filter(match);
-  const row = entry => <PluginRow key={entry.name} entry={entry} view={view} busy={busy}
-    selected={page?.kind === "plugin" && page.name === entry.name}
-    onSelect={() => onPage({ kind: "plugin", name: entry.name })} onInstall={() => installPlugin(model, entry, onConfirm)} />;
+  const shown = installed.filter(entry => matches(entry, query));
+  const updates = installed.filter(entry => entry.offer).length;
+  const installable = available.filter(entry => entry.offer.supported).length;
+  const inMarket = page?.kind === "market" || page?.kind === "plugin" && !installed.some(entry => entry.name === page.name);
+  useEffect(() => {
+    const leave = event => {
+      if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('[role="dialog"], .settings-page')) return;
+      // Only from the plugin views: a terminal or page beside them keeps its Escape.
+      if (!event.target.closest?.(".plugin-sidebar, .plugin-panel") || event.target.matches?.('input[type="search"]') && event.target.value) return;
+      onBack();
+    };
+    window.addEventListener("keydown", leave);
+    return () => window.removeEventListener("keydown", leave);
+  }, [onBack]);
   return (
     <aside className="workspace-sidebar plugin-sidebar" aria-label="MCP 插件">
       <div className="sidebar-top">
         <span className="plugin-sidebar-title">
-          <button className="icon-button" onClick={onBack} aria-label="返回主侧栏" title="返回"><ArrowLeft size={16} /></button>
+          <button className="icon-button" onClick={onBack} aria-label="退出 MCP 插件" title="退出 MCP 插件（Esc）"><ArrowLeft size={16} /></button>
           MCP 插件
         </span>
         <span className="plugin-sidebar-tools">
           <button className="icon-button" disabled={!view?.enabled || Boolean(busy)} onClick={() => model.change({ reload: true }, "reload")}
             aria-label="重新加载插件" title="重新加载插件"><RefreshCw size={15} className={busy === "reload" ? "spin" : undefined} /></button>
-          <button className={`icon-button ${page?.kind === "settings" ? "active" : ""}`} onClick={() => onPage({ kind: "settings" })}
-            aria-label="插件设置" title="插件设置"><Settings size={16} /></button>
+          <button className={`icon-button ${page?.kind === "settings" ? "active" : ""}`} aria-current={page?.kind === "settings" ? "page" : undefined}
+            onClick={() => onPage({ kind: "settings" })} aria-label="插件设置" title="插件设置"><Settings size={16} /></button>
         </span>
       </div>
       <label className="plugin-search">
         <Search size={15} aria-hidden="true" />
-        <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索插件" aria-label="搜索插件" />
+        <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索已安装的插件" aria-label="搜索已安装的插件" />
       </label>
       <div className="plugin-sidebar-body">
+        <button type="button" className={`plugin-market-entry ${inMarket ? "selected" : ""}`} aria-current={inMarket ? "page" : undefined}
+          onClick={() => onPage({ kind: "market" })}>
+          <span className="plugin-market-entry-icon"><Store size={18} /></span>
+          <span><strong>插件市场</strong><small>{market.loading && !market.loaded ? "正在读取…" : market.error ? "暂时无法读取" : updates ? `${updates} 个可更新 · ${installable} 个可安装` : installable ? `${installable} 个可安装` : "浏览和安装插件"}</small></span>
+          {updates > 0 && <em aria-hidden="true">{updates}</em>}
+          <ChevronRight size={15} className="trailing-icon" />
+        </button>
         {view && !view.enabled && view.available && <button type="button" className="plugin-sidebar-notice" onClick={() => onPage({ kind: "settings" })}>
           <ShieldCheck size={17} /><span><strong>主机工具未开启</strong><small>插件不会运行。点此前往设置开启。</small></span>
         </button>}
         {!view && <p className="plugin-sidebar-hint" role={error ? "alert" : "status"}>{error || "正在读取插件…"}</p>}
-        {view && <>
-          <SidebarSection title="已安装" count={installed.length} open={open.installed} onToggle={() => setOpen(value => ({ ...value, installed: !value.installed }))}>
-            {shownInstalled.map(row)}
-            {!shownInstalled.length && <p className="plugin-sidebar-hint">{query ? "没有匹配的插件" : "还没有安装插件"}</p>}
-          </SidebarSection>
-          <SidebarSection title="插件市场" count={available.length} open={open.available}
-            onToggle={() => setOpen(value => ({ ...value, available: !value.available }))}
-            action={!market.missing && <button className="icon-button" disabled={market.loading} onClick={() => model.loadMarket(true)}
-              aria-label="刷新插件市场" title="刷新插件市场"><RefreshCw size={13} className={market.loading ? "spin" : undefined} /></button>}>
-            {shownAvailable.map(row)}
-            {market.loading && <p className="plugin-sidebar-hint" role="status"><LoaderCircle size={13} className="spin" />正在读取插件市场…</p>}
-            {!market.loading && (market.error) && <div className="plugin-sidebar-problem" role="alert">
-              <CircleAlert size={14} /><span>{market.error}</span>
-              <button type="button" onClick={() => model.loadMarket(true)}>重试</button>
-            </div>}
-            {!market.loading && !shownAvailable.length && !market.error && <p className="plugin-sidebar-hint">{query ? "没有匹配的插件" : "没有可安装的新插件"}</p>}
-          </SidebarSection>
-        </>}
+        {view && <SidebarSection title="已安装" count={installed.length} open={open} onToggle={() => setOpen(value => !value)}>
+          {shown.map(entry => <PluginRow key={entry.name} entry={entry} view={view} busy={busy}
+            selected={page?.kind === "plugin" && page.name === entry.name}
+            onSelect={() => onPage({ kind: "plugin", name: entry.name })} onInstall={() => installPlugin(model, entry, onConfirm)} />)}
+          {!shown.length && <p className="plugin-sidebar-hint">{query ? "没有匹配的插件" : "还没有安装插件"}</p>}
+        </SidebarSection>}
       </div>
       {error && view && <p className="plugin-sidebar-error" role="alert">{error}</p>}
     </aside>
+  );
+}
+
+function MarketCard({ entry, view, busy, onOpen, onInstall }) {
+  const info = entryInfo(entry, view);
+  const offer = entry.offer;
+  const update = Boolean(entry.plugin);
+  const installing = busy === `install:${entry.name}`;
+  return (
+    <article className="plugin-card-item">
+      <button type="button" className="plugin-card-main" onClick={onOpen} aria-label={`查看 ${info.title}`}>
+        <PluginIcon name={entry.name} src={entry.icon} size={44} />
+        <span className="plugin-card-text">
+          <span className="plugin-row-title"><strong>{info.title}</strong><small>{update ? `${entry.plugin.version || "?"} → ${offer.version}` : offer.version}</small></span>
+          <span className="plugin-card-description">{pluginText(offer)}</span>
+        </span>
+      </button>
+      <footer>
+        <span className="plugin-card-permissions" title={permissionText(offer.permissions)}>
+          <ShieldCheck size={13} />{offer.permissions?.length ? permissionText(offer.permissions) : "无需额外权限"}
+        </span>
+        {!offer.supported ? <span className="plugin-state problem"><i />不支持此系统</span>
+          : <button type="button" className="primary" disabled={Boolean(busy)} onClick={onInstall}>
+            {installing ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />}{installing ? update ? "正在更新" : "正在安装" : update ? "更新" : "安装"}
+          </button>}
+      </footer>
+    </article>
+  );
+}
+
+function Market({ model, onConfirm, onPage }) {
+  const { view, busy, market } = model;
+  const [query, setQuery] = useState("");
+  const { installed, available } = pluginEntries(model);
+  const updates = installed.filter(entry => entry.offer && matches(entry, query));
+  const offers = available.filter(entry => matches(entry, query));
+  const card = entry => <MarketCard key={entry.name} entry={entry} view={view} busy={busy}
+    onOpen={() => onPage({ kind: "plugin", name: entry.name })} onInstall={() => installPlugin(model, entry, onConfirm)} />;
+  const fetched = market.fetched ? new Date(market.fetched) : null;
+  return (
+    <div className="plugin-market">
+      <header className="plugin-market-head">
+        <div>
+          <h2>插件市场</h2>
+          <p>社区插件和随应用附带的插件。插件以你的系统账户权限运行，只安装你信任的插件。</p>
+        </div>
+        <div className="plugin-market-tools">
+          <label className="plugin-search large">
+            <Search size={16} aria-hidden="true" />
+            <input type="search" value={query} onChange={event => setQuery(event.target.value)} placeholder="搜索插件市场" aria-label="搜索插件市场" />
+          </label>
+          {!market.missing && <button type="button" disabled={market.loading} onClick={() => model.loadMarket(true)}>
+            <RefreshCw size={15} className={market.loading ? "spin" : undefined} />刷新
+          </button>}
+        </div>
+        {fetched && !Number.isNaN(fetched.getTime()) && <small className="plugin-market-fetched">更新于 {fetched.toLocaleString()}</small>}
+      </header>
+      {market.error && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div><strong>暂时无法读取社区插件</strong><p>{market.error}</p></div>
+        <button type="button" onClick={() => model.loadMarket(true)}>重试</button></div>}
+      {updates.length > 0 && <section className="plugin-market-section">
+        <h3>可更新<em>{updates.length}</em></h3>
+        <div className="plugin-card-grid">{updates.map(card)}</div>
+      </section>}
+      <section className="plugin-market-section">
+        <h3>可安装<em>{offers.length}</em></h3>
+        {offers.length ? <div className="plugin-card-grid">{offers.map(card)}</div>
+          : market.loading ? <p className="plugin-loading" role="status"><LoaderCircle size={16} className="spin" />正在读取插件市场…</p>
+          : market.error && !query ? null
+          : <div className="plugin-empty compact"><Store size={22} /><p>{query ? "没有匹配的插件。" : "没有可安装的新插件。"}</p></div>}
+      </section>
+    </div>
   );
 }
 
@@ -297,10 +377,12 @@ function Detail({ model, name, onConfirm, onPage }) {
   const installing = busy === `install:${name}`, removing = busy === `remove:${name}`;
   const remove = async () => {
     if (!await onConfirm({ title: `卸载「${info.title}」？`, body: "插件会停止运行。它的文件夹不会被删除，而是移到数据目录的 plugins-removed 中保留。", confirm: "卸载" })) return;
-    await change({ remove: name }, `remove:${name}`);
+    // A plugin the market offers stays on its page, ready to install again.
+    if (await change({ remove: name }, `remove:${name}`) && entry.source === "local") onPage(null);
   };
   return (
     <article className="plugin-page">
+      {!plugin && <button type="button" className="plugin-breadcrumb" onClick={() => onPage({ kind: "market" })}><ArrowLeft size={14} />插件市场</button>}
       <header className="plugin-hero">
         <PluginIcon name={name} src={entry.icon} builtIn={entry.source === "builtin"} size={96} />
         <div className="plugin-hero-text">
@@ -308,7 +390,7 @@ function Detail({ model, name, onConfirm, onPage }) {
           <div className="plugin-hero-meta">
             <span>{sources[entry.source]}</span>
             {info.version && <span>版本 {info.version}</span>}
-            {offer?.bytes > 0 && <span>{size(offer.bytes)}</span>}
+            {!plugin && offer?.bytes > 0 && <span>{size(offer.bytes)}</span>}
             {plugin && <StateChip state={info.state} />}
           </div>
           <p>{pluginText(plugin || offer)}</p>
@@ -359,7 +441,7 @@ function Detail({ model, name, onConfirm, onPage }) {
             {info.version && <div><dt>版本</dt><dd>{info.version}</dd></div>}
             <div><dt>来源</dt><dd>{sources[entry.source]}</dd></div>
             <div><dt>状态</dt><dd>{plugin ? info.state.label : offer.supported ? "未安装" : "不支持此系统"}</dd></div>
-            {offer?.bytes > 0 && <div><dt>大小</dt><dd>{size(offer.bytes)}</dd></div>}
+            {!plugin && offer?.bytes > 0 && <div><dt>大小</dt><dd>{size(offer.bytes)}</dd></div>}
           </dl>
           {plugin && !plugin.built_in && <>
             <h3>位置</h3>
@@ -433,6 +515,7 @@ export function HostPluginsPanel({ model, page, status, onConfirm, onPage }) {
     <div className="plugin-panel">
       {error && <p role="alert" className="plugin-banner problem"><TriangleAlert size={17} /><span>{error}</span></p>}
       {page.kind === "plugin" ? <Detail key={page.name} model={model} name={page.name} onConfirm={onConfirm} onPage={onPage} />
+        : page.kind === "market" ? <Market model={model} onConfirm={onConfirm} onPage={onPage} />
         : <SettingsPage model={model} status={status} onConfirm={onConfirm} />}
     </div>
   );

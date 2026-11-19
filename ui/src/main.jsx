@@ -73,7 +73,7 @@ function App() {
   }, []);
   const claudeProfiles = useClaudeAccounts();
   const [managementPage, setManagementPage] = useState("");
-  const [pluginPage, setPluginPage] = useState({ kind: "settings" });
+  const [pluginPage, setPluginPage] = useState(null);
   const [pluginSidebar, setPluginSidebar] = useState(false);
   const [tailnetLogin, setTailnetLogin] = useState(null);
   const [desktopOpen, setDesktopOpen] = useState(false);
@@ -250,6 +250,22 @@ function App() {
   const running = Boolean(status?.vm_running);
   const pluginsAvailable = Boolean(status?.local_vm_storage) && !isRemoteClient();
   const hostPlugins = useHostPlugins(pluginsAvailable && (pluginSidebar || managementPage === "plugins"));
+  // Plugin pages belong to the plugin sidebar: they open from it and close
+  // with it. Opening the sidebar alone leaves the workspace as it was.
+  const openPluginPage = (page) => {
+    if (!page) {
+      setPluginPage(null);
+      setManagementPage((current) => current === "plugins" ? "" : current);
+      return;
+    }
+    setPluginPage(page); setManagementPage("plugins");
+    if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
+  };
+  const leavePlugins = () => {
+    openPluginPage(null);
+    setPluginSidebar(false);
+    requestAnimationFrame(() => document.querySelector(".host-plugins-entry")?.focus());
+  };
   const mixedBrowserId = split && !dualBrowser ? webPanes[0]?.id : null;
   useEffect(() => {
     if (status?.ready && mixedBrowserId && mixedBrowserId !== browser.active)
@@ -1463,13 +1479,7 @@ function App() {
             claudeAccountsOpen={managementPage === "claude-accounts"}
             tailscaleOpen={managementPage === "tailscale"}
             plugins={pluginsAvailable ? { model: hostPlugins, open: pluginSidebar, page: managementPage === "plugins" ? pluginPage : null,
-              onConfirm: confirm,
-              onOpen: () => { setPluginSidebar(true); setManagementPage("plugins"); },
-              onBack: () => setPluginSidebar(false),
-              onPage: (page) => {
-                setPluginPage(page); setManagementPage("plugins");
-                if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
-              } } : null}
+              onConfirm: confirm, onOpen: () => setPluginSidebar(true), onBack: leavePlugins, onPage: openPluginPage } : null}
             updateAction={<AppUpdateButton updates={appUpdates} />}
             workspace={selectedProject || status.workspace}
             guestSystem={account?.guest_system || status.guest_system || guestSystem?.guest_system || "debian-13"}
@@ -1551,10 +1561,10 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" ? pluginPageTitle(hostPlugins, pluginPage) : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" && pluginPage ? pluginPageTitle(hostPlugins, pluginPage) : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
-                {managementPage === "plugins" ? <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={setPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
+                {managementPage === "plugins" ? pluginPage && <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={openPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}
                   onOpenLogin={async (value) => {
                     const tab = await openBrowserPage(value.auth_url, false);
