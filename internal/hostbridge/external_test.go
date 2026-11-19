@@ -77,7 +77,7 @@ func TestPluginToolIsOfferedAndCalledAfterApproval(t *testing.T) {
 	defer cancel()
 	var asked []ToolRequest
 	refuse := false
-	plugins, failures := LoadPlugins(ctx, root, []string{"run_command"}, func(_ context.Context, request ToolRequest) error {
+	plugins, failures := LoadPlugins(ctx, root, []string{"run_command"}, nil, func(_ context.Context, request ToolRequest) error {
 		asked = append(asked, request)
 		if refuse {
 			return errors.New("the user refused this call")
@@ -144,7 +144,7 @@ func TestPluginsThatBreakTheRulesAreLeftOut(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	plugins, failures := LoadPlugins(ctx, root, []string{"run_command"}, nil)
+	plugins, failures := LoadPlugins(ctx, root, []string{"run_command"}, nil, nil)
 	for _, plugin := range plugins {
 		defer plugin.Close()
 	}
@@ -236,7 +236,10 @@ func TestCatalogPluginInstallsAndLoads(t *testing.T) {
 	if err := InstallFromCatalog("missing", dir); err == nil {
 		t.Fatal("installed an unknown plugin")
 	}
-	plugins, failures := LoadPlugins(ctx, dir, []string{"run_command"}, nil)
+	if plugins, failures := LoadPlugins(ctx, dir, nil, []string{"clock"}, nil); len(plugins) != 0 || len(failures) != 0 {
+		t.Fatalf("started a plugin that is turned off: %d %v", len(plugins), failures)
+	}
+	plugins, failures := LoadPlugins(ctx, dir, []string{"run_command"}, nil, nil)
 	if len(failures) != 0 || len(plugins) != 1 {
 		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
 	}

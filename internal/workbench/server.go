@@ -676,13 +676,16 @@ func (s *Server) proposed(w http.ResponseWriter, r *http.Request) (savedProfile,
 	input.ProjectFileCache = s.preferences.ProjectFileCache
 	input.ReuseClaudeLogin = s.preferences.ReuseClaudeLogin
 	input.TransferAllowUnclean = s.preferences.TransferAllowUnclean
-	input.HostTools = s.preferences.HostTools
+	hostTools, hostPluginsOff := s.preferences.HostTools, s.preferences.HostPluginsOff
 	input.Clock12Hour = s.preferences.Clock12Hour
 	input.BrowserHomeURL = browserHomeURL(s.preferences)
 	s.mu.Unlock()
 	if !readJSON(w, r, &input) {
 		return savedProfile{}, false
 	}
+	// The tools that act on this computer have their own route, open only to
+	// this computer's window; saving settings never changes them.
+	input.HostTools, input.HostPluginsOff = hostTools, hostPluginsOff
 	old, err := loadConfig(s.configPath)
 	if err != nil {
 		requestError(w, err)

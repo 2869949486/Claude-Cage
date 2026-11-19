@@ -197,6 +197,30 @@ func TestHostToolsViewListsPluginFolders(t *testing.T) {
 	if clock := byName["clock"]; clock.Loaded || !clock.Supported || clock.Problem != "" || clock.Version != "1.0.0" || clock.Permissions == nil {
 		t.Fatalf("clock %+v", clock)
 	}
+	if !byName["clock"].Enabled || !byName["commands"].Enabled {
+		t.Fatalf("plugins start turned on: %+v", view.Plugins)
+	}
+	if err := s.setHostPluginOn("clock", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.setHostPluginOn("commands", false); err != nil {
+		t.Fatal(err)
+	}
+	if s.setHostPluginOn("missing", false) == nil || s.setHostPluginOn("../clock", false) == nil {
+		t.Fatal("turned off a plugin that is not there")
+	}
+	saved, _ := os.ReadFile(filepath.Join(s.profile, "workbench.json"))
+	if !strings.Contains(string(saved), `"host_plugins_off"`) || s.preferences.HostPluginsOff != "clock,commands" {
+		t.Fatalf("saved %s, off %v", saved, s.preferences.HostPluginsOff)
+	}
+	for _, plugin := range s.hostToolsView().Plugins {
+		if (plugin.Name == "clock" || plugin.Name == "commands") && plugin.Enabled {
+			t.Fatalf("%s still shown as on", plugin.Name)
+		}
+	}
+	if err := s.setHostPluginOn("clock", true); err != nil || s.preferences.HostPluginsOff != "commands" {
+		t.Fatalf("off %v: %v", s.preferences.HostPluginsOff, err)
+	}
 	if len(view.Catalog) == 0 || view.Catalog[0].Name != "clock" || !view.Catalog[0].Installed {
 		t.Fatalf("catalog %+v", view.Catalog)
 	}

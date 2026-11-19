@@ -56,13 +56,16 @@ func Start(token string, plugins ...Plugin) (*Bridge, error) {
 	}
 	b := &Bridge{token: token, listener: listener}
 	handler := mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server {
-		// One server per session keeps sessions from seeing each other's state.
+		// One server per request keeps clients from seeing each other's state.
 		server := mcp.NewServer(&mcp.Implementation{Name: "computer", Version: "1"}, nil)
 		for _, plugin := range plugins {
 			plugin.Register(server)
 		}
 		return server
-	}, nil)
+		// Without sessions: a client that connected before this endpoint was
+		// started again carries on, instead of failing on a session that no
+		// longer exists. The tools never ask the client anything back.
+	}, &mcp.StreamableHTTPOptions{Stateless: true})
 	b.server = &http.Server{Handler: b.authorize(handler), ReadHeaderTimeout: 10 * time.Second}
 	go func() { _ = b.server.Serve(listener) }()
 	return b, nil

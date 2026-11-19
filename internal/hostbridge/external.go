@@ -173,6 +173,7 @@ func (e *External) startLocked(ctx context.Context) error {
 	// The program outlives the call that starts it.
 	cmd := exec.Command(program, e.Manifest.Command[1:]...)
 	cmd.Dir = e.Dir
+	cmd.Env = userEnv()
 	client := mcp.NewClient(&mcp.Implementation{Name: "computer", Version: "1"}, nil)
 	connect, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -307,8 +308,8 @@ func sameTools(a, b []*mcp.Tool) bool {
 // LoadPlugins starts every plugin found in the subdirectories of dir that
 // supports this system. A plugin that fails to load, or offers a tool name
 // already taken (taken lists those of the built-in plugins), is left out and
-// reported; the others still load.
-func LoadPlugins(ctx context.Context, dir string, taken []string, approve func(context.Context, ToolRequest) error) ([]*External, []error) {
+// reported; the others still load. Those named in off are not started.
+func LoadPlugins(ctx context.Context, dir string, taken, off []string, approve func(context.Context, ToolRequest) error) ([]*External, []error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -335,7 +336,7 @@ func LoadPlugins(ctx context.Context, dir string, taken []string, approve func(c
 			failures = append(failures, fmt.Errorf("%s: the directory must be named after the plugin, %s", entry.Name(), manifest.Name))
 			continue
 		}
-		if !manifest.Supported() {
+		if !manifest.Supported() || slices.Contains(off, manifest.Name) {
 			continue
 		}
 		plugin := &External{Manifest: manifest, Dir: path, Approve: approve}

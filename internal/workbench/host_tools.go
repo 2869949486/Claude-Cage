@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"syscall"
@@ -48,6 +49,16 @@ type hostTools struct {
 	done     chan struct{}
 	// configured is when the environment's clients were last given the entry.
 	configured time.Time
+}
+
+// hostCommandsPlugin is the name of the built-in plugin that runs commands.
+const hostCommandsPlugin = "commands"
+
+func hostPluginsOff(p Preferences) []string {
+	if p.HostPluginsOff == "" {
+		return nil
+	}
+	return strings.Split(p.HostPluginsOff, ",")
 }
 
 // hostToolsConfigInterval is how often a running environment is checked for
@@ -110,13 +121,19 @@ func (s *Server) startHostTools() error {
 	ctx, cancel := context.WithCancel(s.lifetimeContext())
 	// Plugins the user installed run beside the built-in command tool. One
 	// that fails to load is left out; the rest still work.
-	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, approvals.approveTool)
+	s.mu.Lock()
+	off := hostPluginsOff(s.preferences)
+	s.mu.Unlock()
+	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, off, approvals.approveTool)
 	var problems []string
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
 		problems = append(problems, failure.Error())
 	}
-	plugins := []hostbridge.Plugin{hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: approvals.approve, Jobs: jobs}}
+	var plugins []hostbridge.Plugin
+	if !slices.Contains(off, hostCommandsPlugin) {
+		plugins = append(plugins, hostbridge.Command{Dirs: s.hostToolDirs, MapDir: paths.FromGitBash, Approve: approvals.approve, Jobs: jobs})
+	}
 	for _, plugin := range external {
 		plugins = append(plugins, plugin)
 	}
@@ -145,9 +162,12 @@ func (s *Server) startHostTools() error {
 		tools.close()
 		return err
 	}
+	diagnostics.Log("info", "host-tools", fmt.Sprintf("started plugins=%d left_out=%d", len(external), len(problems)))
 	go func() {
 		defer close(tools.done)
-		_ = cmd.Wait()
+		// Recorded so a forward that ended by itself can be told from one
+		// this application stopped.
+		diagnostics.Log("info", "host-tools", fmt.Sprintf("forward ended stopped=%t error=%v", ctx.Err() != nil, cmd.Wait()))
 	}()
 	configure, finish := context.WithTimeout(ctx, 15*time.Second)
 	defer finish()

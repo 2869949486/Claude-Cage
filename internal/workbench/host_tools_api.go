@@ -27,10 +27,12 @@ type hostPluginView struct {
 	Permissions []string `json:"permissions"`
 	BuiltIn     bool     `json:"built_in,omitempty"`
 	// Icon says the plugin has a picture, served by the icon route.
-	Icon      bool                  `json:"icon,omitempty"`
-	Supported bool                  `json:"supported"`
-	Loaded    bool                  `json:"loaded"`
-	Tools     []hostbridge.ToolInfo `json:"tools,omitempty"`
+	Icon      bool `json:"icon,omitempty"`
+	Supported bool `json:"supported"`
+	// Enabled is false for a plugin the user turned off.
+	Enabled bool                  `json:"enabled"`
+	Loaded  bool                  `json:"loaded"`
+	Tools   []hostbridge.ToolInfo `json:"tools,omitempty"`
 	// Problem is why the plugin's folder cannot be used.
 	Problem string `json:"problem,omitempty"`
 }
@@ -62,7 +64,7 @@ func (s *Server) hostPluginDir() string { return filepath.Join(s.profile, "plugi
 
 func (s *Server) hostToolsView() hostToolsView {
 	s.mu.Lock()
-	enabled, tools := s.preferences.HostTools, s.hostTools
+	enabled, tools, off := s.preferences.HostTools, s.hostTools, hostPluginsOff(s.preferences)
 	s.mu.Unlock()
 	view := hostToolsView{Available: !containerenv.Configured(s.profile), Enabled: enabled, Running: tools != nil,
 		Directory: s.hostPluginDir(), Folders: s.hostToolDirs()}
@@ -76,7 +78,8 @@ func (s *Server) hostToolsView() hostToolsView {
 			loaded[plugin.Manifest.Name] = plugin.ToolList()
 		}
 	}
-	view.Plugins = []hostPluginView{{Name: "commands", BuiltIn: true, Supported: true, Loaded: tools != nil, Permissions: []string{"commands"},
+	view.Plugins = []hostPluginView{{Name: hostCommandsPlugin, BuiltIn: true, Supported: true, Enabled: !slices.Contains(off, hostCommandsPlugin),
+		Loaded: tools != nil && !slices.Contains(off, hostCommandsPlugin), Permissions: []string{"commands"},
 		Tools: []hostbridge.ToolInfo{{Name: "run_command"}, {Name: "command_job"}}}}
 	entries, _ := os.ReadDir(view.Directory)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
@@ -93,7 +96,7 @@ func (s *Server) hostToolsView() hostToolsView {
 			continue
 		}
 		plugin := hostPluginView{Name: manifest.Name, Version: manifest.Version, Description: manifest.Description,
-			Permissions: manifest.Permissions, Supported: manifest.Supported(), Icon: manifest.Icon != ""}
+			Permissions: manifest.Permissions, Supported: manifest.Supported(), Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
 		if manifest.Name != entry.Name() {
 			plugin.Problem = "文件夹名称须与插件名称 " + manifest.Name + " 一致"
 			plugin.Name = entry.Name()
@@ -135,6 +138,43 @@ func (s *Server) setAsideHostPlugin(name string) (string, error) {
 	return target, os.Rename(source, target)
 }
 
+// setHostPluginOn records whether the plugin is started with the others. It
+// takes effect when the tools are next started.
+func (s *Server) setHostPluginOn(name string, on bool) error {
+	if name != hostCommandsPlugin {
+		if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
+			return errors.New("插件名称无效")
+		}
+		if info, err := os.Lstat(filepath.Join(s.hostPluginDir(), name)); err != nil || !info.IsDir() {
+			return errors.New("没有找到这个插件")
+		}
+	}
+	return s.recordHostPluginOn(name, on)
+}
+
+func (s *Server) recordHostPluginOn(name string, on bool) error {
+	s.mu.Lock()
+	next := s.preferences
+	s.mu.Unlock()
+	off := hostPluginsOff(next)
+	if on && !slices.Contains(off, name) {
+		return nil
+	}
+	off = slices.DeleteFunc(off, func(other string) bool { return other == name })
+	if !on {
+		off = append(off, name)
+		sort.Strings(off)
+	}
+	next.HostPluginsOff = strings.Join(off, ",")
+	if err := writePrivate(filepath.Join(s.profile, "workbench.json"), next); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.preferences.HostPluginsOff = next.HostPluginsOff
+	s.mu.Unlock()
+	return nil
+}
+
 func (s *Server) getHostTools(w http.ResponseWriter, r *http.Request) {
 	jsonReply(w, s.hostToolsView())
 }
@@ -152,6 +192,10 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 		// then sets an installed version aside first.
 		Source  string `json:"source"`
 		Replace bool   `json:"replace"`
+		// Plugin and On turn one plugin on or off; the built-in one is
+		// named "commands".
+		Plugin string `json:"plugin"`
+		On     *bool  `json:"on"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -187,6 +231,12 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 		s.preferences.HostTools = next.HostTools
 		s.mu.Unlock()
 	}
+	if body.Plugin != "" && body.On != nil {
+		if err := s.setHostPluginOn(body.Plugin, *body.On); err != nil {
+			requestError(w, err)
+			return
+		}
+	}
 	if body.Install != "" {
 		var err error
 		if body.Source == "market" {
@@ -206,8 +256,10 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 			requestError(w, err)
 			return
 		}
+		// A plugin installed again later starts turned on.
+		_ = s.recordHostPluginOn(body.Remove, true)
 	}
-	if body.Reload || body.Install != "" {
+	if body.Reload || body.Install != "" || body.Plugin != "" {
 		s.closeHostTools()
 	}
 	if ready || !s.hostToolsView().Enabled {
