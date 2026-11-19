@@ -26,7 +26,7 @@ import { GuestSystemPicker, validGuestChoice } from "./guest-system-picker";
 import { AppearanceProvider } from "./appearance";
 import { EnvironmentShield } from "./environment-shield";
 import { TailscalePanel } from "./tailscale";
-import { HostPluginsPanel } from "./host-plugins";
+import { HostPluginsPanel, pluginTitle, useHostPlugins } from "./host-plugins";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
@@ -73,6 +73,8 @@ function App() {
   }, []);
   const claudeProfiles = useClaudeAccounts();
   const [managementPage, setManagementPage] = useState("");
+  const [pluginPage, setPluginPage] = useState({ kind: "overview" });
+  const [pluginsExpanded, setPluginsExpanded] = useState(false);
   const [tailnetLogin, setTailnetLogin] = useState(null);
   const [desktopOpen, setDesktopOpen] = useState(false);
   const [terminalChoice, setTerminalChoice] = useState(null);
@@ -246,6 +248,8 @@ function App() {
   const paneSide = id => !split ? "" : id === active ? layout.side :
     layout.side === "left" ? "right" : "left";
   const running = Boolean(status?.vm_running);
+  const pluginsAvailable = Boolean(status?.local_vm_storage) && !isRemoteClient();
+  const hostPlugins = useHostPlugins(pluginsAvailable && (pluginsExpanded || managementPage === "plugins"));
   const mixedBrowserId = split && !dualBrowser ? webPanes[0]?.id : null;
   useEffect(() => {
     if (status?.ready && mixedBrowserId && mixedBrowserId !== browser.active)
@@ -1458,11 +1462,15 @@ function App() {
             onClaudeAccounts={() => setManagementPage("claude-accounts")}
             claudeAccountsOpen={managementPage === "claude-accounts"}
             tailscaleOpen={managementPage === "tailscale"}
-            pluginsOpen={managementPage === "plugins"}
-            onPlugins={status.local_vm_storage && !isRemoteClient() ? () => {
-              setManagementPage("plugins");
-              if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
-            } : null}
+            plugins={pluginsAvailable ? { model: hostPlugins, expanded: pluginsExpanded, page: managementPage === "plugins" ? pluginPage : null,
+              onToggle: () => {
+                if (pluginsExpanded && managementPage === "plugins" && pluginPage.kind === "overview") { setPluginsExpanded(false); return; }
+                setPluginsExpanded(true); setPluginPage({ kind: "overview" }); setManagementPage("plugins");
+              },
+              onPage: (page) => {
+                setPluginPage(page); setManagementPage("plugins");
+                if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
+              } } : null}
             updateAction={<AppUpdateButton updates={appUpdates} />}
             workspace={selectedProject || status.workspace}
             guestSystem={account?.guest_system || status.guest_system || guestSystem?.guest_system || "debian-13"}
@@ -1544,10 +1552,10 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" ? "MCP 插件" : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" ? pluginPage.kind === "market" ? "插件市场" : pluginPage.kind === "plugin" ? pluginTitle(hostPlugins.view?.plugins.find(item => item.name === pluginPage.name) || { name: pluginPage.name }) : "MCP 插件" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
-                {managementPage === "plugins" ? <HostPluginsPanel status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
+                {managementPage === "plugins" ? <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={setPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}
                   onOpenLogin={async (value) => {
                     const tab = await openBrowserPage(value.auth_url, false);
