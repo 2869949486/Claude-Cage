@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   ArrowLeft, Blocks, Check, ChevronDown, ChevronRight, CircleAlert, Clock, Copy, Download, Folder, FolderOpen, Globe2,
-  Keyboard, LoaderCircle, Monitor, RefreshCw, Search, Settings, ShieldCheck, SquareTerminal, Store, Trash2, TriangleAlert, Wrench,
+  Keyboard, Link2, LoaderCircle, Monitor, PanelLeft, RefreshCw, Search, Settings, ShieldCheck, SquareTerminal, Store, Trash2, TriangleAlert, Wrench,
 } from "lucide-react";
 import { api, writeClipboard } from "./api";
 import { runtimeURL } from "./client-context.mjs";
@@ -20,10 +20,33 @@ const knownIcons = { commands: SquareTerminal, clock: Clock };
 const sources = { builtin: "内置", local: "手动安装", catalog: "随应用附带", market: "插件市场" };
 
 const words = name => name.split(/[-_\s]+/).filter(Boolean);
-export const pluginTitle = plugin => plugin.built_in && builtIn[plugin.name]?.title
+export const pluginTitle = plugin => plugin.built_in && builtIn[plugin.name]?.title || plugin.display_name
   || words(plugin.name).map(word => word[0].toUpperCase() + word.slice(1)).join(" ") || plugin.name;
 const pluginText = plugin => plugin.built_in && builtIn[plugin.name]?.description || plugin.description || "插件没有提供说明";
 const permissionText = list => list?.length ? list.map(name => permissions[name]?.title || name).join("、") : "未声明任何权限";
+// A guest plugin runs inside the environment; it cannot run until the app supports it.
+const guestPending = item => item.kind === "guest" && !item.supported;
+const unsupportedLabel = item => guestPending(item) ? "需要更新 Cage" : "不支持此系统";
+
+// contributions lists what a plugin adds to the app beyond its tools: pages in
+// the sidebar and the links it handles. Every MCP plugin has a server, so
+// servers alone are not shown here; they appear as tools.
+const urlHost = pattern => pattern.replace(/^[a-z]+:\/\//, "").replace(/\/.*$/, "").replace(/:\*$/, "");
+function contributions(item) {
+  const contributes = item?.contributes || {};
+  const list = [];
+  for (const view of contributes.views || []) {
+    const hosts = [...new Set((view.open_urls || []).map(urlHost))];
+    list.push({ key: `view:${view.id}`, icon: PanelLeft, title: `页面「${view.title || view.id}」`,
+      text: `在侧栏添加一个页面。页面在隔离的框架中运行，只能使用这个插件自己的工具。${hosts.length ? `它可以在内置浏览器中打开：${hosts.join("、")}。` : "它不能打开网页。"}` });
+  }
+  for (const handler of contributes.uri_handlers || []) {
+    list.push({ key: `uri:${handler.scheme}`, icon: Link2, title: `处理 ${handler.scheme}: 链接`,
+      text: `在内置浏览器中打开以 ${handler.scheme}: 开头的链接时，交给这个插件处理。` });
+  }
+  return list;
+}
+const contributionText = item => contributions(item).map(entry => entry.title).join("；");
 const size = bytes => !bytes ? "" : bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 // useHostPlugins keeps the plugin list current while something shows it,
@@ -103,11 +126,11 @@ function entryInfo(entry, view) {
   if (plugin) {
     state = plugin.problem ? { tone: "problem", label: "无法使用" }
       : plugin.enabled === false ? { tone: "off", label: "已停用" }
-      : !plugin.supported ? { tone: "problem", label: "不支持此系统" }
+      : !plugin.supported ? { tone: "problem", label: unsupportedLabel(plugin) }
       : !view.enabled ? { tone: "", label: "未开启" }
       : plugin.loaded ? { tone: "online", label: "运行中" }
       : view.running ? { tone: "", label: "未加载" } : { tone: "waiting", label: "等待启动" };
-  } else if (!item.supported) state = { tone: "problem", label: "不支持此系统" };
+  } else if (!item.supported) state = { tone: "problem", label: unsupportedLabel(item) };
   return { item, title: pluginTitle(item), text: plugin?.problem || pluginText(item), version: item.version, state };
 }
 
@@ -145,9 +168,13 @@ function StateChip({ state }) {
 async function installPlugin(model, entry, onConfirm) {
   const offer = entry.offer;
   const replace = Boolean(entry.plugin);
+  const adds = contributionText(offer);
+  const runs = offer.kind === "guest"
+    ? `插件在 Cage 环境中以普通用户身份运行，它声明需要：${permissionText(offer.permissions)}。`
+    : `插件以你的系统账户权限在这台电脑上运行，它声明需要：${permissionText(offer.permissions)}。每次调用前仍会弹窗征求你的同意。`;
   if (offer.source === "market" && !await onConfirm({
     title: replace ? `更新「${pluginTitle(offer)}」到 ${offer.version}？` : `安装「${pluginTitle(offer)}」？`,
-    body: `插件以你的系统账户权限在这台电脑上运行，它声明需要：${permissionText(offer.permissions)}。每次调用前仍会弹窗征求你的同意。只安装你信任的插件。${replace ? "旧版本会移到数据目录的 plugins-removed 中保留。" : ""}`,
+    body: `${runs}${adds ? `它还会添加：${adds}。` : ""}只安装你信任的插件。${replace ? "旧版本会移到数据目录的 plugins-removed 中保留。" : ""}`,
     confirm: replace ? "更新" : "安装",
   })) return false;
   const body = offer.source === "market" ? { install: offer.name, source: "market", ...(replace ? { replace: true } : {}) } : { install: offer.name };
@@ -374,6 +401,7 @@ function Detail({ model, name, onConfirm, onPage }) {
   const plugin = entry.plugin, offer = entry.offer;
   const tools = plugin?.tools || [];
   const declared = (plugin || offer).permissions || [];
+  const added = contributions(plugin || offer);
   const separator = view.directory.includes("\\") ? "\\" : "/";
   const installing = busy === `install:${name}`, removing = busy === `remove:${name}`, switching = busy === `switch:${name}`;
   const on = plugin?.enabled !== false;
@@ -406,7 +434,7 @@ function Detail({ model, name, onConfirm, onPage }) {
               {switching ? on ? "正在停用…" : "正在启用…" : on ? "已启用" : "已停用"}
             </label>}
             {!plugin && <button type="button" className="primary" disabled={Boolean(busy) || !offer.supported} onClick={() => installPlugin(model, entry, onConfirm)}>
-              {installing ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}{!offer.supported ? "不支持此系统" : installing ? "正在安装…" : "安装"}
+              {installing ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}{!offer.supported ? unsupportedLabel(offer) : installing ? "正在安装…" : "安装"}
             </button>}
             {plugin && offer && <button type="button" className="primary" disabled={Boolean(busy)} onClick={() => installPlugin(model, entry, onConfirm)}>
               {installing ? <LoaderCircle size={15} className="spin" /> : <Download size={15} />}{installing ? "正在更新…" : `更新到 ${offer.version}`}
@@ -426,10 +454,16 @@ function Detail({ model, name, onConfirm, onPage }) {
       <nav className="plugin-tabs" role="tablist" aria-label={`${info.title} 的内容`}>
         <button type="button" role="tab" aria-selected={tab === "tools"} onClick={() => setTab("tools")}>工具<em>{tools.length}</em></button>
         <button type="button" role="tab" aria-selected={tab === "permissions"} onClick={() => setTab("permissions")}>权限<em>{declared.length}</em></button>
+        {added.length > 0 && <button type="button" role="tab" aria-selected={tab === "contributions"} onClick={() => setTab("contributions")}>功能<em>{added.length}</em></button>}
       </nav>
       <div className="plugin-page-body">
         <div className="plugin-page-main" role="tabpanel">
-          {tab === "tools" ? tools.length ? <ul className="plugin-tool-list">
+          {tab === "contributions" && added.length ? <>
+            <p className="plugin-page-lead">除了提供给 Claude 的工具，插件还会在应用中添加这些内容。</p>
+            <ul className="plugin-permission-list">
+              {added.map(({ key, icon: Icon, title, text }) => <li key={key}><span><Icon size={17} /></span><div><strong>{title}</strong><p>{text}</p></div></li>)}
+            </ul>
+          </> : tab !== "permissions" ? tools.length ? <ul className="plugin-tool-list">
             {tools.map(tool => <li key={tool.name}>
               <span className="plugin-tool-icon"><Wrench size={15} /></span>
               <div><code>{tool.name}</code><p>{toolNotes[tool.name] || tool.description || "没有说明"}</p></div>
@@ -454,7 +488,8 @@ function Detail({ model, name, onConfirm, onPage }) {
             <div><dt>标识符</dt><dd><code>{name}</code></dd></div>
             {info.version && <div><dt>版本</dt><dd>{info.version}</dd></div>}
             <div><dt>来源</dt><dd>{sources[entry.source]}</dd></div>
-            <div><dt>状态</dt><dd>{plugin ? info.state.label : offer.supported ? "未安装" : "不支持此系统"}</dd></div>
+            {(plugin || offer).kind && <div><dt>运行位置</dt><dd>{(plugin || offer).kind === "guest" ? "Cage 环境" : "这台电脑"}</dd></div>}
+            <div><dt>状态</dt><dd>{plugin ? info.state.label : offer.supported ? "未安装" : unsupportedLabel(offer)}</dd></div>
             {!plugin && offer?.bytes > 0 && <div><dt>大小</dt><dd>{size(offer.bytes)}</dd></div>}
           </dl>
           {plugin && !plugin.built_in && <>
