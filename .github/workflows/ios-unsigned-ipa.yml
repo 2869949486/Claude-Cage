@@ -1,0 +1,113 @@
+name: Build iOS unsigned IPA
+
+# Windows/Linux 用户无 Xcode，用本 workflow 在 macOS runner 上产出未签名 IPA，
+# 再由 Sideloadly / AltStore 用 Apple ID 免费签名安装到 iPhone（7 天有效）。
+on:
+  workflow_dispatch:
+    inputs:
+      scheme:
+        description: 'Xcode scheme'
+        required: false
+        default: 'CageMobile'
+        type: choice
+        options:
+          - CageMobile
+          - CageMobileBasic
+      configuration:
+        description: 'Build configuration'
+        required: false
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - Debug
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Runner and toolchain facts
+        run: |
+          uname -s -m
+          xcodebuild -version
+          xcrun --sdk iphoneos --show-sdk-path
+          swift --version || true
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - name: Go version
+        run: go version && go env GOHOSTARCH
+
+      - name: Install workbench dependencies
+        run: npm ci --prefix ui
+
+      - name: Build xcframework, UI bundle, icons
+        run: bash mobile/build.sh ios
+
+      - name: Build the app for device without signing
+        env:
+          SCHEME: ${{ inputs.scheme }}
+          CONFIG: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project mobile/ios/CageMobile.xcodeproj \
+            -target "$SCHEME" \
+            -sdk iphoneos \
+            -configuration "$CONFIG" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGN_IDENTITY='' \
+            SYMROOT="$PWD/mobile/.build/ios/products" \
+            OBJROOT="$PWD/mobile/.build/ios/obj" \
+            build
+
+      - name: Package an unsigned IPA
+        env:
+          SCHEME: ${{ inputs.scheme }}
+          CONFIG: ${{ inputs.configuration }}
+        run: |
+          set -euo pipefail
+          app="$(find mobile/.build/ios/products -maxdepth 3 -name "$SCHEME.app" -type d | head -n 1)"
+          [ -n "$app" ] || { echo "app bundle not found" >&2; find mobile/.build/ios -maxdepth 4 -type d >&2; exit 1; }
+          echo "app bundle: $app"
+          rm -rf out && mkdir -p out/Payload
+          cp -R "$app" out/Payload/
+          # 未签名包不需要 _CodeSignature，但保留 Info.plist 里的 CFBundleExecutable
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "$app/Info.plist"
+          /usr/libexec/PlistBuddy -c 'Print :MinimumOSVersion' "$app/Info.plist" || true
+          lipo -info "$app/$SCHEME" || true
+          (cd out && zip -qry "Cage-ios-unsigned-$SCHEME-$CONFIG.ipa" Payload)
+          cp "out/Cage-ios-unsigned-$SCHEME-$CONFIG.ipa" .
+          ls -l "Cage-ios-unsigned-$SCHEME-$CONFIG.ipa"
+          shasum -a 256 "Cage-ios-unsigned-$SCHEME-$CONFIG.ipa" | tee SHA256SUMS
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cage-ios-unsigned-ipa
+          path: |
+            Cage-ios-unsigned-*.ipa
+            SHA256SUMS
+          if-no-files-found: error
+          overwrite: true
+          retention-days: 14
