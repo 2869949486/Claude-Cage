@@ -9,6 +9,7 @@ import {
   Globe2,
   Home,
   Monitor,
+  Blocks,
   Network,
   PanelLeftClose,
   Plus,
@@ -70,6 +71,8 @@ export function WorkspaceSidebar({
   onBrowser,
   onTailscale,
   tailscaleOpen,
+  onPlugins,
+  pluginsOpen,
   onClaudeAccounts,
   claudeAccountsOpen,
   onClaudeWeb,
@@ -143,6 +146,7 @@ export function WorkspaceSidebar({
           </button>
         </div>
         <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label="打开 Tailscale"><Network size={17} />Tailscale</button>
+        {onPlugins && <button className={`sidebar-link ${pluginsOpen ? "selected" : ""}`} aria-current={pluginsOpen ? "page" : undefined} onClick={onPlugins} aria-label="打开 MCP 插件"><Blocks size={17} />MCP 插件</button>}
         {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label="SSH 主机"><Server size={17} />SSH</button>}
         {accountDesktops ? <DesktopList model={accountDesktops} disabled={!running || busy} selected={desktopOpen} onDefault={onClaudeDesktop}/> : <button className={`sidebar-link ${desktopOpen?"selected":""}`} onClick={onClaudeDesktop} disabled={!running||busy}><Monitor size={17}/>Claude Desktop</button>}
         <button className={`sidebar-link ${claudeAccountsOpen ? "selected" : ""}`} onClick={onClaudeAccounts}

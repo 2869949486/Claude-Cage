@@ -26,6 +26,7 @@ import { GuestSystemPicker, validGuestChoice } from "./guest-system-picker";
 import { AppearanceProvider } from "./appearance";
 import { EnvironmentShield } from "./environment-shield";
 import { TailscalePanel } from "./tailscale";
+import { HostPluginsPanel } from "./host-plugins";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
@@ -1461,6 +1462,11 @@ function App() {
             onClaudeAccounts={() => setManagementPage("claude-accounts")}
             claudeAccountsOpen={managementPage === "claude-accounts"}
             tailscaleOpen={managementPage === "tailscale"}
+            pluginsOpen={managementPage === "plugins"}
+            onPlugins={status.local_vm_storage && !isRemoteClient() ? () => {
+              setManagementPage("plugins");
+              if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
+            } : null}
             updateAction={<AppUpdateButton updates={appUpdates} />}
             workspace={selectedProject || status.workspace}
             guestSystem={account?.guest_system || status.guest_system || guestSystem?.guest_system || "debian-13"}
@@ -1542,10 +1548,10 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" ? "MCP 插件" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
-                {managementPage === "tailscale" ? <TailscalePanel status={status}
+                {managementPage === "plugins" ? <HostPluginsPanel status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}
                   onOpenLogin={async (value) => {
                     const tab = await openBrowserPage(value.auth_url, false);
