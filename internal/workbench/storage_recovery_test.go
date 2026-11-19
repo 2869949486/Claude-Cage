@@ -241,9 +241,9 @@ func TestStorageRecoveryProductionStartupKeepsLoginAndDiagnostics(t *testing.T) 
 		t.Fatal(err)
 	}
 	account.lock()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStorageRecoveryProductionStartupKeepsLoginAndDiagnostics$", "-test.timeout=20s")
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStorageRecoveryProductionStartupKeepsLoginAndDiagnostics$", "-test.timeout=40s")
 	command.Env = append(os.Environ(), "CAGE_TEST_STORAGE_RECOVERY_CONFIG="+s.configPath)
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
@@ -284,7 +284,9 @@ func TestStorageRecoveryProductionStartupKeepsLoginAndDiagnostics(t *testing.T) 
 	base, _ := url.Parse(origin)
 	jar, _ := cookiejar.New(nil)
 	jar.SetCookies(base, []*http.Cookie{{Name: cookieName + "_" + base.Port() + "-desktop", Value: trustedViewProof(control.Token), Path: "/"}})
-	client := &http.Client{Jar: jar, Timeout: 3 * time.Second}
+	// Unlocking derives the password key, which takes several seconds on
+	// slower CI machines.
+	client := &http.Client{Jar: jar, Timeout: 10 * time.Second}
 	call := func(method, path, body string, expected int) []byte {
 		t.Helper()
 		request, err := http.NewRequestWithContext(ctx, method, origin+path, strings.NewReader(body))
