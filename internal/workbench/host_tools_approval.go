@@ -51,9 +51,13 @@ func (a *hostApprovals) approveTool(ctx context.Context, request hostbridge.Tool
 	if a.unasked[request.Plugin] {
 		return nil
 	}
+	title, source := "允许 Claude 使用这台电脑上的插件？", ""
+	if request.FromView {
+		title, source = "允许插件页面使用它的工具？", "\n来源　插件自己的页面"
+	}
 	return a.decide(ctx, hostGrantPlugin+request.Plugin, a.permissions[request.Plugin], request.Arguments, len(request.Arguments),
-		"允许 Claude 使用这台电脑上的插件？",
-		"插件「"+request.Plugin+"」\n工具　"+request.Tool+"\n\n"+request.Arguments+
+		title,
+		"插件「"+request.Plugin+"」\n工具　"+request.Tool+source+"\n\n"+request.Arguments+
 			"\n\n插件以你的用户权限运行。「始终允许」会记住对该插件的授权，以后不再询问；可以在插件页随时撤销。")
 }
 

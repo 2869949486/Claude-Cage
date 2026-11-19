@@ -179,8 +179,8 @@ func TestPluginProgramIsRunAgainAfterItExits(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer plugin.Close()
-	_, _ = plugin.call(ctx, "repeat_text", json.RawMessage(`{"text":"die"}`))
-	result, err := plugin.call(ctx, "repeat_text", json.RawMessage(`{"text":"ok"}`))
+	_, _ = plugin.call(ctx, "repeat_text", json.RawMessage(`{"text":"die"}`), false)
+	result, err := plugin.call(ctx, "repeat_text", json.RawMessage(`{"text":"ok"}`), false)
 	if err != nil || result.IsError {
 		t.Fatalf("after the program exited: %v %+v", err, result)
 	}
@@ -244,7 +244,7 @@ func TestCatalogPluginInstallsAndLoads(t *testing.T) {
 		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
 	}
 	defer plugins[0].Close()
-	result, err := plugins[0].call(ctx, "current_time", nil)
+	result, err := plugins[0].call(ctx, "current_time", nil, false)
 	if err != nil || result.IsError || len(result.Content) == 0 {
 		t.Fatalf("call: %v %+v", err, result)
 	}

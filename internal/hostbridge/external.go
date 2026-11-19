@@ -109,7 +109,15 @@ type ToolRequest struct {
 	Plugin    string
 	Tool      string
 	Arguments string
+	// FromView says the plugin's own page made the call, not the model.
+	FromView bool
 }
+
+// RefusedError is a call the user, or the rules, did not let through.
+type RefusedError struct{ Reason error }
+
+func (e *RefusedError) Error() string { return e.Reason.Error() }
+func (e *RefusedError) Unwrap() error { return e.Reason }
 
 // External is a plugin run as a child program. Its tools are offered under
 // their own names once they pass CheckWording; every call first goes
@@ -217,7 +225,7 @@ func (e *External) Register(server *mcp.Server) {
 	e.mu.Unlock()
 	for _, tool := range tools {
 		server.AddTool(tool, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
-			result, err := e.call(ctx, tool.Name, request.Params.Arguments)
+			result, err := e.call(ctx, tool.Name, request.Params.Arguments, false)
 			if err != nil {
 				refused := &mcp.CallToolResult{}
 				refused.SetError(err)
@@ -228,10 +236,27 @@ func (e *External) Register(server *mcp.Server) {
 	}
 }
 
-func (e *External) call(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+// ToolSpecs are the plugin's tools as it describes them, once started.
+func (e *External) ToolSpecs() []*mcp.Tool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return slices.Clone(e.tools)
+}
+
+// CallFromView calls one of the plugin's tools for the plugin's own page.
+// It goes through the same approval as a call from the model. A call not
+// let through fails with a RefusedError.
+func (e *External) CallFromView(ctx context.Context, name string, arguments json.RawMessage) (*mcp.CallToolResult, error) {
+	if !slices.Contains(e.Tools(), name) {
+		return nil, &RefusedError{fmt.Errorf("plugin %s has no tool %s", e.Manifest.Name, name)}
+	}
+	return e.call(ctx, name, arguments, true)
+}
+
+func (e *External) call(ctx context.Context, name string, arguments json.RawMessage, fromView bool) (*mcp.CallToolResult, error) {
 	if e.Approve != nil {
-		if err := e.Approve(ctx, ToolRequest{Plugin: e.Manifest.Name, Tool: name, Arguments: string(arguments)}); err != nil {
-			return nil, err
+		if err := e.Approve(ctx, ToolRequest{Plugin: e.Manifest.Name, Tool: name, Arguments: string(arguments), FromView: fromView}); err != nil {
+			return nil, &RefusedError{err}
 		}
 	}
 	params := &mcp.CallToolParams{Name: name}

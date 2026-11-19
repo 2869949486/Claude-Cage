@@ -213,7 +213,7 @@ func TestLoadPluginsRunsGuestPluginsWhereTold(t *testing.T) {
 		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
 	}
 	defer plugins[0].Close()
-	if result, err := plugins[0].call(ctx, "current_time", nil); err != nil || result.IsError {
+	if result, err := plugins[0].call(ctx, "current_time", nil, false); err != nil || result.IsError {
 		t.Fatalf("call: %v %+v", err, result)
 	}
 }

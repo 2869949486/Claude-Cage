@@ -91,7 +91,8 @@ func TestHostManagementBoundary(t *testing.T) {
 	if w.Header().Get("Access-Control-Allow-Origin") != "" {
 		t.Fatal("CORS unexpectedly enabled")
 	}
-	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-src 'none'") {
+	// Frames only for plugins' own pages, which are served sandboxed.
+	if !strings.Contains(w.Header().Get("Content-Security-Policy"), "frame-src "+s.origin+"/plugin-views/;") {
 		t.Fatal("guest frames allowed")
 	}
 }

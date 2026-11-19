@@ -59,6 +59,9 @@ type hostViewView struct {
 	Title    string   `json:"title"`
 	Icon     bool     `json:"icon"`
 	OpenURLs []string `json:"open_urls"`
+	// URL is where the page is loaded from. Empty when the plugin cannot be
+	// used as it is.
+	URL string `json:"url,omitempty"`
 }
 
 type hostSchemeView struct {
@@ -166,6 +169,11 @@ func (s *Server) hostToolsView() hostToolsView {
 		plugin := hostPluginView{Name: manifest.Name, DisplayName: manifest.DisplayName, Version: manifest.Version, Description: manifest.Description,
 			Permissions: manifest.Permissions, Kind: manifest.Kind, Contributes: hostContributes(manifest.Contributes),
 			Supported: manifest.Supported() && unavailable == "", Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
+		if plugin.Supported && plugin.Enabled && manifest.Name == entry.Name() && plugin.Contributes != nil {
+			for index := range plugin.Contributes.Views {
+				plugin.Contributes.Views[index].URL = s.hostViewURL(manifest.Name, plugin.Contributes.Views[index].ID)
+			}
+		}
 		plugin.Always = s.hostGrantStore().allowed(hostGrantPlugin+manifest.Name, manifest.Permissions)
 		if manifest.Name != entry.Name() {
 			plugin.Problem = "文件夹名称须与插件名称 " + manifest.Name + " 一致"

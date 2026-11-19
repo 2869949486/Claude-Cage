@@ -365,6 +365,7 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("GET /api/settings", s.getSettings)
 	mux.HandleFunc("GET /api/host-tools", s.getHostTools)
 	mux.HandleFunc("POST /api/host-tools", s.setHostTools)
+	mux.HandleFunc("POST /api/host-tools/call", s.callHostTool)
 	mux.HandleFunc("GET /api/host-tools/market", s.getHostMarket)
 	mux.HandleFunc("GET /api/host-tools/icon", s.hostPluginIcon)
 	mux.HandleFunc("GET /api/client/about", s.appAbout)
@@ -475,12 +476,18 @@ func (s *Server) handler() http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://"+origin.Host+"; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self' ws://"+origin.Host+"; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; object-src 'none'; frame-src "+s.origin+hostViewPrefix+"; base-uri 'none'; form-action 'self'; frame-ancestors 'none'")
 		if (r.Method != "GET" && r.Method != "HEAD") || strings.EqualFold(r.Header.Get("Upgrade"), "websocket") {
 			if r.Header.Get("Origin") != s.origin {
 				http.Error(w, "Origin refused", 403)
 				return
 			}
+		}
+		// A plugin's page belongs to this computer's own plugins, whatever
+		// workload is selected, and sets the headers its frame needs.
+		if strings.HasPrefix(r.URL.Path, hostViewPrefix) {
+			s.servePluginView(w, r)
+			return
 		}
 		// Launcher-token routes are handled only by this listener, never by a
 		// selected workload. They perform their own authentication.
