@@ -168,6 +168,7 @@ func (list *claudeAccountList) bindDesktop(id string, observation claudeGuestSna
 		list.PendingDesktop = ""
 	}
 	target := list.bySubject(subject)
+	existingCodeProfile := id == "default" && target != nil && validClaudeID(target.guestID())
 	if target == nil {
 		list.Accounts = append(list.Accounts, claudeAccount{ID: randomToken()[:24], Source: "managed", Status: "signed_out", CodeUnlinked: true, Label: observation.email(), Email: observation.email(), Organization: observation.Organization})
 		target = &list.Accounts[len(list.Accounts)-1]
@@ -188,9 +189,8 @@ func (list *claudeAccountList) bindDesktop(id string, observation claudeGuestSna
 	}
 	target.DesktopInstanceID = id
 	target.DesktopStatus = "ready"
-	// A newly opened unbound Desktop already has private Code and browser
-	// storage. Its session can continue without a disruptive relaunch.
-	return true, id, owner != nil || target.ProxyNodeID != ""
+	// The default Desktop needs a new process to read the existing Code profile.
+	return true, id, owner != nil || target.ProxyNodeID != "" || existingCodeProfile
 }
 
 func (s *Server) inspectDesktops(ctx context.Context) (map[string]desktopObservation, error) {

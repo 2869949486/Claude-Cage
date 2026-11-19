@@ -64,6 +64,26 @@ func TestDesktopSharedDefaultAndDedicatedScopeRebinding(t *testing.T) {
 	}
 }
 
+func TestDefaultDesktopRestartsWhenItFindsAnExistingCodeProfile(t *testing.T) {
+	account := claudeAccount{
+		ID: strings.Repeat("a", 24), Source: "managed", Status: "signed_out",
+		Email: "owner@example.org", Organization: "4491e880-4322-4cf7-8c34-c3ea9fc835e9",
+	}
+	list := claudeAccountList{Accounts: []claudeAccount{account}}
+	login := claudeGuestSnapshot{LoggedIn: true, Email: account.Email, Organization: account.Organization}
+
+	changed, dest, restart := list.bindDesktop("default", login)
+	if !changed || dest != "default" || !restart {
+		t.Fatal("the default Desktop must restart to read the existing account's Code history")
+	}
+	if owner := list.desktopOwner("default"); owner == nil || owner.guestID() != account.guestID() {
+		t.Fatal("restart must keep the verified account's existing Code profile")
+	}
+	if changed, _, restart := list.bindDesktop("default", login); changed || restart {
+		t.Fatal("the same account observation after restart must leave the Desktop running")
+	}
+}
+
 func TestDesktopLegacyRowsRequireExistingGuestProfile(t *testing.T) {
 	used, unused := strings.Repeat("1", 24), strings.Repeat("2", 24)
 	list := claudeAccountList{Accounts: []claudeAccount{{ID: used}, {ID: unused}}}
