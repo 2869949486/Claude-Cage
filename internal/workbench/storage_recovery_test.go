@@ -301,9 +301,11 @@ func testStorageRecoveryProductionStartup(t *testing.T, pending bool) {
 		t.Fatal(err)
 	}
 	account.lock()
-	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	const helperTimeout = 30 * time.Second
+	// Leave time for the helper to emit its test timeout stack traces.
+	ctx, cancel := context.WithTimeout(context.Background(), helperTimeout+5*time.Second)
 	defer cancel()
-	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStorageRecoveryProductionStartupKeepsLoginAndDiagnostics$", "-test.timeout=20s")
+	command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestStorageRecoveryProductionStartupKeepsLoginAndDiagnostics$", "-test.timeout="+helperTimeout.String())
 	command.Env = append(os.Environ(), "CAGE_TEST_STORAGE_RECOVERY_CONFIG="+s.configPath)
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
@@ -344,7 +346,8 @@ func testStorageRecoveryProductionStartup(t *testing.T, pending bool) {
 	base, _ := url.Parse(origin)
 	jar, _ := cookiejar.New(nil)
 	jar.SetCookies(base, []*http.Cookie{{Name: cookieName + "_" + base.Port() + "-desktop", Value: trustedViewProof(control.Token), Path: "/"}})
-	client := &http.Client{Jar: jar, Timeout: 3 * time.Second}
+	// The requests share the fixture deadline, including password derivation under -race.
+	client := &http.Client{Jar: jar}
 	call := func(method, path, body string, expected int) []byte {
 		t.Helper()
 		request, err := http.NewRequestWithContext(ctx, method, origin+path, strings.NewReader(body))
