@@ -275,7 +275,7 @@ func (s *Server) callHostTool(w http.ResponseWriter, r *http.Request) {
 	switch body.Method {
 	case "tools/list":
 		list := []map[string]any{}
-		for _, tool := range plugin.ToolSpecs() {
+		for _, tool := range plugin.PageTools() {
 			list = append(list, map[string]any{"name": tool.Name, "description": tool.Description, "inputSchema": tool.InputSchema})
 		}
 		jsonReply(w, map[string]any{"tools": list})

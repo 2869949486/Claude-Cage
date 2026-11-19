@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -46,7 +47,78 @@ func servePlugin(kind string) {
 		}
 		return nil, output{Text: in.Text + in.Text}, nil
 	})
+	if kind == "audiences" {
+		// One tool for the page alone, one for the model alone.
+		for name, audience := range map[string]string{"page_action": "app", "model_action": "model"} {
+			only := &mcp.Tool{Name: name, Description: "Do one thing.", Meta: mcp.Meta{"ui": map[string]any{"visibility": []any{audience}}}}
+			mcp.AddTool(server, only, func(_ context.Context, _ *mcp.CallToolRequest, in input) (*mcp.CallToolResult, output, error) {
+				return nil, output{Text: name}, nil
+			})
+		}
+	}
 	_ = server.Run(context.Background(), &mcp.StdioTransport{})
+}
+
+// A tool says who it is for. One for the plugin's page is not offered to
+// the model, and takes no tool name from other plugins; one for the model
+// is not the page's to call.
+func TestToolsAreOfferedOnlyToWhomTheyAreFor(t *testing.T) {
+	root := t.TempDir()
+	writePlugin(t, root, "mixed", "audiences")
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+	plugins, failures := LoadPlugins(ctx, root, LoadOptions{Taken: []string{"page_action"}})
+	if len(failures) != 0 || len(plugins) != 1 {
+		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
+	}
+	plugin := plugins[0]
+	defer plugin.Close()
+	if names := plugin.Tools(); !slices.Equal(slices.Sorted(slices.Values(names)), []string{"model_action", "repeat_text"}) {
+		t.Fatalf("offered to the model: %v", names)
+	}
+	var page []string
+	for _, tool := range plugin.PageTools() {
+		page = append(page, tool.Name)
+	}
+	if !slices.Equal(slices.Sorted(slices.Values(page)), []string{"page_action", "repeat_text"}) {
+		t.Fatalf("offered to the page: %v", page)
+	}
+	for _, info := range plugin.ToolList() {
+		if info.PageOnly != (info.Name == "page_action") {
+			t.Fatalf("%s page only: %t", info.Name, info.PageOnly)
+		}
+	}
+	if result, err := plugin.CallFromView(ctx, "page_action", json.RawMessage(`{"text":"x"}`), time.Minute); err != nil || result.IsError {
+		t.Fatalf("the page's own tool: %v %+v", err, result)
+	}
+	var refused *RefusedError
+	if _, err := plugin.CallFromView(ctx, "model_action", json.RawMessage(`{"text":"x"}`), time.Minute); !errors.As(err, &refused) {
+		t.Fatalf("the page called a tool that is the model's alone: %v", err)
+	}
+	// What the model is given, as a client of the server sees it.
+	token, _ := NewToken()
+	bridge, err := Start(token, plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer bridge.Close()
+	session, err := bridge.connect(ctx, token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close()
+	listed, err := session.ListTools(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tool := range listed.Tools {
+		if tool.Name == "page_action" {
+			t.Fatal("the page's tool was offered to the model")
+		}
+	}
+	if result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: "page_action", Arguments: map[string]any{"text": "x"}}); err == nil && !result.IsError {
+		t.Fatal("the model called the page's tool")
+	}
 }
 
 // writePlugin makes a plugin directory whose program is this test binary.

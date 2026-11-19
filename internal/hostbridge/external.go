@@ -190,13 +190,16 @@ func (e *External) startLocked(ctx context.Context) error {
 	return nil
 }
 
-// Tools are the names of the plugin's tools, once started.
+// Tools are the names of the tools the plugin offers the model, once
+// started.
 func (e *External) Tools() []string {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	names := make([]string, len(e.tools))
-	for i, tool := range e.tools {
-		names[i] = tool.Name
+	var names []string
+	for _, tool := range e.tools {
+		if toolFor(tool, forModel) {
+			names = append(names, tool.Name)
+		}
 	}
 	return names
 }
@@ -205,6 +208,26 @@ func (e *External) Tools() []string {
 type ToolInfo struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// PageOnly says the tool is for the plugin's own page and is not
+	// offered to the model.
+	PageOnly bool `json:"page_only,omitempty"`
+}
+
+// Who a tool is for, as the tool itself says in _meta.ui.visibility, the
+// field MCP Apps defines: a list of "model" and "app". A tool that says
+// nothing is for both.
+const (
+	forModel = "model"
+	forPage  = "app"
+)
+
+func toolFor(tool *mcp.Tool, who string) bool {
+	ui, _ := tool.Meta["ui"].(map[string]any)
+	list, stated := ui["visibility"].([]any)
+	if !stated {
+		return true
+	}
+	return slices.Contains(list, any(who))
 }
 
 // ToolList describes the plugin's tools, once started.
@@ -213,7 +236,7 @@ func (e *External) ToolList() []ToolInfo {
 	defer e.mu.Unlock()
 	list := make([]ToolInfo, len(e.tools))
 	for i, tool := range e.tools {
-		list[i] = ToolInfo{Name: tool.Name, Description: tool.Description}
+		list[i] = ToolInfo{Name: tool.Name, Description: tool.Description, PageOnly: !toolFor(tool, forModel)}
 	}
 	return list
 }
@@ -224,6 +247,10 @@ func (e *External) Register(server *mcp.Server) {
 	tools := slices.Clone(e.tools)
 	e.mu.Unlock()
 	for _, tool := range tools {
+		// A tool for the plugin's page alone is not the model's to see or call.
+		if !toolFor(tool, forModel) {
+			continue
+		}
 		server.AddTool(tool, func(ctx context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
 			result, err := e.call(ctx, tool.Name, request.Params.Arguments, false)
 			if err != nil {
@@ -236,11 +263,18 @@ func (e *External) Register(server *mcp.Server) {
 	}
 }
 
-// ToolSpecs are the plugin's tools as it describes them, once started.
-func (e *External) ToolSpecs() []*mcp.Tool {
+// PageTools are the tools the plugin's own page may call, as the plugin
+// describes them, once started.
+func (e *External) PageTools() []*mcp.Tool {
 	e.mu.Lock()
 	defer e.mu.Unlock()
-	return slices.Clone(e.tools)
+	var tools []*mcp.Tool
+	for _, tool := range e.tools {
+		if toolFor(tool, forPage) {
+			tools = append(tools, tool)
+		}
+	}
+	return tools
 }
 
 // ErrCallTimedOut is a tool that did not answer within the time it was given.
@@ -252,8 +286,8 @@ var ErrCallTimedOut = errors.New("the tool did not answer in time")
 // the call is let through, or it fails with ErrCallTimedOut; the time the
 // user takes to decide does not count.
 func (e *External) CallFromView(ctx context.Context, name string, arguments json.RawMessage, wait time.Duration) (*mcp.CallToolResult, error) {
-	if !slices.Contains(e.Tools(), name) {
-		return nil, &RefusedError{fmt.Errorf("plugin %s has no tool %s", e.Manifest.Name, name)}
+	if !slices.ContainsFunc(e.PageTools(), func(tool *mcp.Tool) bool { return tool.Name == name }) {
+		return nil, &RefusedError{fmt.Errorf("plugin %s has no tool %s for its page", e.Manifest.Name, name)}
 	}
 	return e.callWithin(ctx, name, arguments, true, wait)
 }
