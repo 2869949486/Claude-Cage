@@ -118,6 +118,10 @@ type External struct {
 	Manifest Manifest
 	Dir      string
 	Approve  func(context.Context, ToolRequest) error
+	// Spawn, if set, makes the command that runs the plugin's program
+	// somewhere other than this computer; Dir is then only where its files
+	// are kept here.
+	Spawn func(context.Context) (*exec.Cmd, error)
 
 	mu      sync.Mutex
 	session *mcp.ClientSession
@@ -140,14 +144,22 @@ func (e *External) startLocked(ctx context.Context) error {
 	if len(command) == 0 {
 		return fmt.Errorf("plugin %s has no MCP server", e.Manifest.Name)
 	}
-	program := command[0]
-	if !filepath.IsAbs(program) && (filepath.Base(program) != program || fileExists(filepath.Join(e.Dir, program))) {
-		program = filepath.Join(e.Dir, program)
+	var cmd *exec.Cmd
+	if e.Spawn != nil {
+		var err error
+		if cmd, err = e.Spawn(ctx); err != nil {
+			return fmt.Errorf("plugin %s: %w", e.Manifest.Name, err)
+		}
+	} else {
+		program := command[0]
+		if !filepath.IsAbs(program) && (filepath.Base(program) != program || fileExists(filepath.Join(e.Dir, program))) {
+			program = filepath.Join(e.Dir, program)
+		}
+		// The program outlives the call that starts it.
+		cmd = exec.Command(program, command[1:]...)
+		cmd.Dir = e.Dir
+		cmd.Env = userEnv()
 	}
-	// The program outlives the call that starts it.
-	cmd := exec.Command(program, command[1:]...)
-	cmd.Dir = e.Dir
-	cmd.Env = userEnv()
 	client := mcp.NewClient(&mcp.Implementation{Name: "computer", Version: "1"}, nil)
 	connect, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
@@ -279,13 +291,29 @@ func sameTools(a, b []*mcp.Tool) bool {
 	})
 }
 
+// LoadOptions says which plugins LoadPlugins starts and how.
+type LoadOptions struct {
+	// Taken are tool names already in use, as those of the built-in plugins.
+	Taken []string
+	// Off names the plugins the user turned off.
+	Off []string
+	// Version is this application's, for the plugins' engines ranges.
+	Version string
+	Approve func(context.Context, ToolRequest) error
+	// Guest makes the command that runs a guest plugin's server, given its
+	// manifest and where its files are here. Nil where there is nowhere to
+	// run one.
+	Guest func(ctx context.Context, manifest Manifest, dir string) (*exec.Cmd, error)
+}
+
 // LoadPlugins starts every plugin found in the subdirectories of dir that
 // supports this system. A plugin that fails to load, or offers a tool name
-// already taken (taken lists those of the built-in plugins), is left out and
-// reported; the others still load. Those named in off are not started, nor
-// are those this application at version cannot run (see Unavailable), nor a
-// plugin handling a link scheme that one loaded before it already handles.
-func LoadPlugins(ctx context.Context, dir string, taken, off []string, version string, approve func(context.Context, ToolRequest) error) ([]*External, []error) {
+// already taken, is left out and reported; the others still load. Not
+// started either: those turned off, those this application cannot run (see
+// Unavailable), and a plugin handling a link scheme that one loaded before
+// it already handles.
+func LoadPlugins(ctx context.Context, dir string, options LoadOptions) ([]*External, []error) {
+	taken, off, version, approve := options.Taken, options.Off, options.Version, options.Approve
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -313,7 +341,7 @@ func LoadPlugins(ctx context.Context, dir string, taken, off []string, version s
 			failures = append(failures, fmt.Errorf("%s: the directory must be named after the plugin, %s", entry.Name(), manifest.Name))
 			continue
 		}
-		if !manifest.Supported() || slices.Contains(off, manifest.Name) || manifest.Unavailable(version) == NeedsNewerApplication {
+		if !manifest.Supported() || slices.Contains(off, manifest.Name) || manifest.Unavailable(version, true) == NeedsNewerApplication {
 			continue
 		}
 		conflict := ""
@@ -330,10 +358,13 @@ func LoadPlugins(ctx context.Context, dir string, taken, off []string, version s
 		for _, scheme := range manifest.Schemes() {
 			schemes[scheme] = manifest.Name
 		}
-		if manifest.Unavailable(version) != "" || len(manifest.serverCommand()) == 0 {
+		if manifest.Unavailable(version, options.Guest != nil) != "" || len(manifest.serverCommand()) == 0 {
 			continue
 		}
 		plugin := &External{Manifest: manifest, Dir: path, Approve: approve}
+		if manifest.Kind == KindGuest {
+			plugin.Spawn = func(ctx context.Context) (*exec.Cmd, error) { return options.Guest(ctx, manifest, path) }
+		}
 		if err := plugin.Start(ctx); err != nil {
 			failures = append(failures, err)
 			continue

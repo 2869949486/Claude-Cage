@@ -162,7 +162,7 @@ func (s *Server) hostToolsView() hostToolsView {
 			view.Plugins = append(view.Plugins, hostPluginView{Name: entry.Name(), Permissions: []string{}, Problem: err.Error()})
 			continue
 		}
-		unavailable := manifest.Unavailable(version.Version)
+		unavailable := manifest.Unavailable(version.Version, true)
 		plugin := hostPluginView{Name: manifest.Name, DisplayName: manifest.DisplayName, Version: manifest.Version, Description: manifest.Description,
 			Permissions: manifest.Permissions, Kind: manifest.Kind, Contributes: hostContributes(manifest.Contributes),
 			Supported: manifest.Supported() && unavailable == "", Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
@@ -487,7 +487,7 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 		view.Error = "暂时无法读取插件市场，请检查主机网络或代理后重试"
 	}
 	for _, entry := range entries {
-		unavailable := hostbridge.Manifest{Kind: entry.Kind, Engines: entry.Engines, Contributes: entry.Contributes}.Unavailable(version.Version)
+		unavailable := hostbridge.Manifest{Kind: entry.Kind, Engines: entry.Engines, Contributes: entry.Contributes}.Unavailable(version.Version, true)
 		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description,
 			Permissions: entry.Permissions, Kind: entry.Kind, Contributes: hostContributes(entry.Contributes), Problem: hostPluginUnavailable(unavailable),
 			Supported: entry.Supported() && unavailable == "", Bytes: entry.Bytes, Icon: entry.Icon != ""}

@@ -28,6 +28,8 @@ type hostApprovals struct {
 	grants *hostGrants
 	// permissions are those each loaded plugin declares.
 	permissions map[string][]string
+	// unasked are the plugins whose tools need no approval.
+	unasked map[string]bool
 	// dialog keeps one question on screen at a time.
 	dialog  sync.Mutex
 	mu      sync.Mutex
@@ -35,7 +37,7 @@ type hostApprovals struct {
 }
 
 func newHostApprovals() *hostApprovals {
-	return &hostApprovals{ask: desktop.AskScope, allowed: map[string]bool{}}
+	return &hostApprovals{ask: desktop.AskScope, allowed: map[string]bool{}, unasked: map[string]bool{}}
 }
 
 func (a *hostApprovals) approve(ctx context.Context, request hostbridge.CommandRequest) error {
@@ -46,6 +48,9 @@ func (a *hostApprovals) approve(ctx context.Context, request hostbridge.CommandR
 // approveTool asks about one call to a plugin's tool. "Always" covers that
 // plugin for as long as it declares no further permission.
 func (a *hostApprovals) approveTool(ctx context.Context, request hostbridge.ToolRequest) error {
+	if a.unasked[request.Plugin] {
+		return nil
+	}
 	return a.decide(ctx, hostGrantPlugin+request.Plugin, a.permissions[request.Plugin], request.Arguments, len(request.Arguments),
 		"允许 Claude 使用这台电脑上的插件？",
 		"插件「"+request.Plugin+"」\n工具　"+request.Tool+"\n\n"+request.Arguments+

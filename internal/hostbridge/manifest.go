@@ -273,12 +273,13 @@ const (
 )
 
 // Unavailable is why this application at version does not start the plugin,
-// or empty when it does.
-func (m Manifest) Unavailable(version string) string {
+// or empty when it does. guests says whether there is somewhere to run a
+// guest plugin.
+func (m Manifest) Unavailable(version string, guests bool) string {
 	switch {
 	case !m.EngineSatisfied(version):
 		return NeedsNewerApplication
-	case m.Kind == KindGuest:
+	case m.Kind == KindGuest && !guests:
 		return GuestNotSupported
 	case m.Contributes != nil && len(m.Contributes.MCPServers) > 1:
 		return TooManyServers
@@ -298,7 +299,9 @@ func (m Manifest) Schemes() []string {
 	return schemes
 }
 
-// serverCommand is the command of the plugin's MCP server, if it has one.
+// ServerCommand is the command of the plugin's MCP server, if it has one.
+func (m Manifest) ServerCommand() []string { return m.serverCommand() }
+
 func (m Manifest) serverCommand() []string {
 	if m.Contributes == nil || len(m.Contributes.MCPServers) == 0 {
 		return nil

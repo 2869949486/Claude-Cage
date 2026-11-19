@@ -125,7 +125,9 @@ func (s *Server) startHostTools() error {
 	s.mu.Lock()
 	off := hostPluginsOff(s.preferences)
 	s.mu.Unlock()
-	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, off, version.Version, approvals.approveTool)
+	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), hostbridge.LoadOptions{
+		Taken: []string{"run_command", "command_job"}, Off: off, Version: version.Version,
+		Approve: approvals.approveTool, Guest: s.guestPluginCommand})
 	var problems []string
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))
@@ -142,6 +144,11 @@ func (s *Server) startHostTools() error {
 	approvals.grants, approvals.permissions = s.hostGrantStore(), map[string][]string{}
 	for _, plugin := range external {
 		approvals.permissions[plugin.Manifest.Name] = plugin.Manifest.Permissions
+		// A plugin that stays inside the environment, declaring nothing
+		// that reaches out of it, acts only where Claude already does.
+		if plugin.Manifest.Kind == hostbridge.KindGuest && len(plugin.Manifest.Permissions) == 0 {
+			approvals.unasked[plugin.Manifest.Name] = true
+		}
 	}
 	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs, problems: problems}
 	bridge, err := hostbridge.Start(token, plugins...)

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,13 +39,13 @@ func TestManifestSecondFormat(t *testing.T) {
 	if m.Kind != KindGuest || len(m.Contributes.Views) != 1 || m.Schemes()[0] != "tailscale" {
 		t.Fatalf("manifest %+v", m)
 	}
-	if m.Unavailable("0.1.8") != NeedsNewerApplication || m.Unavailable("1.2.0") != GuestNotSupported || m.Unavailable("") != GuestNotSupported {
-		t.Fatalf("unavailable %q %q", m.Unavailable("0.1.8"), m.Unavailable("1.2.0"))
+	if m.Unavailable("0.1.8", true) != NeedsNewerApplication || m.Unavailable("1.2.0", false) != GuestNotSupported || m.Unavailable("", true) != "" {
+		t.Fatalf("unavailable %q %q", m.Unavailable("0.1.8", true), m.Unavailable("1.2.0", false))
 	}
 
 	// The first format reads as a host plugin with one server.
 	first, err := parseManifest([]byte(`{"name":"clock","version":"1","description":"","permissions":[],"command":["python3","server.py"]}`))
-	if err != nil || first.Kind != KindHost || first.Contributes.MCPServers[0].ID != "clock" || first.serverCommand()[0] != "python3" || first.Unavailable("0.1.8") != "" {
+	if err != nil || first.Kind != KindHost || first.Contributes.MCPServers[0].ID != "clock" || first.serverCommand()[0] != "python3" || first.Unavailable("0.1.8", false) != "" {
 		t.Fatalf("first format %+v: %v", first, err)
 	}
 
@@ -139,7 +140,7 @@ func TestLoadPluginsLeavesOutWhatCannotRun(t *testing.T) {
 	write("b-newer", v2("b-newer", "host", ">=9.0.0", "beta"))
 	write("c-clash", v2("c-clash", "guest", ">=0.1.0", "alpha"))
 	write("d-later", v2("d-later", "guest", ">=0.1.0", "beta"))
-	plugins, failures := LoadPlugins(context.Background(), dir, nil, nil, "0.1.8", nil)
+	plugins, failures := LoadPlugins(context.Background(), dir, LoadOptions{Version: "0.1.8"})
 	if len(plugins) != 0 || len(failures) != 1 || !strings.Contains(failures[0].Error(), "c-clash") || !strings.Contains(failures[0].Error(), "alpha") {
 		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
 	}
@@ -179,5 +180,40 @@ func TestMarketPicksTheEntryForThisSystem(t *testing.T) {
 	}
 	if page.Kind != KindGuest || !page.Supported() || !page.EngineSatisfied("0.1.8") {
 		t.Fatalf("page %+v", page)
+	}
+}
+
+// A guest plugin runs through the command it is given a place for, and its
+// tools are offered like any other's.
+func TestLoadPluginsRunsGuestPluginsWhereTold(t *testing.T) {
+	if _, err := exec.LookPath("python3"); err != nil {
+		t.Skip("python3 is not installed")
+	}
+	dir := t.TempDir()
+	if err := InstallFromCatalog("clock", dir); err != nil {
+		t.Fatal(err)
+	}
+	manifest := `{"name":"clock","version":"1","permissions":[],"engines":{"cage":">=0.1.0"},"kind":"guest",
+		"contributes":{"mcpServers":[{"id":"main","command":["python3","server.py"]}]}}`
+	if err := os.WriteFile(filepath.Join(dir, "clock", ManifestFile), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	if plugins, failures := LoadPlugins(ctx, dir, LoadOptions{}); len(plugins) != 0 || len(failures) != 0 {
+		t.Fatalf("ran a guest plugin with nowhere to run it: %d %v", len(plugins), failures)
+	}
+	var asked Manifest
+	plugins, failures := LoadPlugins(ctx, dir, LoadOptions{Guest: func(_ context.Context, m Manifest, where string) (*exec.Cmd, error) {
+		asked = m
+		cmd := exec.Command(m.ServerCommand()[0], m.ServerCommand()[1:]...)
+		cmd.Dir = where
+		return cmd, nil
+	}})
+	if len(failures) != 0 || len(plugins) != 1 || asked.Name != "clock" {
+		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
+	}
+	defer plugins[0].Close()
+	if result, err := plugins[0].call(ctx, "current_time", nil); err != nil || result.IsError {
+		t.Fatalf("call: %v %+v", err, result)
 	}
 }
