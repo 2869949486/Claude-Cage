@@ -93,7 +93,8 @@ func TestHostGrantIsRememberedAndTakenBack(t *testing.T) {
 	if err := start(desktop.Deny, "network", "files").approveTool(context.Background(), call); err == nil {
 		t.Fatal("the grant covered a permission declared later")
 	}
-	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+	// Windows has no permission bits; the profile folder's access list protects the file.
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 && os.PathSeparator == '/' {
 		t.Fatalf("grants file: %v %v", info, err)
 	}
 	grants := &hostGrants{path: path}

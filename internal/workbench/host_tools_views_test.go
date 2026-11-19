@@ -93,7 +93,7 @@ func TestPluginViewFilesAreServedConfined(t *testing.T) {
 	if shown.Code != 200 || !strings.Contains(shown.Header().Get("Content-Security-Policy"), "frame-ancestors http://localhost:4321") {
 		t.Fatalf("the desktop window's process: %d %s", shown.Code, shown.Header().Get("Content-Security-Policy"))
 	}
-	if info, err := os.Stat(filepath.Join(s.profile, "plugin-views.key")); err != nil || info.Mode().Perm() != 0o600 {
+	if info, err := os.Stat(filepath.Join(s.profile, "plugin-views.key")); err != nil || info.Mode().Perm() != 0o600 && os.PathSeparator == '/' {
 		t.Fatalf("key file: %v %v", info, err)
 	}
 	// Turned off, the plugin's pages are gone and no address is given out.

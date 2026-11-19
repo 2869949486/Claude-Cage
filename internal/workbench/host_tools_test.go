@@ -58,7 +58,8 @@ func TestHostToolsConfigInputWritesTheEntry(t *testing.T) {
 	}
 	home := t.TempDir()
 	cmd := exec.Command(python, "-", "computer", "add")
-	cmd.Env = append(os.Environ(), "HOME="+home)
+	// Python finds the home folder through USERPROFILE on Windows.
+	cmd.Env = append(os.Environ(), "HOME="+home, "USERPROFILE="+home)
 	cmd.Stdin = strings.NewReader(hostToolsConfigInput([]byte(`{"type":"http","url":"http://127.0.0.1:18962/","headers":{"Authorization":"Bearer \"q\\"}}`)))
 	if output, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v: %s", err, output)

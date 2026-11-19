@@ -2,12 +2,17 @@ package workbench
 
 import (
 	"encoding/json"
+	"path/filepath"
 	"strings"
 	"testing"
 )
 
+const codexApprovalFrame = `{"id":9,"method":"item/commandExecution/requestApproval","params":{"kind":"command","turnId":"turn","threadId":"thread","itemId":"exec","environmentId":"local","cwd":"/project","command":"./loopback-test","additionalPermissions":{"network":{"enabled":true},"fileSystem":null},"availableDecisions":["accept","cancel"]}}`
+
 func TestCodexNetworkApproval(t *testing.T) {
-	const frame = `{"id":9,"method":"item/commandExecution/requestApproval","params":{"kind":"command","turnId":"turn","threadId":"thread","itemId":"exec","environmentId":"local","cwd":"/project","command":"./loopback-test","additionalPermissions":{"network":{"enabled":true},"fileSystem":null},"availableDecisions":["accept","cancel"]}}`
+	// The working folder must be absolute on the host running Codex.
+	cwd, _ := json.Marshal(filepath.Join(filepath.VolumeName(t.TempDir()), string(filepath.Separator), "project"))
+	frame := strings.Replace(codexApprovalFrame, `"/project"`, string(cwd), 1)
 	for _, tc := range []struct {
 		before, after string
 		want          bool
