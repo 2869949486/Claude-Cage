@@ -47,7 +47,7 @@ type hostToolsView struct {
 	Folders   []string         `json:"folders"`
 	Plugins   []hostPluginView `json:"plugins"`
 	Problems  []string         `json:"problems,omitempty"`
-	// Catalog lists the plugins that come with the application.
+	// Catalog is always empty; kept for windows that still read it.
 	Catalog []hostCatalogView `json:"catalog"`
 }
 
@@ -105,12 +105,9 @@ func (s *Server) hostToolsView() hostToolsView {
 		}
 		view.Plugins = append(view.Plugins, plugin)
 	}
+	// The market is the one place plugins are offered: a copy shipped with
+	// the application would fall behind it and be installed in its place.
 	view.Catalog = []hostCatalogView{}
-	for _, manifest := range hostbridge.Catalog() {
-		_, err := os.Lstat(filepath.Join(view.Directory, manifest.Name))
-		view.Catalog = append(view.Catalog, hostCatalogView{Name: manifest.Name, Version: manifest.Version, Description: manifest.Description,
-			Permissions: manifest.Permissions, Supported: manifest.Supported(), Installed: err == nil})
-	}
 	return view
 }
 
@@ -188,8 +185,8 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 		Reload  bool   `json:"reload"`
 		Install string `json:"install"`
 		Remove  string `json:"remove"`
-		// Source is "market" to install from the community list; Replace
-		// then sets an installed version aside first.
+		// Install names a plugin on the community list; Replace sets an
+		// installed version aside first. Source is accepted and ignored.
 		Source  string `json:"source"`
 		Replace bool   `json:"replace"`
 		// Plugin and On turn one plugin on or off; the built-in one is
@@ -238,13 +235,7 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if body.Install != "" {
-		var err error
-		if body.Source == "market" {
-			err = s.installFromMarket(r.Context(), body.Install, body.Replace)
-		} else {
-			err = hostbridge.InstallFromCatalog(body.Install, s.hostPluginDir())
-		}
-		if err != nil {
+		if err := s.installFromMarket(r.Context(), body.Install, body.Replace); err != nil {
 			requestError(w, errors.New("插件安装失败："+err.Error()))
 			return
 		}
