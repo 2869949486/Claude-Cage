@@ -50,6 +50,10 @@ func LoadManifest(dir string) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
+	return parseManifest(data)
+}
+
+func parseManifest(data []byte) (Manifest, error) {
 	var m Manifest
 	decoder := json.NewDecoder(bytes.NewReader(data))
 	decoder.DisallowUnknownFields()

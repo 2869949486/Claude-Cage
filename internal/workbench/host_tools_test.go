@@ -189,6 +189,21 @@ func TestHostToolsViewListsPluginFolders(t *testing.T) {
 	if clock := byName["clock"]; clock.Loaded || !clock.Supported || clock.Problem != "" || clock.Version != "1.0.0" || clock.Permissions == nil {
 		t.Fatalf("clock %+v", clock)
 	}
+	if len(view.Catalog) == 0 || view.Catalog[0].Name != "clock" || !view.Catalog[0].Installed {
+		t.Fatalf("catalog %+v", view.Catalog)
+	}
+	if err := s.removeHostPlugin("clock"); err != nil {
+		t.Fatal(err)
+	}
+	if s.hostToolsView().Catalog[0].Installed {
+		t.Fatal("removed plugin still listed as installed")
+	}
+	if aside, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "clock-*", hostbridge.ManifestFile)); len(aside) != 1 {
+		t.Fatalf("removed plugin was not kept: %v", aside)
+	}
+	if s.removeHostPlugin("../x") == nil || s.removeHostPlugin("clock") == nil {
+		t.Fatal("removed something that is not an installed plugin")
+	}
 	if byName["broken"].Problem == "" || byName["renamed"].Problem == "" || !byName["commands"].BuiltIn {
 		t.Fatalf("plugins %+v", view.Plugins)
 	}

@@ -38,4 +38,4 @@
 
 ## 示例
 
-[`examples/host-plugin/clock`](../examples/host-plugin/clock) 是一个完整的插件，只用到 Python 标准库。
+[`internal/hostbridge/catalog/clock`](../internal/hostbridge/catalog/clock) 是一个完整的插件，只用到 Python 标准库。

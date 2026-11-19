@@ -216,13 +216,27 @@ func TestManifestMustBeComplete(t *testing.T) {
 }
 
 // The example in the plugin guide must load as written.
-func TestExamplePluginLoads(t *testing.T) {
+func TestCatalogPluginInstallsAndLoads(t *testing.T) {
 	if _, err := exec.LookPath("python3"); err != nil {
 		t.Skip("python3 is unavailable")
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
-	plugins, failures := LoadPlugins(ctx, filepath.Join("..", "..", "examples", "host-plugin"), []string{"run_command"}, nil)
+	dir := t.TempDir()
+	catalog := Catalog()
+	if len(catalog) == 0 || catalog[0].Name != "clock" {
+		t.Fatalf("catalog %+v", catalog)
+	}
+	if err := InstallFromCatalog("clock", dir); err != nil {
+		t.Fatal(err)
+	}
+	if err := InstallFromCatalog("clock", dir); err == nil {
+		t.Fatal("replaced an installed plugin")
+	}
+	if err := InstallFromCatalog("missing", dir); err == nil {
+		t.Fatal("installed an unknown plugin")
+	}
+	plugins, failures := LoadPlugins(ctx, dir, []string{"run_command"}, nil)
 	if len(failures) != 0 || len(plugins) != 1 {
 		t.Fatalf("plugins %d, failures %v", len(plugins), failures)
 	}
