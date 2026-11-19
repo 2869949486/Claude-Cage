@@ -25,7 +25,8 @@ func TestGuestPluginFilesAreCopiedWhole(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	write("plugin.json", "{}", 0o644)
+	write("plugin.json", `{"kind":"guest"}`, 0o644)
+	write("sub/plugin.json", "kept: only the plugin's own manifest stays behind", 0o644)
 	write("bin/tool", "#!/bin/sh\necho ran\n", 0o755)
 	archive, digest, err := packPlugin(source)
 	if err != nil || len(digest) != 64 {
@@ -54,6 +55,12 @@ func TestGuestPluginFilesAreCopiedWhole(t *testing.T) {
 	}
 	if saved, _ := os.ReadFile(filepath.Join(home, folder, ".digest")); string(saved) != digest {
 		t.Fatalf("digest %q", saved)
+	}
+	if _, err := os.Stat(filepath.Join(home, folder, "plugin.json")); !os.IsNotExist(err) {
+		t.Fatal("the manifest was copied into the environment")
+	}
+	if _, err := os.Stat(filepath.Join(home, folder, "sub", "plugin.json")); err != nil {
+		t.Fatal("a file of the plugin was left out")
 	}
 	if output, err := exec.Command(filepath.Join(home, folder, "bin", "tool")).Output(); err != nil || string(output) != "ran\n" {
 		t.Fatalf("the program did not run: %v %q", err, output)

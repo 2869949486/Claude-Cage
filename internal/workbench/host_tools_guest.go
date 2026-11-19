@@ -28,7 +28,9 @@ const guestPluginLimit = 100 << 20
 func shellQuote(value string) string { return "'" + strings.ReplaceAll(value, "'", `'"'"'`) + "'" }
 
 // packPlugin is the plugin's files as a tar archive and its digest. Only
-// plain files and folders go in, as when a plugin is installed.
+// plain files and folders go in, as when a plugin is installed. The manifest
+// stays behind: it is read here, and it names this application and where
+// the plugin runs, which nothing in the environment needs to be told.
 func packPlugin(dir string) ([]byte, string, error) {
 	var buffer bytes.Buffer
 	archive := tar.NewWriter(&buffer)
@@ -39,6 +41,9 @@ func packPlugin(dir string) ([]byte, string, error) {
 		relative, err := filepath.Rel(dir, path)
 		if err != nil {
 			return err
+		}
+		if relative == hostbridge.ManifestFile {
+			return nil
 		}
 		info, err := entry.Info()
 		if err != nil {
