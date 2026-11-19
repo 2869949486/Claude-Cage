@@ -24,9 +24,10 @@ export const pluginTitle = plugin => plugin.built_in && builtIn[plugin.name]?.ti
   || words(plugin.name).map(word => word[0].toUpperCase() + word.slice(1)).join(" ") || plugin.name;
 const pluginText = plugin => plugin.built_in && builtIn[plugin.name]?.description || plugin.description || "插件没有提供说明";
 const permissionText = list => list?.length ? list.map(name => permissions[name]?.title || name).join("、") : "未声明任何权限";
-// A guest plugin runs inside the environment; it cannot run until the app supports it.
-const guestPending = item => item.kind === "guest" && !item.supported;
-const unsupportedLabel = item => guestPending(item) ? "需要更新 Cage" : "不支持此系统";
+// The app explains in problem when a plugin needs a newer app: a guest plugin,
+// an unmet engines range or more than one MCP server. Otherwise an unsupported
+// plugin was not built for this system.
+const unsupportedLabel = item => item.problem ? "需要更新 Cage" : "不支持此系统";
 
 // contributions lists what a plugin adds to the app beyond its tools: pages in
 // the sidebar and the links it handles. Every MCP plugin has a server, so
@@ -251,7 +252,10 @@ export function HostPluginsSidebar({ model, page, onPage, onBack, onConfirm }) {
     const leave = event => {
       if (event.key !== "Escape" || event.defaultPrevented || document.querySelector('[role="dialog"], .settings-page')) return;
       // Only from the plugin views: a terminal or page beside them keeps its Escape.
-      if (!event.target.closest?.(".plugin-sidebar, .plugin-panel") || event.target.matches?.('input[type="search"]') && event.target.value) return;
+      // The page's own title counts, since opening a plugin page focuses it.
+      const target = event.target;
+      const inPlugins = target.closest?.(".plugin-sidebar, .plugin-panel") || target.closest?.(".management-page")?.querySelector(".plugin-panel");
+      if (!inPlugins || target.matches?.('input[type="search"]') && target.value) return;
       onBack();
     };
     window.addEventListener("keydown", leave);
@@ -317,7 +321,7 @@ function MarketCard({ entry, view, busy, onOpen, onInstall }) {
         <span className="plugin-card-permissions" title={permissionText(offer.permissions)}>
           <ShieldCheck size={13} />{offer.permissions?.length ? permissionText(offer.permissions) : "无需额外权限"}
         </span>
-        {!offer.supported ? <span className="plugin-state problem"><i />不支持此系统</span>
+        {!offer.supported ? <span className="plugin-state problem" title={offer.problem || undefined}><i />{unsupportedLabel(offer)}</span>
           : <button type="button" className="primary" disabled={Boolean(busy)} onClick={onInstall}>
             {installing ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />}{installing ? update ? "正在更新" : "正在安装" : update ? "更新" : "安装"}
           </button>}
@@ -451,6 +455,7 @@ function Detail({ model, name, onConfirm, onPage }) {
         <p>{plugin.built_in && name === "commands" ? "Claude 将不能在这台电脑上运行命令。打开上方开关即可恢复。" : "插件不会运行，Claude 也看不到它提供的工具。打开上方开关即可恢复。"}</p>
       </div></div>}
       {plugin?.problem && <div className="plugin-banner problem" role="alert"><TriangleAlert size={17} /><div><strong>插件无法加载</strong><p>{plugin.problem}</p></div></div>}
+      {!plugin && offer?.problem && <div className="plugin-banner problem" role="status"><TriangleAlert size={17} /><div><strong>暂时无法安装</strong><p>{offer.problem}</p></div></div>}
       <nav className="plugin-tabs" role="tablist" aria-label={`${info.title} 的内容`}>
         <button type="button" role="tab" aria-selected={tab === "tools"} onClick={() => setTab("tools")}>工具<em>{tools.length}</em></button>
         <button type="button" role="tab" aria-selected={tab === "permissions"} onClick={() => setTab("permissions")}>权限<em>{declared.length}</em></button>
