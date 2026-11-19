@@ -26,7 +26,7 @@ import { GuestSystemPicker, validGuestChoice } from "./guest-system-picker";
 import { AppearanceProvider } from "./appearance";
 import { EnvironmentShield } from "./environment-shield";
 import { TailscalePanel } from "./tailscale";
-import { HostPluginsPanel, pluginTitle, useHostPlugins } from "./host-plugins";
+import { HostPluginsPanel, pluginPageTitle, useHostPlugins } from "./host-plugins";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
@@ -73,8 +73,8 @@ function App() {
   }, []);
   const claudeProfiles = useClaudeAccounts();
   const [managementPage, setManagementPage] = useState("");
-  const [pluginPage, setPluginPage] = useState({ kind: "overview" });
-  const [pluginsExpanded, setPluginsExpanded] = useState(false);
+  const [pluginPage, setPluginPage] = useState({ kind: "settings" });
+  const [pluginSidebar, setPluginSidebar] = useState(false);
   const [tailnetLogin, setTailnetLogin] = useState(null);
   const [desktopOpen, setDesktopOpen] = useState(false);
   const [terminalChoice, setTerminalChoice] = useState(null);
@@ -249,7 +249,7 @@ function App() {
     layout.side === "left" ? "right" : "left";
   const running = Boolean(status?.vm_running);
   const pluginsAvailable = Boolean(status?.local_vm_storage) && !isRemoteClient();
-  const hostPlugins = useHostPlugins(pluginsAvailable && (pluginsExpanded || managementPage === "plugins"));
+  const hostPlugins = useHostPlugins(pluginsAvailable && (pluginSidebar || managementPage === "plugins"));
   const mixedBrowserId = split && !dualBrowser ? webPanes[0]?.id : null;
   useEffect(() => {
     if (status?.ready && mixedBrowserId && mixedBrowserId !== browser.active)
@@ -1462,11 +1462,10 @@ function App() {
             onClaudeAccounts={() => setManagementPage("claude-accounts")}
             claudeAccountsOpen={managementPage === "claude-accounts"}
             tailscaleOpen={managementPage === "tailscale"}
-            plugins={pluginsAvailable ? { model: hostPlugins, expanded: pluginsExpanded, page: managementPage === "plugins" ? pluginPage : null,
-              onToggle: () => {
-                if (pluginsExpanded && managementPage === "plugins" && pluginPage.kind === "overview") { setPluginsExpanded(false); return; }
-                setPluginsExpanded(true); setPluginPage({ kind: "overview" }); setManagementPage("plugins");
-              },
+            plugins={pluginsAvailable ? { model: hostPlugins, open: pluginSidebar, page: managementPage === "plugins" ? pluginPage : null,
+              onConfirm: confirm,
+              onOpen: () => { setPluginSidebar(true); setManagementPage("plugins"); },
+              onBack: () => setPluginSidebar(false),
               onPage: (page) => {
                 setPluginPage(page); setManagementPage("plugins");
                 if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
@@ -1552,7 +1551,7 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" ? pluginPage.kind === "market" ? "插件市场" : pluginPage.kind === "plugin" ? pluginTitle(hostPlugins.view?.plugins.find(item => item.name === pluginPage.name) || { name: pluginPage.name }) : "MCP 插件" : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" ? pluginPageTitle(hostPlugins, pluginPage) : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
                 {managementPage === "plugins" ? <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={setPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}

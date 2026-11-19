@@ -1,5 +1,5 @@
 import { DesktopList } from "./account-desktops";
-import { HostPluginsNav } from "./host-plugins";
+import { HostPluginsNav, HostPluginsSidebar } from "./host-plugins";
 import { shortcut } from "./platform.mjs";
 import React, { useEffect, useRef, useState } from "react";
 import {
@@ -97,6 +97,8 @@ export function WorkspaceSidebar({
       setCollapsed((previous) => ({ ...previous, [activeWorkspace]: false }));
   }, [active, activeWorkspace]);
   if (ssh?.expanded) return null;
+  if (plugins?.open) return <HostPluginsSidebar model={plugins.model} page={plugins.page} onPage={plugins.onPage}
+    onBack={plugins.onBack} onConfirm={plugins.onConfirm} />;
   const healthy = ready && network.mode === "open";
   return (
     <aside className="workspace-sidebar" aria-label="项目与终端">
@@ -145,7 +147,7 @@ export function WorkspaceSidebar({
           </button>
         </div>
         <button className={`sidebar-link ${tailscaleOpen ? "selected" : ""}`} aria-current={tailscaleOpen ? "page" : undefined} onClick={onTailscale} aria-label="打开 Tailscale"><Network size={17} />Tailscale</button>
-        {plugins && <HostPluginsNav {...plugins} />}
+        {plugins && <HostPluginsNav selected={Boolean(plugins.page)} onOpen={plugins.onOpen} />}
         {ssh && <button className="sidebar-link ssh-navigation" onClick={ssh.open} aria-label="SSH 主机"><Server size={17} />SSH</button>}
         {accountDesktops ? <DesktopList model={accountDesktops} disabled={!running || busy} selected={desktopOpen} onDefault={onClaudeDesktop}/> : <button className={`sidebar-link ${desktopOpen?"selected":""}`} onClick={onClaudeDesktop} disabled={!running||busy}><Monitor size={17}/>Claude Desktop</button>}
         <button className={`sidebar-link ${claudeAccountsOpen ? "selected" : ""}`} onClick={onClaudeAccounts}
