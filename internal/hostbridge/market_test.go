@@ -152,3 +152,54 @@ func TestMarketRefusesArchivesThatAreNotWhatTheListSays(t *testing.T) {
 		t.Error("installed an archive larger than the list says")
 	}
 }
+
+func TestPluginIcons(t *testing.T) {
+	dir := t.TempDir()
+	write := func(icon string) {
+		manifest := strings.Replace(marketManifest, `"permissions"`, `"icon":"`+icon+`","permissions"`, 1)
+		if err := os.WriteFile(filepath.Join(dir, ManifestFile), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, bad := range []string{"../icon.png", "/etc/icon.png", "icon.gif", "a/../icon.svg", "icon.html"} {
+		write(bad)
+		if _, err := LoadManifest(dir); err == nil {
+			t.Errorf("accepted icon %q", bad)
+		}
+	}
+	write("art/icon.svg")
+	if _, _, err := ReadIcon(dir); err == nil {
+		t.Fatal("read an icon that is not there")
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "art"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "art", "icon.svg"), []byte("<svg/>"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if data, kind, err := ReadIcon(dir); err != nil || kind != "image/svg+xml" || string(data) != "<svg/>" {
+		t.Fatalf("icon %q %q: %v", data, kind, err)
+	}
+
+	market := Market{IndexURL: "https://example.test/index.json", ArchivePrefix: "https://example.test/dist/", IconPrefix: "https://example.test/plugins/"}
+	icons := map[string]string{
+		"https://example.test/plugins/notes/icon.png":      "https://example.test/plugins/notes/icon.png",
+		"https://example.test/plugins/other/icon.png":      "",
+		"https://elsewhere.test/plugins/notes/icon.png":    "",
+		"https://example.test/plugins/notes/../x/icon.png": "",
+		"https://example.test/plugins/notes/icon.png?x=1":  "",
+		"https://example.test/plugins/notes/page.html":     "",
+	}
+	for icon, want := range icons {
+		entry := MarketEntry{Name: "notes", Version: "1", Archive: market.ArchivePrefix + "notes-1.tar.gz", SHA256: strings.Repeat("a", 64), Bytes: 10, Icon: icon}
+		body, _ := json.Marshal(map[string]any{"version": 1, "plugins": []MarketEntry{entry}})
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(body) }))
+		served := market
+		served.IndexURL = server.URL
+		entries, err := served.Fetch(context.Background(), server.Client())
+		server.Close()
+		if err != nil || len(entries) != 1 || entries[0].Icon != want {
+			t.Errorf("icon %q: got %+v, %v", icon, entries, err)
+		}
+	}
+}

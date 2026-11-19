@@ -25,12 +25,15 @@ type Market struct {
 	// must start with, so the list cannot point anywhere else.
 	IndexURL      string
 	ArchivePrefix string
+	// IconPrefix is what a plugin's picture address must start with.
+	IconPrefix string
 }
 
 // CommunityMarket is the public plugin repository.
 var CommunityMarket = Market{
 	IndexURL:      "https://raw.githubusercontent.com/Lee-xeo/cage-plugins/main/index.json",
 	ArchivePrefix: "https://raw.githubusercontent.com/Lee-xeo/cage-plugins/main/dist/",
+	IconPrefix:    "https://raw.githubusercontent.com/Lee-xeo/cage-plugins/main/plugins/",
 }
 
 // MarketEntry is one plugin in the list.
@@ -43,6 +46,17 @@ type MarketEntry struct {
 	Archive     string   `json:"archive"`
 	SHA256      string   `json:"sha256"`
 	Bytes       int64    `json:"bytes"`
+	// Icon is the address of the plugin's picture, if it has one.
+	Icon string `json:"icon,omitempty"`
+}
+
+// FetchIcon downloads the entry's picture and returns it with its media type.
+func (m Market) FetchIcon(ctx context.Context, client *http.Client, entry MarketEntry) ([]byte, string, error) {
+	if entry.Icon == "" {
+		return nil, "", os.ErrNotExist
+	}
+	data, err := fetchLimited(ctx, client, entry.Icon, IconLimit)
+	return data, IconType(entry.Icon), err
 }
 
 // Supported reports whether the plugin runs on this system.
@@ -83,6 +97,10 @@ func (m Market) Fetch(ctx context.Context, client *http.Client) ([]MarketEntry, 
 		seen[entry.Name] = true
 		if entry.Permissions == nil {
 			entry.Permissions = []string{}
+		}
+		// A picture from anywhere else is not shown; the plugin still is.
+		if rest := strings.TrimPrefix(entry.Icon, m.IconPrefix+entry.Name+"/"); m.IconPrefix == "" || rest == entry.Icon || !validIcon(rest) || strings.ContainsAny(rest, "?#%") {
+			entry.Icon = ""
 		}
 		entries = append(entries, entry)
 	}

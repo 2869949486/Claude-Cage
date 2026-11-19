@@ -4,7 +4,11 @@
 
 ## 安装
 
-把插件目录放进配置目录的 `plugins/` 下（默认 `~/.claude-cage/plugins/<插件名>/`），并打开主机工具。下次环境启动时加载。
+在侧栏打开「MCP 插件」，先打开总开关，再进入「插件市场」选择插件安装。市场的内容来自 [cage-plugins](https://github.com/Lee-xeo/cage-plugins) 仓库：应用读取其中的索引，下载压缩包并核对 SHA-256 后安装。读取和下载走电脑自己的网络，遵循系统代理设置。
+
+也可以手动安装：把插件目录放进配置目录的 `plugins/` 下（默认 `~/.claude-cage/plugins/<插件名>/`），然后在插件清单页点击「重新加载」。
+
+卸载或更新时，原来的插件目录不会被删除，而是移到配置目录的 `plugins-removed/` 下。
 
 插件以你的用户权限在电脑上运行。每次调用前会弹出确认，显示插件、工具和参数；可以只允许一次，也可以在本次会话内都允许。只安装你信任的插件。
 
@@ -17,7 +21,8 @@
   "description": "Tells the current time on this computer.",
   "platforms": ["darwin", "linux", "windows"],
   "permissions": [],
-  "command": ["python3", "server.py"]
+  "command": ["python3", "server.py"],
+  "icon": "icon.svg"
 }
 ```
 
@@ -29,6 +34,7 @@
 | `platforms` | 支持的系统：`darwin`、`linux`、`windows`。省略表示都支持 |
 | `permissions` | 插件在电脑上会做的事，必须写明，没有就写空列表。可选值：`files`、`commands`、`screen`、`input`、`network` |
 | `command` | 程序和参数。相对路径从插件目录算起 |
+| `icon` | 插件目录内的一张 PNG 或 SVG 图片，显示在插件名称旁，不超过 256 KB。可省略 |
 
 清单里不能有其他字段。
 
@@ -38,4 +44,4 @@
 
 ## 示例
 
-[`internal/hostbridge/catalog/clock`](../internal/hostbridge/catalog/clock) 是一个完整的插件，只用到 Python 标准库。
+[`internal/hostbridge/catalog/clock`](../internal/hostbridge/catalog/clock) 是一个完整的插件，只用到 Python 标准库。向市场提交插件的方法见 [cage-plugins](https://github.com/Lee-xeo/cage-plugins)。

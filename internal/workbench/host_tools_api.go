@@ -21,14 +21,16 @@ import (
 
 // hostPluginView is one plugin as the plugin page shows it.
 type hostPluginView struct {
-	Name        string                `json:"name"`
-	Version     string                `json:"version,omitempty"`
-	Description string                `json:"description,omitempty"`
-	Permissions []string              `json:"permissions"`
-	BuiltIn     bool                  `json:"built_in,omitempty"`
-	Supported   bool                  `json:"supported"`
-	Loaded      bool                  `json:"loaded"`
-	Tools       []hostbridge.ToolInfo `json:"tools,omitempty"`
+	Name        string   `json:"name"`
+	Version     string   `json:"version,omitempty"`
+	Description string   `json:"description,omitempty"`
+	Permissions []string `json:"permissions"`
+	BuiltIn     bool     `json:"built_in,omitempty"`
+	// Icon says the plugin has a picture, served by the icon route.
+	Icon      bool                  `json:"icon,omitempty"`
+	Supported bool                  `json:"supported"`
+	Loaded    bool                  `json:"loaded"`
+	Tools     []hostbridge.ToolInfo `json:"tools,omitempty"`
 	// Problem is why the plugin's folder cannot be used.
 	Problem string `json:"problem,omitempty"`
 }
@@ -91,7 +93,7 @@ func (s *Server) hostToolsView() hostToolsView {
 			continue
 		}
 		plugin := hostPluginView{Name: manifest.Name, Version: manifest.Version, Description: manifest.Description,
-			Permissions: manifest.Permissions, Supported: manifest.Supported()}
+			Permissions: manifest.Permissions, Supported: manifest.Supported(), Icon: manifest.Icon != ""}
 		if manifest.Name != entry.Name() {
 			plugin.Problem = "文件夹名称须与插件名称 " + manifest.Name + " 一致"
 			plugin.Name = entry.Name()
@@ -261,6 +263,44 @@ type hostMarketEntryView struct {
 	// InstalledVersion is empty when the plugin is not installed.
 	InstalledVersion string `json:"installed_version"`
 	Update           bool   `json:"update"`
+	// Icon says the list has a picture for the plugin.
+	Icon bool `json:"icon,omitempty"`
+}
+
+// hostPluginIcon serves a plugin's picture: of the installed plugin, or with
+// market=1 the one the community list names. Pictures come from plugin
+// authors, so they are served as pictures only, with nothing able to run.
+func (s *Server) hostPluginIcon(w http.ResponseWriter, r *http.Request) {
+	name := r.URL.Query().Get("name")
+	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
+		http.NotFound(w, r)
+		return
+	}
+	var data []byte
+	var kind string
+	var err error
+	if r.URL.Query().Get("market") == "1" {
+		entries, _, _ := s.hostMarketEntries(r.Context(), false)
+		index := slices.IndexFunc(entries, func(entry hostbridge.MarketEntry) bool { return entry.Name == name })
+		if index < 0 {
+			http.NotFound(w, r)
+			return
+		}
+		fetch, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+		defer cancel()
+		data, kind, err = hostbridge.CommunityMarket.FetchIcon(fetch, hostMarketClient(), entries[index])
+	} else {
+		data, kind, err = hostbridge.ReadIcon(filepath.Join(s.hostPluginDir(), name))
+	}
+	if err != nil {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", kind)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("Content-Security-Policy", "default-src 'none'; style-src 'unsafe-inline'; sandbox")
+	w.Header().Set("Cache-Control", "private, max-age=300")
+	_, _ = w.Write(data)
 }
 
 func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
@@ -280,7 +320,7 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 	}
 	for _, entry := range entries {
 		item := hostMarketEntryView{Name: entry.Name, Version: entry.Version, Description: entry.Description,
-			Permissions: entry.Permissions, Supported: entry.Supported(), Bytes: entry.Bytes}
+			Permissions: entry.Permissions, Supported: entry.Supported(), Bytes: entry.Bytes, Icon: entry.Icon != ""}
 		if manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), entry.Name)); err == nil {
 			item.InstalledVersion = manifest.Version
 			item.Update = manifest.Version != entry.Version

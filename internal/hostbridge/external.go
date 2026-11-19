@@ -8,10 +8,12 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"runtime"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -37,6 +39,47 @@ type Manifest struct {
 	// Command is the program and its arguments. A relative program path is
 	// taken from the plugin's directory.
 	Command []string `json:"command"`
+	// Icon is a PNG or SVG picture inside the plugin's directory, shown
+	// beside its name. Optional.
+	Icon string `json:"icon,omitempty"`
+}
+
+// validIcon reports whether name is a picture path inside the plugin.
+func validIcon(name string) bool {
+	if name == "" || len(name) > 200 || path.IsAbs(name) || path.Clean(name) != name || strings.Contains(name, "\\") || name == ".." || strings.HasPrefix(name, "../") {
+		return false
+	}
+	extension := strings.ToLower(path.Ext(name))
+	return extension == ".png" || extension == ".svg"
+}
+
+// IconLimit is the largest picture shown for a plugin.
+const IconLimit = 256 << 10
+
+// ReadIcon returns the picture of the plugin in dir and its media type.
+func ReadIcon(dir string) ([]byte, string, error) {
+	manifest, err := LoadManifest(dir)
+	if err != nil {
+		return nil, "", err
+	}
+	if manifest.Icon == "" {
+		return nil, "", os.ErrNotExist
+	}
+	file := filepath.Join(dir, filepath.FromSlash(manifest.Icon))
+	// The picture must be a file of the plugin itself, not a link out of it.
+	if info, err := os.Lstat(file); err != nil || !info.Mode().IsRegular() || info.Size() > IconLimit {
+		return nil, "", os.ErrNotExist
+	}
+	data, err := os.ReadFile(file)
+	return data, IconType(manifest.Icon), err
+}
+
+// IconType is the media type of a picture by its name.
+func IconType(name string) string {
+	if strings.ToLower(path.Ext(name)) == ".svg" {
+		return "image/svg+xml"
+	}
+	return "image/png"
 }
 
 // KnownPermissions are the values a manifest may declare.
@@ -74,6 +117,9 @@ func parseManifest(data []byte) (Manifest, error) {
 		if !slices.Contains(KnownPermissions, permission) {
 			return Manifest{}, fmt.Errorf("%s: unknown permission %q", ManifestFile, permission)
 		}
+	}
+	if m.Icon != "" && !validIcon(m.Icon) {
+		return Manifest{}, fmt.Errorf("%s: icon must be a PNG or SVG file inside the plugin", ManifestFile)
 	}
 	for _, platform := range m.Platforms {
 		if !slices.Contains([]string{"darwin", "linux", "windows"}, platform) {
