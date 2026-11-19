@@ -1,7 +1,6 @@
 #!/usr/bin/python3
 """Open external links in the current Linux Desktop's own display and network."""
 import os
-import pwd
 import shutil
 import subprocess
 import sys
@@ -39,21 +38,11 @@ def main(address):
     url = urlsplit(address)
     if url.scheme not in ("http", "https") or not url.hostname:
         return 2
-    snap = Path("/usr/local/lib/workbench-browser/chromium")
-    browser = str(snap) if snap.is_file() else shutil.which("chromium") or shutil.which("google-chrome-stable")
+    browser = shutil.which("chromium") or shutil.which("google-chrome-stable")
     if not browser:
         return 1
     temporary = os.environ["XDG_RUNTIME_DIR"]
     regular = Path.home() / ".config/chromium"
-    if browser == str(snap):
-        # Snap confines Chromium to its real user data tree.
-        account = Path.home().parent.name
-        if len(account) != 24 or any(c not in "0123456789abcdef" for c in account):
-            return 2
-        folder = Path(pwd.getpwuid(os.getuid()).pw_dir) / "snap/chromium/common/desktop-profiles" / account
-        folder.mkdir(parents=True, exist_ok=True, mode=0o700)
-        regular = folder / "profile"
-        temporary = folder
     if not sign_in(url) or Path("/etc/claude-cage/login-browser-mode").exists():
         os.execv(browser, [browser, "--user-data-dir=" + str(regular), address])
     # Incognito windows in the same Chromium process can share cookies. A new

@@ -113,7 +113,7 @@ func parseSetupProgress(line string) *SetupProgress {
 }
 
 func guestProgressName(system string) string {
-	return map[string]string{"debian-12": "Debian 12", "debian-13": "Debian 13", "ubuntu-22.04": "Ubuntu 22.04", "ubuntu-24.04": "Ubuntu 24.04"}[system]
+	return map[string]string{"debian-12": "Debian 12", "debian-13": "Debian 13"}[system]
 }
 
 func (e *jobExecution) setSetupProgress(p *SetupProgress) {

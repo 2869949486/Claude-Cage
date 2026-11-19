@@ -3,7 +3,7 @@ import { Check, ChevronLeft, LoaderCircle, ShieldCheck } from "lucide-react";
 import { api, native, nativeAvailable } from "./api";
 import { isRemoteClient } from "./client-context.mjs";
 import { useAccount } from "./account";
-import { GuestSystemPicker, HostCloneSummary, validGuestChoice } from "./guest-system-picker";
+import { GuestSystemPicker, validGuestChoice } from "./guest-system-picker";
 import { InitializationStorage } from "./initialization-storage";
 import { GuestProfileOptions, guestOptionsForSystem } from "./guest-profile";
 import { ProxySettings } from "./proxy-settings";
@@ -66,7 +66,6 @@ function Initialization({ initial, onComplete }) {
   const [proxyDirty, setProxyDirty] = useState(false);
   const alive = useRef(true);
   const pollNow = useRef(null);
-  const activation = useRef(false);
   const actionPending = useRef(false);
   const restored = useRef(false);
   const job = status?.job || {};
@@ -105,18 +104,6 @@ function Initialization({ initial, onComplete }) {
             restored.current = true;
             if (initial.started && !initial.prepared && !account?.guest_system && !install?.pending && !next.job?.running && !next.job?.setup_progress && !next.ready) setStep("system");
           }
-          if (install?.activate && !activation.current) {
-            activation.current = true;
-            setStep("install");
-            try {
-              await api("/environment/guest-systems/activate", {});
-              if (navigation?.reconnectLocal) await navigation.reconnectLocal();
-              else await native("reconnect");
-            } catch (error) {
-              activation.current = false;
-              if (alive.current) setError(error.message);
-            }
-          }
         }
         if (next.job?.running && ["start", "guest-install", "safety"].includes(next.job.kind)) setStep("install");
       } catch (error) { if (alive.current) setConnectionError(error.message); }
@@ -145,7 +132,7 @@ function Initialization({ initial, onComplete }) {
     if (pending) return { guest_system: pending.system };
     const preferences = guestProfile ? { guest_profile: guestOptionsForSystem(guestProfile, choice?.guest_system) } : {};
     if (!choice) return job.setup_progress?.system ? { guest_system: job.setup_progress.system } : preferences;
-    return { guest_system: choice.guest_system, media: choice.media, sha256: choice.sha256, clone_key: choice.clone_key, editor_terms: choice.editor_terms, ...preferences };
+    return { guest_system: choice.guest_system, ...preferences };
   }
   async function install() {
     if (needsProxySetup(null, status, proxy)) { setError("请先选择并应用代理节点。"); setStep("proxy"); return; }
@@ -206,18 +193,18 @@ function Initialization({ initial, onComplete }) {
   return <InitializationFrame>
     <section className="initialization-content">
       <ol className="initialization-steps" aria-label="初始化步骤">{steps.map(([key, label], position) => <li key={key} aria-current={step === key ? "step" : undefined}><span>{position < index ? <Check size={14} /> : position + 1}</span>{label}</li>)}</ol>
-      <div className="initialization-title"><h1>{title}</h1><p>{step === "system" ? "Cage 会在这台电脑里创建一套独立系统，供终端、浏览器和编辑器使用。先选择要使用的系统；不需要更换磁盘时，可以保留默认存储位置。" : step === "proxy" ? "先导入已有的代理配置。下方会自动查找本机代理软件，无需自己找文件；也可以添加订阅或节点。导入后选择出口，点击「应用代理」，再开始安装。" : ready ? "系统、开发组件和网络检查均已完成，可以进入工作台开始使用。" : networkPending ? "系统已经装好，无需重新安装。按下方指引完成检查，就能进入工作台。" : "Cage 会自动下载系统、安装工具，再引导你完成授权。需要你操作时会显示具体步骤；中断后可以继续原任务。"}</p></div>
+      <div className="initialization-title"><h1>{title}</h1><p>{step === "system" ? "Cage 会在这台电脑里创建一套独立的 Debian 系统，供终端、浏览器和编辑器使用。不需要更换磁盘时，可以保留默认存储位置。" : step === "proxy" ? "先导入已有的代理配置。下方会自动查找本机代理软件，无需自己找文件；也可以添加订阅或节点。导入后选择出口，点击「应用代理」，再开始安装。" : ready ? "系统、开发组件和网络检查均已完成，可以进入工作台开始使用。" : networkPending ? "系统已经装好，无需重新安装。按下方指引完成检查，就能进入工作台。" : "Cage 会自动下载系统、安装工具，再引导你完成授权。需要你操作时会显示具体步骤；中断后可以继续原任务。"}</p></div>
       {connectionError && <div className="initialization-notice" role="alert"><SafetyMessage message={connectionError} /><button onClick={() => pollNow.current?.()}>重新连接</button></div>}
       {!status ? <p role="status"><LoaderCircle size={18} className="spin" />正在读取安装状态…</p> : <>
         <div className="initialization-stage" key={step}>
           {step === "system" && <>
-            <GuestSystemPicker system={choice} onChange={setChoice} onReselect={() => { setPending(null); setCanReselect(false); }} preserveOnUnmount deferMatch />
-            {pending ? <p className="field-help">先点击「重新选择系统或镜像」解除原安装选择，再选择要使用的系统或本机镜像。已保存的代理配置会保留。</p> : <>
+            <GuestSystemPicker system={choice} onChange={setChoice} onReselect={() => { setPending(null); setCanReselect(false); }} preserveOnUnmount />
+            {pending ? <p className="field-help">撤销原安装选择后，Cage 会改为安装 Debian 13；已下载的镜像和已保存的代理配置会保留。</p> : <>
               <InitializationStorage value={storage} onChange={setStorage} disabled={busy} />
               <GuestProfileOptions value={guestProfile} onChange={setGuestProfile} disabled={busy} system={choice?.guest_system} />
             </>}
           </>}
-          {step === "proxy" && <><ProxySettings initializing status={status} onConfirm={confirm} onDirty={setProxyDirty} onApplied={async () => { setProxy(await api("/proxy")); pollNow.current?.(); }} />{choice?.clone && !needsProxySetup(null, status, proxy) && <HostCloneSummary pending={choice.pending} onChange={setChoice} />}</>}
+          {step === "proxy" && <><ProxySettings initializing status={status} onConfirm={confirm} onDirty={setProxyDirty} onApplied={async () => { setProxy(await api("/proxy")); pollNow.current?.(); }} /></>}
           {step === "install" && (ready ? <div className="initialization-ready"><ShieldCheck size={36} /><h2>环境已就绪</h2><p>独立系统已安装，工具、文件和登录状态会持续保存。以后打开 Cage 可直接进入工作台。</p></div> : <>
             {progress ? <SetupProgress job={progress} onDetails={() => setDetails(true)} onStop={stop} onRetry={install} disconnected={Boolean(connectionError) || submitting} /> : <div className="initialization-operation" role="status">{busy && <LoaderCircle size={22} className="spin" />}<p>{stopped ? "安装已停止，已有下载和磁盘会保留。点击「继续安装」接着完成。" : job.message || (status.vm_running ? "请完成客机连接和网络检查。" : "准备继续原安装，已有文件和磁盘会保留。")}</p>{!busy && !job.error && <button className="primary" disabled={Boolean(connectionError)} onClick={install}>{status.ready ? "重新启动并检查" : "继续安装"}</button>}{busy && <button onClick={stop} disabled={submitting}>停止安装</button>}</div>}
             {job.error && !progress && <div className="initialization-notice" role="alert"><SafetyMessage message={job.error} />{!networkPending && <button className="primary" disabled={busy || Boolean(connectionError)} onClick={install}>继续安装</button>}</div>}
@@ -225,13 +212,13 @@ function Initialization({ initial, onComplete }) {
               <div className="initialization-network"><p>{status.safety?.error || job.error || status.network_error || "客机已经连接，请完成网络和隔离检查后进入工作台。"}</p><button disabled={Boolean(connectionError)} onClick={checkNetwork}>运行网络与隔离检查</button></div>
             </>}
             {(progress?.setup_progress.phase === "image" || (failed && !networkPending)) && <p>系统镜像遵循主机代理设置。下载失败时，可在操作详情中查看当前文件和重试记录。客机内的联网请求使用 Cage 代理。</p>}
-            <div className="initialization-recovery">{canReselect && <button disabled={busy} onClick={() => setStep("system")}>改用已有镜像或重新选择系统</button>}<button onClick={() => setStep("proxy")} disabled={busy}>检查 Cage 代理配置</button>{!progress && <button onClick={() => setDetails(true)}>查看操作详情</button>}</div>
+            <div className="initialization-recovery">{canReselect && <button disabled={busy} onClick={() => setStep("system")}>查看或撤销原安装选择</button>}<button onClick={() => setStep("proxy")} disabled={busy}>检查 Cage 代理配置</button>{!progress && <button onClick={() => setDetails(true)}>查看操作详情</button>}</div>
           </>)}
         </div>
         {error && <p className="initialization-notice" role="alert"><SafetyMessage message={error} /></p>}
         <footer className="initialization-actions">
           {step === "system" ? <span /> : <button className="text-button" disabled={busy} onClick={back}><ChevronLeft size={16} />上一步</button>}
-          {step === "system" && <button className="primary" disabled={busy || !storage?.directory.trim() || choice === undefined || (!choice?.clone && !validGuestChoice(choice)) || choice?.clone && choice.guest_system === "windows-11" && !choice.editor_terms || Boolean(connectionError)} onClick={nextFromSystem}>{submitting && <LoaderCircle size={16} className="spin" />}下一步：配置代理</button>}
+          {step === "system" && <button className="primary" disabled={busy || !storage?.directory.trim() || choice === undefined || !validGuestChoice(choice) || Boolean(connectionError)} onClick={nextFromSystem}>{submitting && <LoaderCircle size={16} className="spin" />}下一步：配置代理</button>}
           {step === "proxy" && <button className="primary" disabled={busy || proxyDirty || !account?.guest_system && !pending && !validGuestChoice(choice) || needsProxySetup(null, status, proxy) || Boolean(connectionError)} onClick={install}>{submitting ? <LoaderCircle size={16} className="spin" /> : null}开始安装</button>}
           {step === "install" && ready && <button className="primary" disabled={submitting || Boolean(connectionError)} onClick={enter}>进入工作台</button>}
         </footer>

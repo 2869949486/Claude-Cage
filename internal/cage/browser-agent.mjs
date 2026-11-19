@@ -49,10 +49,8 @@ function rememberSelection() {
 }
 const downloadPath = "/home/cage-browser/Downloads";
 mkdirSync(downloadPath, { recursive: true });
-const snapLauncher = "/usr/local/lib/workbench-browser/chromium";
-const snapBrowser = existsSync(snapLauncher);
-const browserBinary = snapBrowser ? snapLauncher : "/usr/bin/chromium";
-const splitDirectory = snapBrowser ? "/var/snap/chromium/common/workbench-extension" : "/usr/local/lib/cage-split";
+const browserBinary = "/usr/bin/chromium";
+const splitDirectory = "/usr/local/lib/cage-split";
 const extensionId = createHash("sha256").update(splitDirectory).digest("hex").slice(0, 32)
   .replace(/./g, c => String.fromCharCode(97 + parseInt(c, 16)));
 const splitURL = `chrome-extension://${extensionId}/control.html`;
@@ -195,7 +193,7 @@ const downloads = new DownloadManager({
     return JSON.parse(output);
   },
 });
-const uploadDirectory = snapBrowser ? "/home/cage-browser/snap/chromium/common/uploads" : "/home/cage-browser/.cage-uploads";
+const uploadDirectory = "/home/cage-browser/.cage-uploads";
 rmSync(uploadDirectory, { recursive: true, force: true });
 const uploadSessions = new Map();
 const uploads = new UploadManager({ directory: uploadDirectory, cdp, changed: () => broadcastState() });

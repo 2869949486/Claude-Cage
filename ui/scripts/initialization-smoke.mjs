@@ -129,7 +129,9 @@ if (evidence) await fs.mkdir(evidence, { recursive: true });
   } finally { await f.browser.close(); }
 }
 
-for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"], ["linux", "ubuntu-22.04"]]) {
+for (const platform of ["darwin", "windows", "linux"]) {
+  // Every host installs the same system; there is nothing to choose.
+  const system = "debian-13";
   let starts = 0, rejectComplete = true;
   let directory = "/preview/cage-state";
   const initialDirectory = platform === "windows" ? "/preview/Cage/CageData" : directory;
@@ -149,14 +151,13 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
         }
         return route.fulfill({ json: { directory, has_environment: false, suggested_directory: directory === "/preview/cage-state" ? initialDirectory : undefined } });
       });
-      await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: true, system, linux_systems: ["ubuntu-22.04"] } }));
-      await page.route("**/api/environment/guest-systems/clone", route => route.fulfill({ json: { key: "matched-image", enough_space: true, minimum_free_gib: 51, free_gib: 120, download_bytes: 19769944180, plan: { host: { system, version: system === "windows-11" ? "25H2" : "26.5", build: "123", edition: "Professional", language: "zh-CN" }, version: "26.5", build: "456", bytes: 19769944180 } } }));
+      await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: false } }));
       await page.route("**/api/start", route => {
         starts++;
         const submitted = route.request().postDataJSON();
         assert.equal(submitted.guest_system, system);
-        if (starts === 1) assert.equal(submitted.clone_key, "matched-image");
-        state.status.job = { id: "install-" + starts, running: true, kind: "guest-install", setup_progress: { system, phase: "image", operation: "download", label: "正在下载系统镜像", received: 25 * 1048576, total: 100 * 1048576, bytes_per_second: 1048576 }, log: "镜像下载已开始" };
+        assert.deepEqual(Object.keys(submitted).filter(key => key !== "guest_system" && key !== "guest_profile"), []);
+        state.status.job = { id: "install-" + starts, running: true, kind: "start", setup_progress: { system, phase: "image", operation: "download", label: "正在下载系统镜像", received: 25 * 1048576, total: 100 * 1048576, bytes_per_second: 1048576 }, log: "镜像下载已开始" };
         return route.fulfill({ json: state.status.job });
       });
       await page.route("**/api/environment/initialization", route => {
@@ -171,7 +172,6 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
   const { page, state, errors, browser } = fixture;
   try {
     assert.equal(await page.getByRole("complementary", { name: "项目与终端" }).count(), 0);
-    const picker = page.getByRole("combobox", { name: "客户机系统" });
     const storage = page.getByRole("region", { name: "环境存储目录" });
     await storage.getByLabel("存储目录", { exact: true }).waitFor();
     assert.equal(await storage.getByLabel("存储目录", { exact: true }).inputValue(), initialDirectory);
@@ -183,26 +183,13 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
         .filter(animation => animation.animationName === "initialization-enter")
         .map(animation => animation.finished));
     });
-    const before = await storage.boundingBox();
-    await picker.click();
-    const option = page.getByRole("option", { name: "自动匹配本机系统版本", exact: true });
-    await option.waitFor();
-    for (const name of [/^Debian/, /^Ubuntu/, /^macOS/, /^Windows/]) assert.equal(await page.getByRole("option", { name }).count(), 1);
-    const expanded = await storage.boundingBox();
-    assert.ok(expanded.y > before.y + 100, "inline system choices must push the storage section down");
-    const menu = await page.getByRole("listbox").boundingBox();
-    assert.ok(menu.x >= 0 && menu.y >= 0 && menu.x + menu.width <= 1280, "inline choices must stay inside the page width");
-    if (evidence) await page.screenshot({ path: `${evidence}/${platform}-systems-inline.png`, fullPage: true });
-    await picker.press("Home"); await picker.press("Enter");
-    await page.getByText("Cage 会检测本机系统版本，在下一步显示匹配的官方镜像、下载量与空间要求。").waitFor();
-    await page.getByText(/系统镜像通过主机网络下载.*系统代理或 TUN/).waitFor();
-    if (system === "windows-11") await page.getByRole("checkbox").check();
+    assert.equal(await page.getByRole("combobox", { name: "客户机系统" }).count(), 0, "a new environment offers no system choice");
+    assert.equal(await page.locator(".guest-system-picker").count(), 0);
     if (evidence) await page.screenshot({ path: `${evidence}/${platform}-system.png`, fullPage: true });
     await page.getByRole("button", { name: "下一步：配置代理" }).click();
     await page.getByRole("heading", { name: "连接你的网络代理" }).waitFor();
-    await page.getByText("根据本机系统版本匹配官方镜像，安装到独立客机中。").waitFor();
     await page.getByRole("button", { name: "上一步", exact: true }).click();
-    await page.getByRole("combobox", { name: "客户机系统" }).getByText("自动匹配本机系统版本").waitFor();
+    await storage.getByLabel("存储目录", { exact: true }).waitFor();
     await page.getByRole("button", { name: "下一步：配置代理" }).click();
     await page.getByRole("button", { name: "开始安装", exact: true }).click();
     const progress = page.getByRole("region", { name: "环境安装进度" });
@@ -252,7 +239,7 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
     await quitDialog.getByRole("button", { name: "取消", exact: true }).click();
     assert.equal(await page.getByRole("heading", { name: "为 Cage 准备独立环境" }).count(), 0);
     assert.deepEqual(errors, []);
-    console.log(`PASS ${platform}: independent initialization, inline keyboard selection, back navigation, progress, refresh, retry, completion gate and reopen`);
+    console.log(`PASS ${platform}: independent initialization without a system choice, back navigation, progress, refresh, retry, completion gate and reopen`);
   } finally { await browser.close(); }
 }
 
@@ -260,7 +247,7 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
   let location = { directory: "/preview/default-state", has_environment: false }, writes = 0, fail = true;
   const f = await createWorkbench({ initialization: { required: true, tracked: true }, beforeNavigate: async (page, state) => {
     state.status.local_vm_storage = true;
-    await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: true, system: "macos", linux_systems: ["ubuntu-22.04"] } }));
+    await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: false } }));
     await page.route("**/api/environment/storage", route => {
       if (route.request().method() === "GET") return route.fulfill({ json: location });
       const body = route.request().postDataJSON();
@@ -299,7 +286,7 @@ for (const [platform, system] of [["darwin", "macos"], ["windows", "windows-11"]
   const f = await createWorkbench({ initialization: { required: true, tracked: true }, beforeNavigate: async (page, state) => {
     state.status.local_vm_storage = true;
     await page.route("**/api/environment/storage", route => route.fulfill({ json: { directory: "/preview/cage-state", has_environment: false } }));
-    await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: true, system: "macos" } }));
+    await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: false } }));
     const nodes = [{ id: "node", name: "本机测试代理", type: "socks5" }, ...Array.from({ length: 244 }, (_, i) => ({ id: `other-${i}`, name: `其他节点 ${i}`, type: "socks5" }))];
     await page.route("**/api/proxy", route => route.fulfill({ json: { active: applied, selected: applied ? "node" : "", sources: imported ? [{ id: "source", name: "自有节点", nodes }] : [], port: 17896, core_available: true } }));
     for (const action of ["import", "route"]) await page.route(`**/api/proxy/${action}`, route => {
