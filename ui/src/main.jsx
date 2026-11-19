@@ -720,10 +720,6 @@ function App() {
         ) {
           lastJob.current = next.job.id;
           await refreshSettings();
-          if (next.job.kind === "guest-install" && !next.job.error) {
-            const install = await api("/environment/guest-systems");
-            if (live && install.activate) setGuestSystem(previous => ({ ...previous, activate:true }));
-          }
           if (next.job.error) notify(next.job.error);
         }
         if (next.ready) {
@@ -1744,15 +1740,9 @@ function App() {
                         disabled={busy || Boolean(connectionError) || (!running && !setupProxy &&
                           ((!account?.guest_system && status.local_vm_storage && !isRemoteClient() && guestSystem === undefined) || !validGuestChoice(guestSystem)))}
                         onClick={(event) => {
-                          if (!running && guestSystem?.activate) {
-                            api("/environment/guest-systems/activate", {}).then(() => native("reconnect")).catch((e) => setToast(e.message));
-                          } else if (!running && setupProxy) openSettings("network");
+                          if (!running && setupProxy) openSettings("network");
                           else if (!running || !status.ready)
-                            startEnvironment(!running && guestSystem?.guest_system === "debian-13" && !guestSystem.clone ? { guest_system: "debian-13" } : !running && guestSystem ? {
-                              guest_system: guestSystem.guest_system, media: guestSystem.media, sha256: guestSystem.sha256,
-                              clone_key: guestSystem.clone_key,
-                              editor_terms: guestSystem.editor_terms,
-                            } : {});
+                            startEnvironment(!running && guestSystem ? { guest_system: guestSystem.guest_system } : {});
                           else if (!workspace)
                             setProjectDialog({ path: "" });
                           else newTerminal(workspace, event.currentTarget);
@@ -1776,8 +1766,7 @@ function App() {
                           : !running
                             ? setupProxy
                               ? "配置网络与代理"
-                              : guestSystem?.activate ? "打开工作台" : guestSystem?.pending ? "继续安装" :
-                                guestSystem && guestSystem.guest_system !== "debian-13" ? "安装客户机" : "启动 Cage 环境"
+                              : guestSystem?.pending ? "继续安装" : "启动 Cage 环境"
                             : !status.ready
                               ? "恢复浏览器"
                               : !workspace
@@ -1839,7 +1828,7 @@ function App() {
                   )}
                   {status.abandoned_guests?.length > 0 && (
                     <div className="start-error" role="status">
-                      <strong>macOS / Windows 客机已不再支持</strong>
+                      <strong>{status.abandoned_guests.map(name => ({ macos: "macOS", windows: "Windows", ubuntu: "Ubuntu" })[name] || name).join(" / ")} 客机已不再支持</strong>
                       <p>原有客机数据仍原样保留在磁盘上，未做任何改动；如不再需要，可以手动删除。</p>
                     </div>
                   )}

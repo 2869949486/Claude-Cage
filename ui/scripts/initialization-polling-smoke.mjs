@@ -7,7 +7,7 @@ const f = await createWorkbench({
   initialization: { required: true, tracked: true, started: false },
   beforeNavigate: async (page, state) => {
     Object.assign(state.status, { ready: false, vm_running: false, job: {} });
-    await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: true, system: "macos", linux_systems: ["debian"] } }));
+    await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: false } }));
     await page.route("**/api/environment/storage", route => route.fulfill({ json: { directory: "/preview/walkthrough/state", has_environment: false } }));
     await page.route("**/api/environment/guest-profile", route => route.fulfill({ json: { editable: false } }));
     await page.route("**/api/proxy", async route => {

@@ -9,7 +9,7 @@ for (const platform of ["darwin", "windows", "linux"]) {
     clientContext: { mode: "local", connection_id: "local", client_platform: platform, server_platform: platform },
     initialization: { required: true, tracked: true, started: false },
     beforeNavigate: async (page, state) => {
-      await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: true, system: "macos", linux_systems: ["debian"] } }));
+      await page.route("**/api/environment/guest-systems", route => route.fulfill({ json: { fresh: true, available: false } }));
       await page.route("**/api/environment/storage", route => route.fulfill({ json: { directory: "/preview/state", has_environment: false } }));
       await page.route("**/api/environment/guest-profile", route => route.fulfill({ json: { editable: false } }));
       await page.route("**/api/proxy", route => route.fulfill({ json: proxy }));
