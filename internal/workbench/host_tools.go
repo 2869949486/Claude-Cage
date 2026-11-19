@@ -20,6 +20,7 @@ import (
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/hostbridge"
 	"github.com/sylvinus/agent-vm/internal/paths"
+	"github.com/sylvinus/agent-vm/internal/version"
 )
 
 // hostToolsPort is where the environment reaches the tools, on its own
@@ -124,7 +125,7 @@ func (s *Server) startHostTools() error {
 	s.mu.Lock()
 	off := hostPluginsOff(s.preferences)
 	s.mu.Unlock()
-	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, off, approvals.approveTool)
+	external, failures := hostbridge.LoadPlugins(ctx, filepath.Join(s.profile, "plugins"), []string{"run_command", "command_job"}, off, version.Version, approvals.approveTool)
 	var problems []string
 	for _, failure := range failures {
 		diagnostics.Log("warn", "host-tools", fmt.Sprintf("plugin error=%v", failure))

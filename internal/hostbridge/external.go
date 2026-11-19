@@ -1,7 +1,6 @@
 package hostbridge
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -27,31 +26,35 @@ const ManifestFile = "plugin.json"
 // on its standard input and output.
 type Manifest struct {
 	// Name identifies the plugin: lowercase letters, digits and hyphens.
-	Name        string `json:"name"`
+	Name string `json:"name"`
+	// DisplayName is the name shown to the user; Name when empty.
+	DisplayName string `json:"displayName,omitempty"`
 	Version     string `json:"version"`
 	Description string `json:"description"`
-	// Platforms lists the systems the plugin runs on, as darwin, linux or
+	// Engines is required with Contributes.
+	Engines *Engines `json:"engines,omitempty"`
+	// Kind is host or guest. After parsing it is never empty.
+	Kind string `json:"kind,omitempty"`
+	// Platforms lists the systems a host plugin runs on, as darwin, linux or
 	// windows. Empty means all.
 	Platforms []string `json:"platforms,omitempty"`
 	// Permissions declares what the plugin does on the computer, for the
 	// user to read before enabling it. See KnownPermissions.
-	Permissions []string `json:"permissions"`
-	// Command is the program and its arguments. A relative program path is
-	// taken from the plugin's directory.
-	Command []string `json:"command"`
+	Permissions      []string `json:"permissions"`
+	ActivationEvents []string `json:"activationEvents,omitempty"`
+	// Command is the first format's single MCP server. After parsing, read
+	// Contributes.MCPServers instead: it holds this one too.
+	Command []string `json:"command,omitempty"`
 	// Icon is a PNG or SVG picture inside the plugin's directory, shown
 	// beside its name. Optional.
 	Icon string `json:"icon,omitempty"`
+	// Contributes makes the manifest the second format. After parsing it is
+	// never nil.
+	Contributes *Contributes `json:"contributes,omitempty"`
 }
 
 // validIcon reports whether name is a picture path inside the plugin.
-func validIcon(name string) bool {
-	if name == "" || len(name) > 200 || path.IsAbs(name) || path.Clean(name) != name || strings.Contains(name, "\\") || name == ".." || strings.HasPrefix(name, "../") {
-		return false
-	}
-	extension := strings.ToLower(path.Ext(name))
-	return extension == ".png" || extension == ".svg"
-}
+func validIcon(name string) bool { return validFile(name, ".png", ".svg") }
 
 // IconLimit is the largest picture shown for a plugin.
 const IconLimit = 256 << 10
@@ -96,39 +99,6 @@ func LoadManifest(dir string) (Manifest, error) {
 	return parseManifest(data)
 }
 
-func parseManifest(data []byte) (Manifest, error) {
-	var m Manifest
-	decoder := json.NewDecoder(bytes.NewReader(data))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&m); err != nil {
-		return Manifest{}, fmt.Errorf("%s: %w", ManifestFile, err)
-	}
-	switch {
-	case !pluginName.MatchString(m.Name) || len(m.Name) > 40:
-		return Manifest{}, fmt.Errorf("%s: name must be lowercase letters, digits and hyphens", ManifestFile)
-	case m.Version == "":
-		return Manifest{}, fmt.Errorf("%s: version is missing", ManifestFile)
-	case len(m.Command) == 0 || m.Command[0] == "":
-		return Manifest{}, fmt.Errorf("%s: command is missing", ManifestFile)
-	case m.Permissions == nil:
-		return Manifest{}, fmt.Errorf("%s: permissions must be declared, as an empty list if there are none", ManifestFile)
-	}
-	for _, permission := range m.Permissions {
-		if !slices.Contains(KnownPermissions, permission) {
-			return Manifest{}, fmt.Errorf("%s: unknown permission %q", ManifestFile, permission)
-		}
-	}
-	if m.Icon != "" && !validIcon(m.Icon) {
-		return Manifest{}, fmt.Errorf("%s: icon must be a PNG or SVG file inside the plugin", ManifestFile)
-	}
-	for _, platform := range m.Platforms {
-		if !slices.Contains([]string{"darwin", "linux", "windows"}, platform) {
-			return Manifest{}, fmt.Errorf("%s: unknown platform %q", ManifestFile, platform)
-		}
-	}
-	return m, nil
-}
-
 // Supported reports whether the plugin runs on this system.
 func (m Manifest) Supported() bool {
 	return len(m.Platforms) == 0 || slices.Contains(m.Platforms, runtime.GOOS)
@@ -166,12 +136,16 @@ func (e *External) startLocked(ctx context.Context) error {
 	if !e.Manifest.Supported() {
 		return fmt.Errorf("plugin %s does not support %s", e.Manifest.Name, runtime.GOOS)
 	}
-	program := e.Manifest.Command[0]
+	command := e.Manifest.serverCommand()
+	if len(command) == 0 {
+		return fmt.Errorf("plugin %s has no MCP server", e.Manifest.Name)
+	}
+	program := command[0]
 	if !filepath.IsAbs(program) && (filepath.Base(program) != program || fileExists(filepath.Join(e.Dir, program))) {
 		program = filepath.Join(e.Dir, program)
 	}
 	// The program outlives the call that starts it.
-	cmd := exec.Command(program, e.Manifest.Command[1:]...)
+	cmd := exec.Command(program, command[1:]...)
 	cmd.Dir = e.Dir
 	cmd.Env = userEnv()
 	client := mcp.NewClient(&mcp.Implementation{Name: "computer", Version: "1"}, nil)
@@ -308,8 +282,10 @@ func sameTools(a, b []*mcp.Tool) bool {
 // LoadPlugins starts every plugin found in the subdirectories of dir that
 // supports this system. A plugin that fails to load, or offers a tool name
 // already taken (taken lists those of the built-in plugins), is left out and
-// reported; the others still load. Those named in off are not started.
-func LoadPlugins(ctx context.Context, dir string, taken, off []string, approve func(context.Context, ToolRequest) error) ([]*External, []error) {
+// reported; the others still load. Those named in off are not started, nor
+// are those this application at version cannot run (see Unavailable), nor a
+// plugin handling a link scheme that one loaded before it already handles.
+func LoadPlugins(ctx context.Context, dir string, taken, off []string, version string, approve func(context.Context, ToolRequest) error) ([]*External, []error) {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -320,6 +296,7 @@ func LoadPlugins(ctx context.Context, dir string, taken, off []string, approve f
 	var loaded []*External
 	var failures []error
 	names := slices.Clone(taken)
+	schemes := map[string]string{}
 	for _, entry := range entries {
 		if !entry.IsDir() {
 			continue
@@ -336,7 +313,24 @@ func LoadPlugins(ctx context.Context, dir string, taken, off []string, approve f
 			failures = append(failures, fmt.Errorf("%s: the directory must be named after the plugin, %s", entry.Name(), manifest.Name))
 			continue
 		}
-		if !manifest.Supported() || slices.Contains(off, manifest.Name) {
+		if !manifest.Supported() || slices.Contains(off, manifest.Name) || manifest.Unavailable(version) == NeedsNewerApplication {
+			continue
+		}
+		conflict := ""
+		for _, scheme := range manifest.Schemes() {
+			if other, used := schemes[scheme]; used {
+				conflict = fmt.Sprintf("plugin %s: links of scheme %s are already handled by %s", manifest.Name, scheme, other)
+				break
+			}
+		}
+		if conflict != "" {
+			failures = append(failures, errors.New(conflict))
+			continue
+		}
+		for _, scheme := range manifest.Schemes() {
+			schemes[scheme] = manifest.Name
+		}
+		if manifest.Unavailable(version) != "" || len(manifest.serverCommand()) == 0 {
 			continue
 		}
 		plugin := &External{Manifest: manifest, Dir: path, Approve: approve}

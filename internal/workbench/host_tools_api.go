@@ -17,15 +17,20 @@ import (
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/hostbridge"
 	"github.com/sylvinus/agent-vm/internal/hostproxy"
+	"github.com/sylvinus/agent-vm/internal/version"
 )
 
 // hostPluginView is one plugin as the plugin page shows it.
 type hostPluginView struct {
 	Name        string   `json:"name"`
+	DisplayName string   `json:"display_name,omitempty"`
 	Version     string   `json:"version,omitempty"`
 	Description string   `json:"description,omitempty"`
 	Permissions []string `json:"permissions"`
-	BuiltIn     bool     `json:"built_in,omitempty"`
+	// Kind is host or guest: where the plugin's programs run.
+	Kind        string               `json:"kind,omitempty"`
+	Contributes *hostContributesView `json:"contributes,omitempty"`
+	BuiltIn     bool                 `json:"built_in,omitempty"`
 	// Icon says the plugin has a picture, served by the icon route.
 	Icon      bool `json:"icon,omitempty"`
 	Supported bool `json:"supported"`
@@ -35,6 +40,62 @@ type hostPluginView struct {
 	Tools   []hostbridge.ToolInfo `json:"tools,omitempty"`
 	// Problem is why the plugin's folder cannot be used.
 	Problem string `json:"problem,omitempty"`
+}
+
+// hostContributesView is what a plugin adds, as far as the page shows it.
+type hostContributesView struct {
+	Views       []hostViewView   `json:"views"`
+	URIHandlers []hostSchemeView `json:"uri_handlers"`
+	MCPServers  []hostServerView `json:"mcp_servers"`
+}
+
+type hostViewView struct {
+	ID       string   `json:"id"`
+	Title    string   `json:"title"`
+	Icon     bool     `json:"icon"`
+	OpenURLs []string `json:"open_urls"`
+}
+
+type hostSchemeView struct {
+	Scheme string `json:"scheme"`
+}
+
+type hostServerView struct {
+	ID string `json:"id"`
+}
+
+func hostContributes(c *hostbridge.Contributes) *hostContributesView {
+	if c == nil {
+		return nil
+	}
+	view := &hostContributesView{Views: []hostViewView{}, URIHandlers: []hostSchemeView{}, MCPServers: []hostServerView{}}
+	for _, page := range c.Views {
+		urls := page.OpenURLs
+		if urls == nil {
+			urls = []string{}
+		}
+		view.Views = append(view.Views, hostViewView{ID: page.ID, Title: page.Title, Icon: page.Icon != "", OpenURLs: urls})
+	}
+	for _, handler := range c.URIHandlers {
+		view.URIHandlers = append(view.URIHandlers, hostSchemeView{Scheme: handler.Scheme})
+	}
+	for _, server := range c.MCPServers {
+		view.MCPServers = append(view.MCPServers, hostServerView{ID: server.ID})
+	}
+	return view
+}
+
+// hostPluginUnavailable says, for the user, why a plugin is not started.
+func hostPluginUnavailable(reason string) string {
+	switch reason {
+	case hostbridge.NeedsNewerApplication:
+		return "需要更新 Cage 才能使用这个插件"
+	case hostbridge.GuestNotSupported:
+		return "这类插件暂不支持，需要更新 Cage"
+	case hostbridge.TooManyServers:
+		return "暂只支持一个 MCP 服务"
+	}
+	return ""
 }
 
 type hostToolsView struct {
@@ -95,11 +156,15 @@ func (s *Server) hostToolsView() hostToolsView {
 			view.Plugins = append(view.Plugins, hostPluginView{Name: entry.Name(), Permissions: []string{}, Problem: err.Error()})
 			continue
 		}
-		plugin := hostPluginView{Name: manifest.Name, Version: manifest.Version, Description: manifest.Description,
-			Permissions: manifest.Permissions, Supported: manifest.Supported(), Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
+		unavailable := manifest.Unavailable(version.Version)
+		plugin := hostPluginView{Name: manifest.Name, DisplayName: manifest.DisplayName, Version: manifest.Version, Description: manifest.Description,
+			Permissions: manifest.Permissions, Kind: manifest.Kind, Contributes: hostContributes(manifest.Contributes),
+			Supported: manifest.Supported() && unavailable == "", Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
 		if manifest.Name != entry.Name() {
 			plugin.Problem = "文件夹名称须与插件名称 " + manifest.Name + " 一致"
 			plugin.Name = entry.Name()
+		} else if unavailable != "" {
+			plugin.Problem = hostPluginUnavailable(unavailable)
 		} else if list, ok := loaded[manifest.Name]; ok {
 			plugin.Loaded, plugin.Tools = true, list
 		}
@@ -297,12 +362,17 @@ func (s *Server) hostMarketEntries(ctx context.Context, refresh bool) ([]hostbri
 }
 
 type hostMarketEntryView struct {
-	Name        string   `json:"name"`
-	Version     string   `json:"version"`
-	Description string   `json:"description,omitempty"`
-	Permissions []string `json:"permissions"`
-	Supported   bool     `json:"supported"`
-	Bytes       int64    `json:"bytes"`
+	Name        string               `json:"name"`
+	DisplayName string               `json:"display_name,omitempty"`
+	Version     string               `json:"version"`
+	Description string               `json:"description,omitempty"`
+	Permissions []string             `json:"permissions"`
+	Kind        string               `json:"kind,omitempty"`
+	Contributes *hostContributesView `json:"contributes,omitempty"`
+	// Problem is why the plugin cannot be used with this application.
+	Problem   string `json:"problem,omitempty"`
+	Supported bool   `json:"supported"`
+	Bytes     int64  `json:"bytes"`
 	// InstalledVersion is empty when the plugin is not installed.
 	InstalledVersion string `json:"installed_version"`
 	Update           bool   `json:"update"`
@@ -362,8 +432,10 @@ func (s *Server) getHostMarket(w http.ResponseWriter, r *http.Request) {
 		view.Error = "暂时无法读取插件市场，请检查主机网络或代理后重试"
 	}
 	for _, entry := range entries {
-		item := hostMarketEntryView{Name: entry.Name, Version: entry.Version, Description: entry.Description,
-			Permissions: entry.Permissions, Supported: entry.Supported(), Bytes: entry.Bytes, Icon: entry.Icon != ""}
+		unavailable := hostbridge.Manifest{Kind: entry.Kind, Engines: entry.Engines, Contributes: entry.Contributes}.Unavailable(version.Version)
+		item := hostMarketEntryView{Name: entry.Name, DisplayName: entry.DisplayName, Version: entry.Version, Description: entry.Description,
+			Permissions: entry.Permissions, Kind: entry.Kind, Contributes: hostContributes(entry.Contributes), Problem: hostPluginUnavailable(unavailable),
+			Supported: entry.Supported() && unavailable == "", Bytes: entry.Bytes, Icon: entry.Icon != ""}
 		if manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), entry.Name)); err == nil {
 			item.InstalledVersion = manifest.Version
 			item.Update = manifest.Version != entry.Version
@@ -390,6 +462,9 @@ func (s *Server) installFromMarket(ctx context.Context, name string, replace boo
 	}
 	if !entries[index].Supported() {
 		return errors.New("这个插件不支持此系统")
+	}
+	if !entries[index].EngineSatisfied(version.Version) {
+		return errors.New("需要更新 Cage 才能安装这个插件")
 	}
 	aside := ""
 	if _, statErr := os.Lstat(filepath.Join(s.hostPluginDir(), name)); statErr == nil {

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 )
@@ -39,13 +40,22 @@ var CommunityMarket = Market{
 // MarketEntry is one plugin in the list.
 type MarketEntry struct {
 	Name        string   `json:"name"`
+	DisplayName string   `json:"displayName,omitempty"`
 	Version     string   `json:"version"`
 	Description string   `json:"description"`
 	Platforms   []string `json:"platforms,omitempty"`
 	Permissions []string `json:"permissions"`
-	Archive     string   `json:"archive"`
-	SHA256      string   `json:"sha256"`
-	Bytes       int64    `json:"bytes"`
+	// Kind, Engines and Contributes repeat the plugin's manifest. Kind is
+	// host when the list leaves it out.
+	Kind        string       `json:"kind,omitempty"`
+	Engines     *Engines     `json:"engines,omitempty"`
+	Contributes *Contributes `json:"contributes,omitempty"`
+	// Target is the system and processor this archive is for, as Target
+	// gives it. Empty means any.
+	Target  string `json:"target,omitempty"`
+	Archive string `json:"archive"`
+	SHA256  string `json:"sha256"`
+	Bytes   int64  `json:"bytes"`
 	// Icon is the address of the plugin's picture, if it has one.
 	Icon string `json:"icon,omitempty"`
 }
@@ -61,8 +71,15 @@ func (m Market) FetchIcon(ctx context.Context, client *http.Client, entry Market
 
 // Supported reports whether the plugin runs on this system.
 func (e MarketEntry) Supported() bool {
-	return Manifest{Platforms: e.Platforms}.Supported()
+	return Manifest{Platforms: e.Platforms}.Supported() && (e.Target == "" || e.Target == Target(e.Kind))
 }
+
+// EngineSatisfied reports whether the application at version can run it.
+func (e MarketEntry) EngineSatisfied(version string) bool {
+	return Manifest{Engines: e.Engines}.EngineSatisfied(version)
+}
+
+var marketTarget = regexp.MustCompile(`^(darwin|linux|win32)-(x64|arm64)$`)
 
 const (
 	marketIndexLimit   = 1 << 20
@@ -89,22 +106,38 @@ func (m Market) Fetch(ctx context.Context, client *http.Client) ([]MarketEntry, 
 		return nil, fmt.Errorf("plugin list has version %d; this application reads version 1", index.Version)
 	}
 	var entries []MarketEntry
-	seen := map[string]bool{}
+	seen := map[string]int{}
 	for _, entry := range index.Plugins {
-		if seen[entry.Name] || !m.valid(entry) {
+		if entry.Kind == "" {
+			entry.Kind = KindHost
+		}
+		// A plugin may be listed once for each target; the one for this
+		// system is kept, or the first if none is.
+		if !m.valid(entry) {
 			continue
 		}
-		seen[entry.Name] = true
-		if entry.Permissions == nil {
-			entry.Permissions = []string{}
+		if at, listed := seen[entry.Name]; listed {
+			if !entries[at].Supported() && entry.Supported() {
+				entries[at] = m.shown(entry)
+			}
+			continue
 		}
-		// A picture from anywhere else is not shown; the plugin still is.
-		if rest := strings.TrimPrefix(entry.Icon, m.IconPrefix+entry.Name+"/"); m.IconPrefix == "" || rest == entry.Icon || !validIcon(rest) || strings.ContainsAny(rest, "?#%") {
-			entry.Icon = ""
-		}
-		entries = append(entries, entry)
+		seen[entry.Name] = len(entries)
+		entries = append(entries, m.shown(entry))
 	}
 	return entries, nil
+}
+
+// shown is the entry as kept from the list.
+func (m Market) shown(entry MarketEntry) MarketEntry {
+	if entry.Permissions == nil {
+		entry.Permissions = []string{}
+	}
+	// A picture from anywhere else is not shown; the plugin still is.
+	if rest := strings.TrimPrefix(entry.Icon, m.IconPrefix+entry.Name+"/"); m.IconPrefix == "" || rest == entry.Icon || !validIcon(rest) || strings.ContainsAny(rest, "?#%") {
+		entry.Icon = ""
+	}
+	return entry
 }
 
 func (m Market) valid(entry MarketEntry) bool {
@@ -125,7 +158,13 @@ func (m Market) valid(entry MarketEntry) bool {
 			return false
 		}
 	}
-	return true
+	if entry.Kind != "" && entry.Kind != KindHost && entry.Kind != KindGuest || len(entry.DisplayName) > 80 {
+		return false
+	}
+	if entry.Engines != nil && !engineRange.MatchString(entry.Engines.Cage) {
+		return false
+	}
+	return entry.Target == "" || marketTarget.MatchString(entry.Target)
 }
 
 // Install downloads the entry's archive, checks it against the digest in the
@@ -163,7 +202,7 @@ func (m Market) Install(ctx context.Context, client *http.Client, entry MarketEn
 	if err != nil {
 		return err
 	}
-	if manifest.Name != entry.Name || manifest.Version != entry.Version {
+	if manifest.Name != entry.Name || manifest.Version != entry.Version || entry.Kind != "" && manifest.Kind != entry.Kind {
 		return errors.New("the plugin's own manifest does not match the plugin list")
 	}
 	if !slices.Equal(slices.Sorted(slices.Values(manifest.Permissions)), slices.Sorted(slices.Values(entry.Permissions))) {
