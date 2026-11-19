@@ -1,8 +1,16 @@
 package workbench
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
+	"compress/gzip"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -206,5 +214,71 @@ func TestHostToolsViewListsPluginFolders(t *testing.T) {
 	}
 	if byName["broken"].Problem == "" || byName["renamed"].Problem == "" || !byName["commands"].BuiltIn {
 		t.Fatalf("plugins %+v", view.Plugins)
+	}
+}
+
+// A newer version replaces the installed one, which is kept aside; when the
+// new one cannot be installed the old one is put back.
+func TestInstallFromMarketReplacesAndRestores(t *testing.T) {
+	manifest := func(version string) string {
+		return `{"name":"notes","version":"` + version + `","permissions":[],"command":["python3","server.py"]}`
+	}
+	pack := func(version string) []byte {
+		var packed bytes.Buffer
+		compressed := gzip.NewWriter(&packed)
+		archive := tar.NewWriter(compressed)
+		body := manifest(version)
+		_ = archive.WriteHeader(&tar.Header{Name: "notes/plugin.json", Typeflag: tar.TypeReg, Mode: 0o644, Size: int64(len(body))})
+		_, _ = archive.Write([]byte(body))
+		_ = archive.Close()
+		_ = compressed.Close()
+		return packed.Bytes()
+	}
+	good := pack("2.0.0")
+	digest := sha256.Sum256(good)
+	served := good
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { _, _ = w.Write(served) }))
+	defer server.Close()
+	previous := hostbridge.CommunityMarket
+	hostbridge.CommunityMarket = hostbridge.Market{IndexURL: server.URL + "/index.json", ArchivePrefix: server.URL + "/dist/"}
+	defer func() { hostbridge.CommunityMarket = previous }()
+
+	s := &Server{profile: t.TempDir()}
+	s.hostMarket.fetched = time.Now()
+	s.hostMarket.entries = []hostbridge.MarketEntry{{Name: "notes", Version: "2.0.0", Permissions: []string{},
+		Archive: server.URL + "/dist/notes-2.0.0.tar.gz", SHA256: hex.EncodeToString(digest[:]), Bytes: int64(len(good))}}
+	installed := filepath.Join(s.hostPluginDir(), "notes")
+	if err := os.MkdirAll(installed, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(installed, hostbridge.ManifestFile), []byte(manifest("1.0.0")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	version := func() string {
+		m, err := hostbridge.LoadManifest(installed)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return m.Version
+	}
+	if err := s.installFromMarket(context.Background(), "notes", false); err == nil || version() != "1.0.0" {
+		t.Fatalf("replaced without being asked: %v", err)
+	}
+	served = pack("3.0.0") // not what the list's digest is for
+	if err := s.installFromMarket(context.Background(), "notes", true); err == nil || version() != "1.0.0" {
+		t.Fatalf("a failed update did not put the old version back: %v", err)
+	}
+	if kept, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "*")); len(kept) != 0 {
+		t.Fatalf("old version left aside after being restored: %v", kept)
+	}
+	served = good
+	if err := s.installFromMarket(context.Background(), "notes", true); err != nil || version() != "2.0.0" {
+		t.Fatalf("update: %v", err)
+	}
+	if kept, _ := filepath.Glob(filepath.Join(s.profile, "plugins-removed", "notes-*", hostbridge.ManifestFile)); len(kept) != 1 {
+		t.Fatalf("old version was not kept: %v", kept)
+	}
+	if err := s.installFromMarket(context.Background(), "missing", false); err == nil {
+		t.Fatal("installed a plugin the list does not have")
 	}
 }
