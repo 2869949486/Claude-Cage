@@ -102,6 +102,8 @@ type Server struct {
 	hostMarket                                       hostMarketCache
 	hostGrants                                       *hostGrants
 	hostGrantsOnce                                   sync.Once
+	hostViewMu                                       sync.Mutex
+	hostViewKeyData                                  []byte
 	projectErrors                                    []projectShareError
 	clientMounts                                     map[string]*guestClientMount
 	clientWorkspace                                  string

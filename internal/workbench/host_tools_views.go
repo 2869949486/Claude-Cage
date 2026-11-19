@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"path"
@@ -15,6 +16,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/hostbridge"
 	"github.com/sylvinus/agent-vm/internal/version"
 )
@@ -40,12 +42,71 @@ var hostViewTypes = map[string]string{
 	".wasm": "application/wasm",
 }
 
-// hostViewKey is the path segment that stands for the plugin's pages while
-// this application runs.
+// hostViewProfile is the configuration folder the plugins are in. The
+// window of the desktop application is served by a process of its own, with
+// its own folder; the pages it shows are those of this computer's
+// environment, whose folder holds the plugins.
+func (s *Server) hostViewProfile() string {
+	if s.desktopEntry && s.appUpdateConfigPath != "" {
+		return filepath.Dir(s.appUpdateConfigPath)
+	}
+	return s.profile
+}
+
+// hostViewSecret is what the pages' addresses are derived from. It is kept
+// in the configuration folder so that the process that hands out an address
+// and the one that serves it, which may differ, agree on it. Only the
+// process that runs the environment creates it.
+func (s *Server) hostViewSecret() []byte {
+	s.hostViewMu.Lock()
+	defer s.hostViewMu.Unlock()
+	if len(s.hostViewKeyData) > 0 {
+		return s.hostViewKeyData
+	}
+	path := filepath.Join(s.hostViewProfile(), "plugin-views.key")
+	data, err := os.ReadFile(path)
+	if secret := strings.TrimSpace(string(data)); err == nil && len(secret) >= 32 {
+		s.hostViewKeyData = []byte(secret)
+		return s.hostViewKeyData
+	}
+	if s.desktopEntry {
+		return nil
+	}
+	secret := randomToken()
+	if err := os.WriteFile(path, []byte(secret+"\n"), 0o600); err != nil {
+		// For this start only; the desktop window's own process cannot
+		// then serve the pages.
+		diagnostics.Log("warn", "host-tools", fmt.Sprintf("page key error=%v", err))
+	}
+	s.hostViewKeyData = []byte(secret)
+	return s.hostViewKeyData
+}
+
+// hostViewKey is the path segment that stands for the plugin's pages. Empty
+// when there is nothing to derive it from, which matches no address.
 func (s *Server) hostViewKey(plugin string) string {
-	mac := hmac.New(sha256.New, []byte(s.token))
+	secret := s.hostViewSecret()
+	if len(secret) == 0 {
+		return ""
+	}
+	mac := hmac.New(sha256.New, secret)
 	mac.Write([]byte("plugin-view\x00" + plugin))
 	return hex.EncodeToString(mac.Sum(nil))[:32]
+}
+
+// hostViewPluginsOff are the plugins turned off, read from the folder when
+// this process is not the one that keeps the preferences.
+func (s *Server) hostViewPluginsOff() []string {
+	if !s.desktopEntry {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		return hostPluginsOff(s.preferences)
+	}
+	var saved Preferences
+	if data, err := os.ReadFile(filepath.Join(s.hostViewProfile(), "workbench.json")); err == nil {
+		_ = json.Unmarshal(data, &saved)
+	}
+	return hostPluginsOff(saved)
 }
 
 func (s *Server) hostViewURL(plugin, view string) string {
@@ -58,10 +119,8 @@ func (s *Server) hostViewManifest(plugin string) (hostbridge.Manifest, bool) {
 	if plugin == "" || plugin != filepath.Base(plugin) || strings.HasPrefix(plugin, ".") {
 		return hostbridge.Manifest{}, false
 	}
-	manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), plugin))
-	s.mu.Lock()
-	off := hostPluginsOff(s.preferences)
-	s.mu.Unlock()
+	manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostViewProfile(), "plugins", plugin))
+	off := s.hostViewPluginsOff()
 	if err != nil || manifest.Name != plugin || !manifest.Supported() || manifest.Unavailable(version.Version, true) != "" || slices.Contains(off, plugin) {
 		return hostbridge.Manifest{}, false
 	}
@@ -91,11 +150,11 @@ func (s *Server) servePluginView(w http.ResponseWriter, r *http.Request) {
 	plugin, key, id, rest := parts[0], parts[1], parts[2], parts[3]
 	manifest, usable := s.hostViewManifest(plugin)
 	view, found := hostView(manifest, id)
-	if !usable || !found || !hmac.Equal([]byte(key), []byte(s.hostViewKey(plugin))) {
+	if expected := s.hostViewKey(plugin); !usable || !found || expected == "" || !hmac.Equal([]byte(key), []byte(expected)) {
 		http.NotFound(w, r)
 		return
 	}
-	root := filepath.Join(s.hostPluginDir(), plugin)
+	root := filepath.Join(s.hostViewProfile(), "plugins", plugin)
 	// Inside the folder of the page's entry, and no part of the way there a
 	// link out of it.
 	if rest != "" && (rest != path.Clean(rest) || rest == ".." || strings.HasPrefix(rest, "../") || path.IsAbs(rest) || strings.Contains(rest, "\\")) {

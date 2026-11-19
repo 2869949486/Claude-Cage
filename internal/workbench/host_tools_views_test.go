@@ -83,6 +83,19 @@ func TestPluginViewFilesAreServedConfined(t *testing.T) {
 			t.Errorf("POST: %d", post.Code)
 		}
 	}
+	// The desktop window's own process, with a folder of its own, serves the
+	// same address: it finds the plugins and the key beside the
+	// environment's configuration.
+	entry := &Server{profile: t.TempDir(), token: "another-token-another-token-another-0", origin: "http://localhost:4321",
+		desktopEntry: true, appUpdateConfigPath: filepath.Join(s.profile, "config.json")}
+	shown := httptest.NewRecorder()
+	entry.servePluginView(shown, httptest.NewRequest("GET", base, nil))
+	if shown.Code != 200 || !strings.Contains(shown.Header().Get("Content-Security-Policy"), "frame-ancestors http://localhost:4321") {
+		t.Fatalf("the desktop window's process: %d %s", shown.Code, shown.Header().Get("Content-Security-Policy"))
+	}
+	if info, err := os.Stat(filepath.Join(s.profile, "plugin-views.key")); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("key file: %v %v", info, err)
+	}
 	// Turned off, the plugin's pages are gone and no address is given out.
 	s.preferences.HostPluginsOff = "notes"
 	if response := get(base); response.Code != http.StatusNotFound {
