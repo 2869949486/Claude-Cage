@@ -568,6 +568,12 @@ func main() {
 			}
 		}
 	}()
+	// As an MCP server, for a page of its own; otherwise the line protocol
+	// the workbench has always spoken.
+	if len(os.Args) == 2 && os.Args[1] == "mcp" {
+		serveMCP(n, os.Stdin, os.Stdout)
+		return
+	}
 	scanner := bufio.NewScanner(os.Stdin)
 	scanner.Buffer(make([]byte, 4096), 16384)
 	for scanner.Scan() {
