@@ -26,17 +26,20 @@ type Installation struct {
 	EditorTerms bool           `json:"editor_terms,omitempty"`
 	ID          uuid.UUID      `json:"id"`
 	Source      hostimage.Plan `json:"source,omitzero"`
-	// Empty preserves legacy host-clone records. LinuxImageSource selects a
-	// catalog image independently of the physical host OS.
+	// Empty marks a host-matched image. LinuxImageSource marks the catalog
+	// Ubuntu image of earlier versions.
 	SourceKind string `json:"source_kind,omitempty"`
 }
 
 const installRecord = "guest-install.json"
+
+// LinuxImageSource and Ubuntu2204 identify the catalog Ubuntu guest earlier
+// versions installed. They remain so that those records can still be read.
 const LinuxImageSource = "linux-image"
 const Ubuntu2204 = "ubuntu-22.04"
 
 func (i Installation) Validate() error {
-	if i.Version != 1 || i.ID == uuid.Nil || (i.System != MacOS && i.System != Windows11 && !hostimage.IsLinux(i.System)) {
+	if i.Version != 1 || i.ID == uuid.Nil || (i.System != MacOS && i.System != Windows11 && !hostimage.IsLinux(i.System) && !hostimage.AbandonedLinux(i.System)) {
 		return errors.New("客户机安装记录无效")
 	}
 	if i.SourceKind != "" && (i.SourceKind != LinuxImageSource || i.System != Ubuntu2204 || i.Source.Host.System != i.System) {
@@ -54,7 +57,7 @@ func (i Installation) Validate() error {
 		}
 		return i.Source.Validate()
 	}
-	if hostimage.IsLinux(i.System) {
+	if hostimage.IsLinux(i.System) || hostimage.AbandonedLinux(i.System) {
 		return errors.New("缺少 Linux 本机系统安装来源")
 	}
 	if i.System == MacOS {
@@ -234,7 +237,7 @@ func ClearUnstartedInstallation(profile string, id uuid.UUID) error {
 	if !canClear {
 		return errors.New("已开始创建客户机，请继续原安装")
 	}
-	if hostimage.IsLinux(pending.System) {
+	if hostimage.IsLinux(pending.System) || hostimage.AbandonedLinux(pending.System) {
 		if err := hostimage.ClearLinuxTemplate(filepath.Join(profile, "state"), pending.Source); err != nil {
 			return err
 		}

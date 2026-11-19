@@ -104,7 +104,7 @@ func TestImageProgressKeepsSystemAndSeparatesVerification(t *testing.T) {
 			t.Errorf("invalid progress accepted: %s", line)
 		}
 	}
-	for _, system := range []string{"debian-12", "debian-13", "ubuntu-22.04", "ubuntu-24.04"} {
+	for _, system := range []string{"debian-12", "debian-13"} {
 		p := parseSetupProgress("CAGE_GUEST_BYTES " + system + " download 1 10")
 		if p == nil || p.Total != 10 || p.System != system {
 			t.Errorf("missing shared progress for %s", system)

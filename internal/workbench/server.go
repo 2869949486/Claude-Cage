@@ -374,7 +374,6 @@ func (s *Server) handler() http.Handler {
 	mux.HandleFunc("POST /api/environment/guest-profile/preview", s.guestProfileOptions)
 	s.registerCacheMaintenance(mux)
 	mux.HandleFunc("GET /api/environment/guest-systems", s.guestInstallation)
-	mux.HandleFunc("GET /api/environment/guest-systems/clone", s.hostClone)
 	mux.HandleFunc("DELETE /api/environment/guest-systems", s.guestInstallation)
 	mux.HandleFunc("GET /api/environment/storage", s.environmentStorage)
 	mux.HandleFunc("POST /api/environment/storage", s.environmentStorage)
@@ -756,12 +755,8 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	if input.System == guestos.MacOS || input.System == guestos.Windows11 {
+	if abandonedGuestSystem(input.System) {
 		http.Error(w, abandonedGuestMessage(input.System), http.StatusConflict)
-		return
-	}
-	if input.CloneKey != "" {
-		s.beginGuestInstall(w, r, input)
 		return
 	}
 	pending, err := guestos.LoadInstallation(s.profile)
@@ -783,16 +778,16 @@ func (s *Server) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	boundSystem, err := s.installedLinuxSystem()
+	if abandoned := new(hostimage.AbandonedSystemError); errors.As(err, &abandoned) {
+		http.Error(w, abandonedGuestMessage(abandoned.System), http.StatusConflict)
+		return
+	}
 	if err != nil {
 		requestError(w, err)
 		return
 	}
 	if input.System != "" && input.System != boundSystem {
-		if canInstallCatalogLinux(input.System) {
-			s.beginGuestInstall(w, r, input)
-		} else {
-			http.Error(w, "当前环境无法启动所选客户机系统，请保留原环境并重新检查安装选择", http.StatusConflict)
-		}
+		http.Error(w, "当前环境无法启动所选客户机系统，请保留原环境并重新检查安装选择", http.StatusConflict)
 		return
 	}
 	s.launch(w, "start", func() error {

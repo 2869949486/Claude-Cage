@@ -1,7 +1,6 @@
 package workbench
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -25,17 +24,25 @@ type guestInstallRequest struct {
 	System       string                `json:"guest_system"`
 	Media        string                `json:"media"`
 	SHA256       string                `json:"sha256"`
-	CloneKey     string                `json:"clone_key,omitempty"`
 }
 
+// guestInstallView describes the installation an earlier version recorded.
+// New environments always use Debian 13 and need no installation record.
 type guestInstallView struct {
-	LinuxSystems []string              `json:"linux_systems,omitempty"`
-	Reselect     bool                  `json:"reselect,omitempty"`
-	System       string                `json:"system,omitempty"`
-	Available    bool                  `json:"available"`
-	Reason       string                `json:"reason,omitempty"`
-	Fresh        bool                  `json:"fresh"`
-	Pending      *guestos.Installation `json:"pending,omitempty"`
+	Reselect bool `json:"reselect,omitempty"`
+	// Available reports that the recorded installation can continue here.
+	Available bool                  `json:"available"`
+	Reason    string                `json:"reason,omitempty"`
+	Fresh     bool                  `json:"fresh"`
+	Pending   *guestos.Installation `json:"pending,omitempty"`
+}
+
+// hostCloneSystemReserve is the space, in GiB, a new Linux system disk needs
+// beyond its installation image.
+const hostCloneSystemReserve = 16
+
+func (s *Server) installedLinuxSystem() (string, error) {
+	return hostimage.LinuxSystem(filepath.Join(s.profile, "state"))
 }
 
 func (s *Server) guestInstallView() (guestInstallView, error) {
@@ -53,45 +60,22 @@ func (s *Server) guestInstallView() (guestInstallView, error) {
 	}
 	v.Fresh = !loc.HasEnvironment
 	v.Pending = pending
-	if !v.Fresh && pending == nil {
+	if pending == nil {
 		return v, nil
 	}
-	if pending != nil && !hostimage.IsLinux(pending.System) {
-		// Recorded by an earlier version. It cannot continue, and it may only
-		// be withdrawn while nothing was created for it.
-		v.Reselect, err = guestos.UnstartedInstallation(s.profile, *pending)
-		v.Reason = abandonedGuestMessage(pending.System)
+	// The record may only be withdrawn while nothing was created for it.
+	v.Reselect, err = guestos.UnstartedInstallation(s.profile, *pending)
+	if err != nil {
 		return v, err
 	}
-	v.LinuxSystems = linuxGuestSystems(runtime.GOOS, runtime.GOARCH)
-	switch {
-	case runtime.GOOS == "darwin" && (runtime.GOARCH == "arm64" || runtime.GOARCH == "amd64"), runtime.GOOS == "windows" && runtime.GOARCH == "amd64":
-		// No host-matched guest; only the catalog Linux systems apply.
-	case runtime.GOOS == "linux" && runtime.GOARCH == "amd64":
-		identity, hostErr := hostimage.Host(context.Background())
-		if hostErr != nil {
-			v.Reason = hostErr.Error()
-		} else {
-			v.System = identity.System
-		}
-	default:
+	if !hostimage.IsLinux(pending.System) {
+		// Recorded by an earlier version for a guest that is no longer run.
+		v.Reason = abandonedGuestMessage(pending.System)
 		return v, nil
 	}
-	if pending != nil {
-		v.Reselect, err = guestos.UnstartedInstallation(s.profile, *pending)
-		if err != nil {
-			return v, err
-		}
-		catalog := pending.SourceKind == guestos.LinuxImageSource && canInstallCatalogLinux(pending.System) && pending.Source.Host.Arch == runtime.GOARCH
-		if !catalog && pending.System != v.System {
-			return v, errors.New("客户机安装记录与这台宿主不匹配")
-		}
-		if pending.SourceKind == guestos.LinuxImageSource && !catalog {
-			return v, errors.New("客户机镜像架构与这台主机不匹配，请恢复原主机环境")
-		}
-	}
-	if v.System == "" {
-		return v, nil
+	// Debian images matched to the host were offered on x86_64 Linux hosts.
+	if runtime.GOOS != "linux" || runtime.GOARCH != "amd64" || pending.Source.Host.Arch != runtime.GOARCH {
+		return v, errors.New("客户机安装记录与这台宿主不匹配")
 	}
 	v.Available = true
 	return v, nil
@@ -137,8 +121,10 @@ func (s *Server) guestInstallation(w http.ResponseWriter, r *http.Request) {
 	http.Error(w, "请求方法无效", http.StatusMethodNotAllowed)
 }
 
+// beginGuestInstall continues the Debian installation an earlier version
+// recorded. It never starts a new one: new environments use Debian 13.
 func (s *Server) beginGuestInstall(w http.ResponseWriter, r *http.Request, in guestInstallRequest) {
-	if in.System == guestos.MacOS || in.System == guestos.Windows11 {
+	if abandonedGuestSystem(in.System) {
 		http.Error(w, abandonedGuestMessage(in.System), http.StatusConflict)
 		return
 	}
@@ -147,44 +133,15 @@ func (s *Server) beginGuestInstall(w http.ResponseWriter, r *http.Request, in gu
 		requestError(w, err)
 		return
 	}
-	catalog := canInstallCatalogLinux(in.System) && in.CloneKey == ""
-	if v.Pending != nil {
-		catalog = v.Pending.SourceKind == guestos.LinuxImageSource
-	}
-	if (!catalog && (!v.Available || v.System != in.System)) || !s.hasTrustedView(r) || (!v.Fresh && v.Pending == nil) {
+	if v.Pending == nil || !v.Available || !s.hasTrustedView(r) {
 		http.Error(w, "当前环境无法安装所选客户机系统", http.StatusConflict)
 		return
 	}
-	install := guestos.Installation{Version: 1, System: in.System, Media: in.Media, SHA256: strings.ToLower(in.SHA256), ID: uuid.New(), EditorTerms: in.EditorTerms}
-	if v.Pending != nil {
-		if v.Pending.System != in.System || (in.Media != "" && in.Media != v.Pending.Media) || (in.SHA256 != "" && !strings.EqualFold(in.SHA256, v.Pending.SHA256)) {
-			http.Error(w, "必须使用原先选择的系统和安装介质继续安装", http.StatusConflict)
-			return
-		}
-		install = *v.Pending
-	} else if in.CloneKey != "" {
-		plan, planErr := s.hostClonePlan(r.Context())
-		if planErr != nil {
-			requestError(w, planErr)
-			return
-		}
-		if plan.Key() != in.CloneKey || plan.Host.System != in.System {
-			requestError(w, errors.New("本机版本或系统镜像信息已变化，请重新检测并匹配"))
-			return
-		}
-		install.Source = plan
-	} else if catalog {
-		if in.Media != "" || in.SHA256 != "" || in.EditorTerms {
-			requestError(w, errors.New("Ubuntu 使用 Cage 校验过的官方镜像，无需另选安装介质"))
-			return
-		}
-		plan, err := linuxGuestImagePlan(r.Context(), s.profile, in.System, runtime.GOARCH)
-		if err != nil {
-			requestError(w, err)
-			return
-		}
-		install.Source, install.SourceKind = plan, guestos.LinuxImageSource
+	if v.Pending.System != in.System || (in.Media != "" && in.Media != v.Pending.Media) || (in.SHA256 != "" && !strings.EqualFold(in.SHA256, v.Pending.SHA256)) {
+		http.Error(w, "必须使用原先选择的系统和安装介质继续安装", http.StatusConflict)
+		return
 	}
+	install := *v.Pending
 	if err := install.Validate(); err != nil {
 		requestError(w, err)
 		return

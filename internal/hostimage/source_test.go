@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -42,6 +43,9 @@ func TestAbandonedSystemPlansStayReadableButCannotBePrepared(t *testing.T) {
 		{Host: Identity{System: "macos", Version: "26.5", Build: "25F71", Arch: "arm64"}, Version: "26.5", Build: "25F71", Format: "ipsw", Path: filepath.Join(dir, "system.ipsw")},
 		{Host: Identity{System: "windows-11", Version: "25H2", Build: "26200.9", Edition: "Professional", Language: "en-US", Arch: "amd64"}, Version: "25H2", Build: "26200.8", Format: "esd",
 			URL: "http://dl.delivery.mp.microsoft.com/example.esd", Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 10},
+		{Host: Identity{System: "ubuntu-22.04", Version: "22.04", Arch: "arm64"}, Version: "22.04", Format: "qcow2",
+			URL: "https://cloud-images.ubuntu.com/releases/jammy/example.img", Digest: "sha256:" + strings.Repeat("a", 64), Bytes: 10},
+		{Host: Identity{System: "ubuntu-24.04", Version: "24.04", Arch: "amd64"}, Version: "24.04", Format: "qcow2", Path: filepath.Join(dir, "system.ipsw")},
 	} {
 		if err := plan.Validate(); err != nil {
 			t.Fatalf("%s record became unreadable: %v", plan.Host.System, err)
@@ -52,8 +56,8 @@ func TestAbandonedSystemPlansStayReadableButCannotBePrepared(t *testing.T) {
 		if _, err := Prepare(t.Context(), filepath.Join(dir, "cache"), plan, io.Discard, nil); err == nil {
 			t.Fatalf("%s media was prepared", plan.Host.System)
 		}
-		if _, err := Resolve(t.Context(), plan.Host, dir, dir, nil, nil); err == nil {
-			t.Fatalf("%s media was resolved", plan.Host.System)
+		if err := WriteLinuxTemplate(filepath.Join(dir, "state"), plan); err == nil {
+			t.Fatalf("%s was bound to a new environment", plan.Host.System)
 		}
 		if data, err := os.ReadFile(filepath.Join(dir, "system.ipsw")); err != nil || string(data) != "retained media" {
 			t.Fatal("retained media was changed", err)
@@ -192,5 +196,76 @@ func TestPrepareRecoversOversizedPartialWithoutDiscardingIt(t *testing.T) {
 	data, err := os.ReadFile(retained[0])
 	if err != nil || !bytes.Equal(data, bad) {
 		t.Fatal("discarded the failed response", err)
+	}
+}
+
+// An environment created from Ubuntu by an earlier version is recognised from
+// its saved image choice, refused, and left untouched.
+func TestUbuntuEnvironmentIsReportedAndNeverUsedAsDebian(t *testing.T) {
+	for _, system := range []string{"ubuntu-22.04", "ubuntu-24.04"} {
+		state := t.TempDir()
+		media := filepath.Join(state, "guest-media")
+		version := strings.TrimPrefix(system, "ubuntu-")
+		plan := Plan{Host: Identity{System: system, Version: version, Arch: "amd64"}, Version: version, Format: "qcow2",
+			Path: filepath.Join(media, system, "image.qcow2"), Digest: "sha256:" + strings.Repeat("a", 64)}
+		if AbandonedEnvironment(state) != "" {
+			t.Fatal("empty state reported an abandoned environment")
+		}
+		if err := Save(media, plan); err != nil {
+			t.Fatal(err)
+		}
+		template, err := linuxTemplateData(plan)
+		if err != nil {
+			t.Fatal(err)
+		}
+		files := map[string][]byte{}
+		for _, name := range []string{"host-system.yaml", sourceRecord} {
+			path := filepath.Join(media, name)
+			if name == "host-system.yaml" {
+				if err := os.WriteFile(path, template, 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if files[path], err = os.ReadFile(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if got := AbandonedEnvironment(state); got != system {
+			t.Fatalf("%s environment reported as %q", system, got)
+		}
+		var abandoned *AbandonedSystemError
+		if path, err := LinuxTemplate(state); !errors.As(err, &abandoned) || abandoned.System != system || path != "" {
+			t.Fatalf("%s template was offered: %q %v", system, path, err)
+		}
+		if got, err := LinuxSystem(state); err == nil {
+			t.Fatalf("%s was reported as a usable system %q", system, got)
+		}
+		// A missing template must not turn the environment into Debian either.
+		if err := os.Rename(filepath.Join(media, "host-system.yaml"), filepath.Join(media, "moved")); err != nil {
+			t.Fatal(err)
+		}
+		if path, err := LinuxTemplate(state); !errors.As(err, &abandoned) || path != "" {
+			t.Fatalf("%s without its template fell back: %q %v", system, path, err)
+		}
+		if err := os.Rename(filepath.Join(media, "moved"), filepath.Join(media, "host-system.yaml")); err != nil {
+			t.Fatal(err)
+		}
+		for path, before := range files {
+			if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+				t.Fatal("reporting changed", path, err)
+			}
+		}
+	}
+	debian := t.TempDir()
+	plan := Plan{Host: Identity{System: "debian-12", Version: "12", Arch: "amd64"}, Version: "12", Format: "qcow2",
+		Path: filepath.Join(debian, "image.qcow2"), Digest: "sha256:" + strings.Repeat("a", 64)}
+	if err := WriteLinuxTemplate(debian, plan); err != nil {
+		t.Fatal(err)
+	}
+	if got := AbandonedEnvironment(debian); got != "" {
+		t.Fatalf("Debian environment reported as abandoned %q", got)
+	}
+	if system, err := LinuxSystem(debian); err != nil || system != "debian-12" {
+		t.Fatalf("existing Debian 12 environment no longer starts: %q %v", system, err)
 	}
 }
