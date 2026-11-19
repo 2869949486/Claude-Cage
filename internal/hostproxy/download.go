@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const downloadIdleTimeout = 60 * time.Second
+
 // Download uses a shared, digest-specific partial file only for pinned media.
 // The caller supplies a private staging target on the same volume.
 func Download(ctx context.Context, address, target, name, accept, cache, digest string, out io.Writer) error {
@@ -91,7 +93,7 @@ func downloadAttempts(ctx context.Context, client *http.Client, address, target,
 		case !errors.Is(err, os.ErrNotExist):
 			return err
 		}
-		err = downloadStream(ctx, client, address, target, name, accept, out, 60*time.Second, offset, digest != "")
+		err = downloadStream(ctx, client, address, target, name, accept, out, downloadIdleTimeout, offset, digest != "")
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}

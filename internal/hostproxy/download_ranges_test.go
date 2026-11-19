@@ -79,7 +79,7 @@ func TestParallelPackageDownloadAndFallback(t *testing.T) {
 			digest := fmt.Sprintf("%x", sha256.Sum256(data))
 			// A single attempt exercises the production split/fallback path;
 			// hash verification is covered through downloadAttempts below.
-			err := downloadStream(t.Context(), server.Client(), server.URL+"/release", target, "editor.tgz", "application/octet-stream", io.Discard, time.Second, 0, true)
+			err := downloadStream(t.Context(), server.Client(), server.URL+"/release", target, "editor.tgz", "application/octet-stream", io.Discard, downloadIdleTimeout, 0, true)
 			if err != nil {
 				t.Fatal(err)
 			}
