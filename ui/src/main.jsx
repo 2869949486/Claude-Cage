@@ -26,7 +26,8 @@ import { GuestSystemPicker, validGuestChoice } from "./guest-system-picker";
 import { AppearanceProvider } from "./appearance";
 import { EnvironmentShield } from "./environment-shield";
 import { TailscalePanel } from "./tailscale";
-import { HostPluginsPanel, pluginPageTitle, useHostPlugins } from "./host-plugins";
+import { HostPluginsPanel, pluginPages, pluginPageTitle, useHostPlugins } from "./host-plugins";
+import { PluginView } from "./plugin-view";
 import { WorkspaceSidebar } from "./workspace-sidebar";
 import { useCLISessions, sessionsChanged } from "./cli-sessions";
 import { TerminalMenu } from "./terminal-menu";
@@ -75,6 +76,8 @@ function App() {
   const [managementPage, setManagementPage] = useState("");
   const [pluginPage, setPluginPage] = useState(null);
   const [pluginSidebar, setPluginSidebar] = useState(false);
+  // pluginView is the plugin page open in the workspace: "<plugin>/<view id>".
+  const [pluginView, setPluginView] = useState("");
   const [tailnetLogin, setTailnetLogin] = useState(null);
   const [desktopOpen, setDesktopOpen] = useState(false);
   const [terminalChoice, setTerminalChoice] = useState(null);
@@ -249,7 +252,14 @@ function App() {
     layout.side === "left" ? "right" : "left";
   const running = Boolean(status?.vm_running);
   const pluginsAvailable = Boolean(status?.local_vm_storage) && !isRemoteClient();
-  const hostPlugins = useHostPlugins(pluginsAvailable && (pluginSidebar || managementPage === "plugins"));
+  // The plugin list stays current, slowly, so plugin pages can sit in the main sidebar.
+  const hostPlugins = useHostPlugins(pluginsAvailable && (pluginSidebar || managementPage === "plugins" ? true : "light"));
+  const pages = pluginPages(hostPlugins);
+  const openPage = pages.find(page => page.key === pluginView);
+  const openPluginView = (page) => {
+    setPluginView(page.key); setManagementPage("plugin-view");
+    if (window.matchMedia("(max-width: 520px)").matches) setSidebarCollapsed(true);
+  };
   // Plugin pages belong to the plugin sidebar: they open from it and close
   // with it. Opening the sidebar alone leaves the workspace as it was.
   const openPluginPage = (page) => {
@@ -1311,7 +1321,8 @@ function App() {
     }
     const resolve = dialog.resolve;
     setDialog(null);
-    resolve(value);
+    // A dialog with a checkbox answers a confirmation with what was ticked.
+    resolve(value === true && dialog.check ? { checked: Boolean(dialog.checked) } : value);
   };
   const sidebarButton = side => sidebarCollapsed && side !== "right" &&
     <ExpandSidebar onClick={() => persist("cage-sidebar-collapsed", false, setSidebarCollapsed)} />;
@@ -1386,6 +1397,11 @@ function App() {
         >
           <div className="modal-body">
             <p>{dialog.body}</p>
+            {dialog.check && <label className="modal-check">
+              <input type="checkbox" checked={Boolean(dialog.checked)} disabled={dialog.pending}
+                onChange={event => setDialog(current => current && { ...current, checked: event.target.checked })} />
+              <span>{dialog.check}</span>
+            </label>}
             {dialog.error && <div className="error-message" role="alert">{dialog.error}</div>}
           </div>
         </Modal>
@@ -1479,7 +1495,8 @@ function App() {
             claudeAccountsOpen={managementPage === "claude-accounts"}
             tailscaleOpen={managementPage === "tailscale"}
             plugins={pluginsAvailable ? { model: hostPlugins, open: pluginSidebar, page: managementPage === "plugins" ? pluginPage : null,
-              onConfirm: confirm, onOpen: () => setPluginSidebar(true), onBack: leavePlugins, onPage: openPluginPage } : null}
+              onConfirm: confirm, onOpen: () => setPluginSidebar(true), onBack: leavePlugins, onPage: openPluginPage,
+              pages, pageOpen: managementPage === "plugin-view" ? pluginView : "", onView: openPluginView } : null}
             updateAction={<AppUpdateButton updates={appUpdates} />}
             workspace={selectedProject || status.workspace}
             guestSystem={account?.guest_system || status.guest_system || guestSystem?.guest_system || "debian-13"}
@@ -1561,10 +1578,12 @@ function App() {
             <main className="management-page" aria-labelledby={managementPage + "-title"}>
               <header className="chrome management-header">
                 {sidebarButton()}
-                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" && pluginPage ? pluginPageTitle(hostPlugins, pluginPage) : "Claude 账号管理"}</h1>
+                <h1 id={managementPage + "-title"} tabIndex={-1}>{managementPage === "tailscale" ? "Tailscale" : managementPage === "plugins" && pluginPage ? pluginPageTitle(hostPlugins, pluginPage) : managementPage === "plugin-view" ? openPage?.title || "插件页面" : "Claude 账号管理"}</h1>
               </header>
               <div className="management-content">
-                {managementPage === "plugins" ? pluginPage && <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={openPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
+                {managementPage === "plugin-view" ? <PluginView key={pluginView} plugin={openPage?.plugin || pluginView.split("/")[0]} view={openPage?.view || { id: pluginView.split("/")[1] || "" }}
+                  onConfirm={confirm} onNotify={notify} onOpenUrl={async url => Boolean(await openBrowserPage(url, false))} />
+                : managementPage === "plugins" ? pluginPage && <HostPluginsPanel model={hostPlugins} page={pluginPage} onPage={openPluginPage} status={status} onConfirm={confirm} /> : managementPage === "tailscale" ? <TailscalePanel status={status}
                   onOpenBrowser={async url => Boolean(await openBrowserPage(url, false))}
                   onOpenLogin={async (value) => {
                     const tab = await openBrowserPage(value.auth_url, false);

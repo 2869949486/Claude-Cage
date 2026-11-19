@@ -877,6 +877,16 @@ button.large {
   color: var(--ink);
   margin: 0;
 }
+.modal-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 14px;
+  font-size: 0.9286rem;
+  color: var(--ink);
+  cursor: pointer;
+}
+.modal-check input { margin: 0; accent-color: var(--accent, currentColor); }
 .anchored-modal-scrim {
   background: transparent;
   backdrop-filter: none;

@@ -48,6 +48,22 @@ function contributions(item) {
   return list;
 }
 const contributionText = item => contributions(item).map(entry => entry.title).join("；");
+
+// purposes are what a plugin is for: abilities for Claude, from its MCP
+// servers, and changes to the app, from its pages and link handlers. A
+// plugin without contributions is a first-version one: one MCP server.
+export function purposes(item) {
+  const contributes = item?.contributes;
+  if (!contributes) return ["Claude 工具"];
+  const list = [];
+  if (contributes.mcp_servers?.length) list.push("Claude 工具");
+  if (contributes.views?.length || contributes.uri_handlers?.length) list.push("界面扩展");
+  return list;
+}
+function PurposeTags({ item }) {
+  const list = purposes(item);
+  return list.length ? <span className="plugin-purposes">{list.map(label => <span key={label} className="plugin-purpose">{label}</span>)}</span> : null;
+}
 const size = bytes => !bytes ? "" : bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`;
 
 // useHostPlugins keeps the plugin list current while something shows it,
@@ -75,13 +91,16 @@ export function useHostPlugins(active) {
     }
   }, []);
   useEffect(() => { mounted.current = true; return () => { mounted.current = false; }; }, []);
+  // "light" keeps only the plugin list current, slowly, for the plugin pages
+  // in the main sidebar; the market is read once the plugin views are shown.
+  const browsing = active === true;
   useEffect(() => {
     if (!active) return;
     void refresh();
-    const timer = setInterval(() => { if (!busy) void refresh(); }, 5000);
+    const timer = setInterval(() => { if (!busy) void refresh(); }, browsing ? 5000 : 30000);
     return () => { revision.current++; clearInterval(timer); };
-  }, [active, busy, refresh]);
-  useEffect(() => { if (active && !market.loaded && !market.loading) void loadMarket(); }, [active, market.loaded, market.loading, loadMarket]);
+  }, [active, browsing, busy, refresh]);
+  useEffect(() => { if (browsing && !market.loaded && !market.loading) void loadMarket(); }, [browsing, market.loaded, market.loading, loadMarket]);
   // change sends one request; key names what is in progress, for the buttons.
   const change = useCallback(async (body, key = "change") => {
     setBusy(key); setError(""); revision.current++;
@@ -109,7 +128,9 @@ export function pluginEntries(model) {
   }
   const installed = view.plugins.map(plugin => {
     const offer = offers.get(plugin.name);
+    // listing is the market's card for an installed plugin; offer only when it is newer.
     return { name: plugin.name, plugin, offer: offer?.source === "market" && offer.update ? offer : null,
+      listing: offer?.source === "market" ? offer : null,
       source: plugin.built_in ? "builtin" : offers.get(plugin.name)?.source || "local",
       icon: plugin.icon ? runtimeURL(`/host-tools/icon?name=${encodeURIComponent(plugin.name)}`) : "" };
   });
@@ -172,17 +193,47 @@ async function installPlugin(model, entry, onConfirm) {
   const adds = contributionText(offer);
   const runs = offer.kind === "guest"
     ? `插件在 Cage 环境中以普通用户身份运行，它声明需要：${permissionText(offer.permissions)}。`
-    : `插件以你的系统账户权限在这台电脑上运行，它声明需要：${permissionText(offer.permissions)}。每次调用前仍会弹窗征求你的同意。`;
-  if (offer.source === "market" && !await onConfirm({
+    : `插件以你的系统账户权限在这台电脑上运行，它声明需要：${permissionText(offer.permissions)}。调用前会弹窗征求你的同意，你可以选择始终允许。`;
+  // A plugin with tools can be allowed for good at install: the user's nod is remembered.
+  const offerAlways = !replace && offer.source === "market" && purposes(offer).includes("Claude 工具");
+  const answer = offer.source === "market" ? await onConfirm({
     title: replace ? `更新「${pluginTitle(offer)}」到 ${offer.version}？` : `安装「${pluginTitle(offer)}」？`,
     body: `${runs}${adds ? `它还会添加：${adds}。` : ""}只安装你信任的插件。${replace ? "旧版本会移到数据目录的 plugins-removed 中保留。" : ""}`,
     confirm: replace ? "更新" : "安装",
-  })) return false;
+    ...(offerAlways ? { check: "安装后始终允许它的工具，不再逐次询问" } : {}),
+  }) : true;
+  if (!answer) return false;
   const body = offer.source === "market" ? { install: offer.name, source: "market", ...(replace ? { replace: true } : {}) } : { install: offer.name };
-  return model.change(body, `install:${offer.name}`);
+  const installed = await model.change(body, `install:${offer.name}`);
+  if (installed && answer.checked) await model.change({ plugin: offer.name, always: true }, `always:${offer.name}`);
+  return installed;
 }
 
 // HostPluginsNav is the main sidebar's way into the plugin sidebar.
+// pluginPages are the pages of plugins that are installed, turned on and can
+// run; each opens in the workspace from its own entry in the main sidebar.
+export function pluginPages(model) {
+  const pages = [];
+  for (const plugin of model.view?.plugins || []) {
+    if (plugin.enabled === false || !plugin.supported || plugin.problem) continue;
+    for (const view of plugin.contributes?.views || []) {
+      if (!view.url) continue;
+      pages.push({ key: `${plugin.name}/${view.id}`, plugin: plugin.name, view, title: view.title || pluginTitle(plugin),
+        icon: plugin.icon ? runtimeURL(`/host-tools/icon?name=${encodeURIComponent(plugin.name)}`) : "" });
+    }
+  }
+  return pages;
+}
+
+export function PluginPagesNav({ pages, selected, onOpen }) {
+  return pages.map(page => (
+    <button key={page.key} className={`sidebar-link ${selected === page.key ? "selected" : ""}`}
+      aria-current={selected === page.key ? "page" : undefined} onClick={() => onOpen(page)} aria-label={`打开 ${page.title}`}>
+      {page.icon ? <img className="plugin-page-icon" src={page.icon} alt="" draggable="false" /> : <PanelLeft size={17} />}{page.title}
+    </button>
+  ));
+}
+
 export function HostPluginsNav({ onOpen }) {
   return (
     <button className="sidebar-link host-plugins-entry" onClick={onOpen} aria-label="MCP 插件">
@@ -305,8 +356,8 @@ export function HostPluginsSidebar({ model, page, onPage, onBack, onConfirm }) {
 
 function MarketCard({ entry, view, busy, onOpen, onInstall }) {
   const info = entryInfo(entry, view);
-  const offer = entry.offer;
-  const update = Boolean(entry.plugin);
+  const offer = entry.offer || entry.listing;
+  const update = Boolean(entry.plugin && entry.offer);
   const installing = busy === `install:${entry.name}`;
   return (
     <article className="plugin-card-item">
@@ -315,13 +366,15 @@ function MarketCard({ entry, view, busy, onOpen, onInstall }) {
         <span className="plugin-card-text">
           <span className="plugin-row-title"><strong>{info.title}</strong><small>{update ? `${entry.plugin.version || "?"} → ${offer.version}` : offer.version}</small></span>
           <span className="plugin-card-description">{pluginText(offer)}</span>
+          <PurposeTags item={offer} />
         </span>
       </button>
       <footer>
         <span className="plugin-card-permissions" title={permissionText(offer.permissions)}>
           <ShieldCheck size={13} />{offer.permissions?.length ? permissionText(offer.permissions) : "无需额外权限"}
         </span>
-        {!offer.supported ? <span className="plugin-state problem" title={offer.problem || undefined}><i />{unsupportedLabel(offer)}</span>
+        {entry.plugin && !update ? <span className="plugin-state online"><i />已安装</span>
+          : !offer.supported ? <span className="plugin-state problem" title={offer.problem || undefined}><i />{unsupportedLabel(offer)}</span>
           : <button type="button" className="primary" disabled={Boolean(busy)} onClick={onInstall}>
             {installing ? <LoaderCircle size={14} className="spin" /> : <Download size={14} />}{installing ? update ? "正在更新" : "正在安装" : update ? "更新" : "安装"}
           </button>}
@@ -336,6 +389,8 @@ function Market({ model, onConfirm, onPage }) {
   const { installed, available } = pluginEntries(model);
   const updates = installed.filter(entry => entry.offer && matches(entry, query));
   const offers = available.filter(entry => matches(entry, query));
+  // Installed plugins stay in the market, marked as such, as in VS Code.
+  const current = installed.filter(entry => entry.listing && !entry.offer && matches(entry, query));
   const card = entry => <MarketCard key={entry.name} entry={entry} view={view} busy={busy}
     onOpen={() => onPage({ kind: "plugin", name: entry.name })} onInstall={() => installPlugin(model, entry, onConfirm)} />;
   const fetched = market.fetched ? new Date(market.fetched) : null;
@@ -344,7 +399,7 @@ function Market({ model, onConfirm, onPage }) {
       <header className="plugin-market-head">
         <div>
           <h2>插件市场</h2>
-          <p>社区插件和随应用附带的插件。插件以你的系统账户权限运行，只安装你信任的插件。</p>
+          <p>来自社区插件仓库。安装前请查看插件声明的权限，只安装你信任的插件。</p>
         </div>
         <div className="plugin-market-tools">
           <label className="plugin-search large">
@@ -368,8 +423,12 @@ function Market({ model, onConfirm, onPage }) {
         {offers.length ? <div className="plugin-card-grid">{offers.map(card)}</div>
           : market.loading ? <p className="plugin-loading" role="status"><LoaderCircle size={16} className="spin" />正在读取插件市场…</p>
           : market.error && !query ? null
-          : <div className="plugin-empty compact"><Store size={22} /><p>{query ? "没有匹配的插件。" : "没有可安装的新插件。"}</p></div>}
+          : <div className="plugin-empty compact"><Store size={22} /><p>{query ? "没有匹配的插件。" : current.length ? "市场里的插件都已安装。" : "没有可安装的新插件。"}</p></div>}
       </section>
+      {current.length > 0 && <section className="plugin-market-section">
+        <h3>已安装<em>{current.length}</em></h3>
+        <div className="plugin-card-grid">{current.map(card)}</div>
+      </section>}
     </div>
   );
 }
@@ -385,6 +444,51 @@ function CopyField({ value, label }) {
       <code>{value}</code>
       <button type="button" onClick={copy} aria-label={label}>{copied === "已复制" ? <Check size={15} /> : <Copy size={15} />}{copied || "复制"}</button>
     </div>
+  );
+}
+
+// Grants shows whether the plugin's tools are asked about on each call or
+// allowed for good. The same grant covers calls from Claude and from the
+// plugin's own pages. Commands are allowed per project, only from the
+// confirmation window, so here they can only be taken back.
+function Grants({ model, plugin, onConfirm }) {
+  const { busy, change } = model;
+  const key = `always:${plugin.name}`;
+  if (plugin.built_in && plugin.name === "commands") {
+    const projects = plugin.always_projects || [];
+    const revoke = async project => {
+      if (!project && !await onConfirm({ title: "撤销全部项目的授权？", body: "之后在任何项目中运行命令都会重新询问。", confirm: "全部撤销" })) return;
+      await change({ plugin: plugin.name, always: false, ...(project ? { project } : {}) }, key);
+    };
+    return (
+      <section className="plugin-grants" aria-label="授权">
+        <div className="plugin-grants-head">
+          <div><strong>授权</strong><p>在确认窗口中选择“始终允许”的项目会列在这里，在这些项目中运行命令不再询问。</p></div>
+          {projects.length > 1 && <button type="button" disabled={Boolean(busy)} onClick={() => revoke("")}>全部撤销</button>}
+        </div>
+        {projects.length ? <ul className="plugin-grant-projects">
+          {projects.map(project => <li key={project}>
+            <Folder size={15} aria-hidden="true" /><code title={project}>{project}</code>
+            <button type="button" disabled={Boolean(busy)} onClick={() => revoke(project)} aria-label={`撤销 ${project} 的授权`}>撤销</button>
+          </li>)}
+        </ul> : <p className="plugin-grants-empty">还没有始终允许的项目，每次运行命令都会询问。</p>}
+      </section>
+    );
+  }
+  const always = Boolean(plugin.always);
+  return (
+    <section className="plugin-grants" aria-label="授权">
+      <div className="plugin-grants-head">
+        <div>
+          <strong>授权</strong>
+          <p>{always ? "Claude 和插件页面调用它的工具时不再询问。插件更新后如果需要新的权限，会重新询问。" : "Claude 或插件页面每次调用它的工具前，都会弹窗询问。"}</p>
+        </div>
+        <div className="plugin-segmented" role="radiogroup" aria-label="调用工具时">
+          <button type="button" role="radio" aria-checked={!always} disabled={Boolean(busy)} onClick={() => always && change({ plugin: plugin.name, always: false }, key)}>每次询问</button>
+          <button type="button" role="radio" aria-checked={always} disabled={Boolean(busy)} onClick={() => !always && change({ plugin: plugin.name, always: true }, key)}>始终允许</button>
+        </div>
+      </div>
+    </section>
   );
 }
 
@@ -426,6 +530,7 @@ function Detail({ model, name, onConfirm, onPage }) {
             {info.version && <span>版本 {info.version}</span>}
             {!plugin && offer?.bytes > 0 && <span>{size(offer.bytes)}</span>}
             {plugin && <StateChip state={info.state} />}
+            <PurposeTags item={plugin || offer} />
           </div>
           <p>{pluginText(plugin || offer)}</p>
           <div className="plugin-hero-actions">
@@ -458,7 +563,7 @@ function Detail({ model, name, onConfirm, onPage }) {
       {!plugin && offer?.problem && <div className="plugin-banner problem" role="status"><TriangleAlert size={17} /><div><strong>暂时无法安装</strong><p>{offer.problem}</p></div></div>}
       <nav className="plugin-tabs" role="tablist" aria-label={`${info.title} 的内容`}>
         <button type="button" role="tab" aria-selected={tab === "tools"} onClick={() => setTab("tools")}>工具<em>{tools.length}</em></button>
-        <button type="button" role="tab" aria-selected={tab === "permissions"} onClick={() => setTab("permissions")}>权限<em>{declared.length}</em></button>
+        <button type="button" role="tab" aria-selected={tab === "permissions"} onClick={() => setTab("permissions")}>{plugin ? "授权与权限" : "权限"}<em>{declared.length}</em></button>
         {added.length > 0 && <button type="button" role="tab" aria-selected={tab === "contributions"} onClick={() => setTab("contributions")}>功能<em>{added.length}</em></button>}
       </nav>
       <div className="plugin-page-body">
@@ -477,7 +582,8 @@ function Detail({ model, name, onConfirm, onPage }) {
             <Wrench size={22} />
             <p>{!plugin ? "安装并运行后，这里会列出插件提供给 Claude 的工具。" : plugin.problem ? "插件无法加载，没有可用的工具。" : !on ? "启用插件后，这里会列出它提供的工具。" : !view.enabled ? "开启主机工具后，这里会列出插件提供的工具。" : "插件运行后，这里会列出它提供的工具。"}</p>
           </div> : <>
-            <p className="plugin-page-lead">权限由插件自行声明，供你在安装前判断；每次调用仍需你在系统弹窗中同意。</p>
+            {plugin && <Grants model={model} plugin={plugin} onConfirm={onConfirm} />}
+            <p className="plugin-page-lead">权限由插件自行声明，供你在安装前判断。</p>
             {declared.length ? <ul className="plugin-permission-list">
               {declared.map(key => {
                 const known = permissions[key] || { title: key, text: "插件声明的其他权限。", icon: ShieldCheck };

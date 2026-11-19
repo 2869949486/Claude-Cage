@@ -362,3 +362,23 @@
   .plugin-state.waiting i { animation: none; }
   .plugin-switch span, .plugin-switch span::after, .plugin-master-icon, .plugin-card-item { transition: none; }
 }
+
+/* What a plugin is for: tools for Claude, or changes to the app. */
+.plugin-purposes { display: inline-flex; flex-wrap: wrap; gap: 6px; }
+.plugin-card-text .plugin-purposes { margin-top: 8px; }
+.plugin-purpose { padding: 1px 8px; border: 1px solid var(--line); border-radius: 10px; color: var(--muted); font-size: 0.7857rem; line-height: 1.6; white-space: nowrap; }
+
+/* Whether the plugin's tools are asked about on each call. */
+.plugin-grants { margin: 0 0 18px; padding: 14px 16px; border: 1px solid var(--line); border-radius: 10px; background: var(--paper); }
+.plugin-grants-head { display: flex; gap: 16px; align-items: flex-start; justify-content: space-between; flex-wrap: wrap; }
+.plugin-grants-head > div:first-child { min-width: 0; flex: 1 1 260px; }
+.plugin-grants strong { color: var(--strong); font-size: 0.9643rem; }
+.plugin-grants p { margin: 4px 0 0; color: var(--muted); font-size: 0.9286rem; line-height: 1.6; }
+.plugin-segmented { display: inline-flex; flex: none; padding: 2px; border: 1px solid var(--line); border-radius: 8px; background: var(--chrome); }
+.plugin-segmented button { border: 0; border-radius: 6px; background: transparent; color: var(--muted); padding: 5px 12px; font-size: 0.8571rem; }
+.plugin-segmented button[aria-checked="true"] { background: var(--paper); color: var(--strong); box-shadow: 0 1px 2px rgb(0 0 0 / 0.12); }
+.plugin-grant-projects { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 6px; }
+.plugin-grant-projects li { display: flex; align-items: center; gap: 10px; min-width: 0; color: var(--muted); }
+.plugin-grant-projects code { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--ink); }
+.plugin-grant-projects button { flex: none; padding: 3px 10px; font-size: 0.8571rem; }
+p.plugin-grants-empty { margin-top: 10px; }
