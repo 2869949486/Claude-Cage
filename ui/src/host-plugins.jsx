@@ -475,6 +475,20 @@ function Grants({ model, plugin, onConfirm }) {
       </section>
     );
   }
+  // Inside the environment and declaring nothing: its tools are never asked
+  // about, so there is nothing to choose.
+  if (plugin.kind === "guest" && !(plugin.permissions || []).length) {
+    return (
+      <section className="plugin-grants" aria-label="授权">
+        <div className="plugin-grants-head">
+          <div>
+            <strong>授权</strong>
+            <p>这个插件在环境内运行，没有声明权限，调用它的工具不需要确认。</p>
+          </div>
+        </div>
+      </section>
+    );
+  }
   const always = Boolean(plugin.always);
   return (
     <section className="plugin-grants" aria-label="授权">
