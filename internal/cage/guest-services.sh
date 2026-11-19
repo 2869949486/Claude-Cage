@@ -7,7 +7,8 @@ if ! command -v ip >/dev/null || ! test -x /usr/sbin/iptables || ! command -v Xt
   sudo env DEBIAN_FRONTEND=noninteractive APT_CONFIG="${CAGE_APT_CONFIG:-/dev/null}" apt-get install -y --no-install-recommends tigervnc-standalone-server tigervnc-tools openbox x11-xserver-utils xdotool libgtk-3-0 ibus ibus-gtk3 gir1.2-ibus-1.0 gir1.2-gtk-3.0 python3-gi python3-xlib xsettingsd iproute2 iptables
 fi
 sudo install -d -m 0755 /usr/local/share
-sudo ln -sfn /usr/share/novnc /usr/local/share/cage-webvnc
+cage_novnc_root=/usr/share/novnc
+sudo ln -sfn "$cage_novnc_root" /usr/local/share/cage-webvnc
 sudo install -d -m 0755 /etc/claude-cage /usr/local/lib
 # New website passwords belong to the host vault. Keep existing browser data.
 cage_browser_policy_dir=/etc/chromium/policies/managed
