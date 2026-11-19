@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/sylvinus/agent-vm/internal/cage"
 	"github.com/sylvinus/agent-vm/internal/diagnostics"
 	"github.com/sylvinus/agent-vm/internal/guestos"
@@ -102,30 +103,32 @@ type Server struct {
 	hostMarket                                       hostMarketCache
 	hostGrants                                       *hostGrants
 	hostGrantsOnce                                   sync.Once
-	hostViewMu                                       sync.Mutex
-	hostViewKeyData                                  []byte
-	projectErrors                                    []projectShareError
-	clientMounts                                     map[string]*guestClientMount
-	clientWorkspace                                  string
-	safety                                           safetyState
-	recovery                                         networkRecovery
-	locations                                        map[string]Location
-	monitorCancel                                    context.CancelFunc
-	networkMonitorDone                               chan struct{}
-	projectOperationWaiters                          int
-	monitorSafetyOp                                  sync.Mutex
-	safetyOp                                         sync.Mutex
-	networkPaused                                    bool
-	proxyNetworkLost                                 bool
-	proxyNetworkRetry                                time.Time
-	checkCancel                                      context.CancelFunc
-	lifeContext                                      context.Context
-	lifeCancel                                       context.CancelFunc
-	monitors                                         sync.WaitGroup
-	activities                                       sync.WaitGroup
-	closeOnce                                        sync.Once
-	closeErr                                         error
-	controlPublished                                 bool
+	// tailnetTool stands in for the running Tailscale plugin in tests.
+	tailnetTool             func(context.Context, string, json.RawMessage) (*mcp.CallToolResult, error)
+	hostViewMu              sync.Mutex
+	hostViewKeyData         []byte
+	projectErrors           []projectShareError
+	clientMounts            map[string]*guestClientMount
+	clientWorkspace         string
+	safety                  safetyState
+	recovery                networkRecovery
+	locations               map[string]Location
+	monitorCancel           context.CancelFunc
+	networkMonitorDone      chan struct{}
+	projectOperationWaiters int
+	monitorSafetyOp         sync.Mutex
+	safetyOp                sync.Mutex
+	networkPaused           bool
+	proxyNetworkLost        bool
+	proxyNetworkRetry       time.Time
+	checkCancel             context.CancelFunc
+	lifeContext             context.Context
+	lifeCancel              context.CancelFunc
+	monitors                sync.WaitGroup
+	activities              sync.WaitGroup
+	closeOnce               sync.Once
+	closeErr                error
+	controlPublished        bool
 }
 
 func randomToken() string {

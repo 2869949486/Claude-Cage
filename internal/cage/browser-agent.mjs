@@ -1,4 +1,3 @@
-import { createTailnetClient } from "./tailnet-client.mjs";
 // Chromium is controlled through inherited pipes, never an exposed CDP port.
 import { spawn, execFile } from "node:child_process";
 import { promisify } from "node:util";
@@ -774,9 +773,6 @@ function pasteImage(png) {
   });
 }
 
-const tailnet = createTailnetClient();
-void tailnet.restore().catch(() => {});
-process.once("exit", () => tailnet.close());
 let phoneBrowser;
 const server = http.createServer(async (req, res) => {
   res.setHeader("Cache-Control", "no-store");
@@ -849,7 +845,6 @@ const server = http.createServer(async (req, res) => {
     const input = JSON.parse(text || "{}");
     // Ahead of the queue below: a scroll does not wait for a tab operation.
     if (req.url === "/wheel") { res.end(JSON.stringify(await browserWheel.deliver(input))); return; }
-    if (req.url === "/tailnet") { res.end(JSON.stringify(await tailnet.request(input))); return; }
     if (["/phone-desktop/open", "/phone-desktop/frame", "/phone-desktop/action", "/phone-desktop/close"].includes(req.url)) {
       const { phoneDesktop } = await import("./browser-phone-desktop.mjs");
       try { res.end(JSON.stringify(await phoneDesktop(req.url.split("/").pop(), input))); }
