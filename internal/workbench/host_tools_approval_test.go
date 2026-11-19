@@ -2,6 +2,8 @@ package workbench
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -43,9 +45,9 @@ func TestHostApprovalOnceIsAskedEveryTime(t *testing.T) {
 	}
 }
 
-func TestHostApprovalForTheSessionCoversOnlyThatProject(t *testing.T) {
+func TestHostApprovalAlwaysCoversOnlyThatProject(t *testing.T) {
 	var asked atomic.Int32
-	approvals := approvalsAnswering(desktop.Session, true, &asked, nil)
+	approvals := approvalsAnswering(desktop.Always, true, &asked, nil)
 	first := hostbridge.CommandRequest{Command: "ls", Dir: "/p/a", Project: "/p/a"}
 	for range 3 {
 		if err := approvals.approve(context.Background(), first); err != nil {
@@ -61,8 +63,59 @@ func TestHostApprovalForTheSessionCoversOnlyThatProject(t *testing.T) {
 	if asked.Load() != 2 {
 		t.Fatalf("another project was not asked about: %d", asked.Load())
 	}
-	if newHostApprovals().sessionAllowed("/p/a") {
-		t.Fatal("an approval outlived its session")
+	if newHostApprovals().alwaysAllowed(hostGrantProject+"/p/a", nil) {
+		t.Fatal("an approval was remembered with nowhere to remember it")
+	}
+}
+
+// "Always" is written down: after a restart the plugin is not asked about
+// again, until the user takes the grant back or the plugin declares more.
+func TestHostGrantIsRememberedAndTakenBack(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "host-grants.json")
+	var asked atomic.Int32
+	start := func(scope desktop.Scope, permissions ...string) *hostApprovals {
+		approvals := approvalsAnswering(scope, true, &asked, nil)
+		approvals.grants = &hostGrants{path: path}
+		approvals.permissions = map[string][]string{"clock": permissions}
+		return approvals
+	}
+	call := hostbridge.ToolRequest{Plugin: "clock", Tool: "current_time", Arguments: "{}"}
+	if err := start(desktop.Always, "network").approveTool(context.Background(), call); err != nil || asked.Load() != 1 {
+		t.Fatalf("asked %d: %v", asked.Load(), err)
+	}
+	// Started again, answering no: the grant is what lets the call through.
+	if err := start(desktop.Deny, "network").approveTool(context.Background(), call); err != nil || asked.Load() != 1 {
+		t.Fatalf("asked again after a restart (%d): %v", asked.Load(), err)
+	}
+	if err := start(desktop.Deny, "network").approveTool(context.Background(), hostbridge.ToolRequest{Plugin: "other", Tool: "x"}); err == nil {
+		t.Fatal("the grant covered another plugin")
+	}
+	if err := start(desktop.Deny, "network", "files").approveTool(context.Background(), call); err == nil {
+		t.Fatal("the grant covered a permission declared later")
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o600 {
+		t.Fatalf("grants file: %v %v", info, err)
+	}
+	grants := &hostGrants{path: path}
+	if err := grants.revoke(hostGrantPlugin + "clock"); err != nil {
+		t.Fatal(err)
+	}
+	if err := start(desktop.Deny, "network").approveTool(context.Background(), call); err == nil {
+		t.Fatal("a grant taken back still let the call through")
+	}
+	// Commands are remembered for each project; all can be taken back at once.
+	command := start(desktop.Always)
+	for _, project := range []string{"/p/a", "/p/b"} {
+		if err := command.approve(context.Background(), hostbridge.CommandRequest{Command: "ls", Dir: project, Project: project}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	grants = &hostGrants{path: path}
+	if projects := grants.projects(); len(projects) != 2 || projects[0] != "/p/a" {
+		t.Fatalf("projects %v", projects)
+	}
+	if err := grants.revoke(hostGrantProject); err != nil || len(grants.projects()) != 0 {
+		t.Fatalf("projects %v: %v", grants.projects(), err)
 	}
 }
 
@@ -76,7 +129,7 @@ func TestHostApprovalRefusals(t *testing.T) {
 		t.Fatalf("without a dialog: %v", err)
 	}
 	asked.Store(0)
-	approvals := approvalsAnswering(desktop.Session, true, &asked, nil)
+	approvals := approvalsAnswering(desktop.Always, true, &asked, nil)
 	for _, command := range []string{"echo a\x1b[2Kb", "echo a‮b", "echo ​hidden", strings.Repeat("x", hostApprovalCommandMax+1)} {
 		if err := approvals.approve(context.Background(), hostbridge.CommandRequest{Command: command, Dir: "/p/a", Project: "/p/a"}); err == nil {
 			t.Fatalf("%q was approved", command)
@@ -101,7 +154,7 @@ func TestHostApprovalShowsOneDialogAtATime(t *testing.T) {
 		}
 		<-release
 		open.Add(-1)
-		return desktop.Session, true
+		return desktop.Always, true
 	}
 	var wait sync.WaitGroup
 	for range 5 {
@@ -121,7 +174,7 @@ func TestHostApprovalShowsOneDialogAtATime(t *testing.T) {
 func TestHostApprovalForAPluginIsSeparateFromProjects(t *testing.T) {
 	var asked atomic.Int32
 	var shown string
-	approvals := approvalsAnswering(desktop.Session, true, &asked, &shown)
+	approvals := approvalsAnswering(desktop.Always, true, &asked, &shown)
 	call := hostbridge.ToolRequest{Plugin: "screen-reader", Tool: "read_window", Arguments: `{"app":"Notes"}`}
 	for range 2 {
 		if err := approvals.approveTool(context.Background(), call); err != nil {

@@ -100,6 +100,8 @@ type Server struct {
 	hostTools                                        *hostTools
 	hostToolsRemoved                                 bool
 	hostMarket                                       hostMarketCache
+	hostGrants                                       *hostGrants
+	hostGrantsOnce                                   sync.Once
 	projectErrors                                    []projectShareError
 	clientMounts                                     map[string]*guestClientMount
 	clientWorkspace                                  string

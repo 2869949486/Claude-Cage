@@ -138,6 +138,11 @@ func (s *Server) startHostTools() error {
 	for _, plugin := range external {
 		plugins = append(plugins, plugin)
 	}
+	// What each plugin declares decides whether a grant still covers it.
+	approvals.grants, approvals.permissions = s.hostGrantStore(), map[string][]string{}
+	for _, plugin := range external {
+		approvals.permissions[plugin.Manifest.Name] = plugin.Manifest.Permissions
+	}
 	tools := &hostTools{cancel: cancel, done: make(chan struct{}), plugins: external, jobs: jobs, problems: problems}
 	bridge, err := hostbridge.Start(token, plugins...)
 	if err != nil {

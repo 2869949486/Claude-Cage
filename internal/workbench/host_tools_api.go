@@ -34,6 +34,11 @@ type hostPluginView struct {
 	// Icon says the plugin has a picture, served by the icon route.
 	Icon      bool `json:"icon,omitempty"`
 	Supported bool `json:"supported"`
+	// Always says calls to the plugin's tools are allowed without asking.
+	// AlwaysProjects, for the built-in plugin, are the folders in which
+	// commands are.
+	Always         bool     `json:"always"`
+	AlwaysProjects []string `json:"always_projects,omitempty"`
 	// Enabled is false for a plugin the user turned off.
 	Enabled bool                  `json:"enabled"`
 	Loaded  bool                  `json:"loaded"`
@@ -140,7 +145,8 @@ func (s *Server) hostToolsView() hostToolsView {
 		}
 	}
 	view.Plugins = []hostPluginView{{Name: hostCommandsPlugin, BuiltIn: true, Supported: true, Enabled: !slices.Contains(off, hostCommandsPlugin),
-		Loaded: tools != nil && !slices.Contains(off, hostCommandsPlugin), Permissions: []string{"commands"},
+		AlwaysProjects: s.hostGrantStore().projects(),
+		Loaded:         tools != nil && !slices.Contains(off, hostCommandsPlugin), Permissions: []string{"commands"},
 		Tools: []hostbridge.ToolInfo{{Name: "run_command"}, {Name: "command_job"}}}}
 	entries, _ := os.ReadDir(view.Directory)
 	sort.Slice(entries, func(i, j int) bool { return entries[i].Name() < entries[j].Name() })
@@ -160,6 +166,7 @@ func (s *Server) hostToolsView() hostToolsView {
 		plugin := hostPluginView{Name: manifest.Name, DisplayName: manifest.DisplayName, Version: manifest.Version, Description: manifest.Description,
 			Permissions: manifest.Permissions, Kind: manifest.Kind, Contributes: hostContributes(manifest.Contributes),
 			Supported: manifest.Supported() && unavailable == "", Icon: manifest.Icon != "", Enabled: !slices.Contains(off, entry.Name())}
+		plugin.Always = s.hostGrantStore().allowed(hostGrantPlugin+manifest.Name, manifest.Permissions)
 		if manifest.Name != entry.Name() {
 			plugin.Problem = "文件夹名称须与插件名称 " + manifest.Name + " 一致"
 			plugin.Name = entry.Name()
@@ -214,6 +221,42 @@ func (s *Server) setHostPluginOn(name string, on bool) error {
 	return s.recordHostPluginOn(name, on)
 }
 
+// setHostPluginAlways records that the plugin's tools need no asking, or
+// takes that back. A grant taken back holds for calls already allowed in
+// this start too, so the tools are started again.
+func (s *Server) setHostPluginAlways(name, project string, always bool) error {
+	grants := s.hostGrantStore()
+	if name == hostCommandsPlugin {
+		if always {
+			return errors.New("命令的长期授权按项目在确认窗口里给出")
+		}
+		key := hostGrantProject
+		if project != "" {
+			key += project
+		}
+		if err := grants.revoke(key); err != nil {
+			return err
+		}
+		s.closeHostTools()
+		return nil
+	}
+	if name == "" || name != filepath.Base(name) || strings.HasPrefix(name, ".") {
+		return errors.New("插件名称无效")
+	}
+	if !always {
+		if err := grants.revoke(hostGrantPlugin + name); err != nil {
+			return err
+		}
+		s.closeHostTools()
+		return nil
+	}
+	manifest, err := hostbridge.LoadManifest(filepath.Join(s.hostPluginDir(), name))
+	if err != nil || manifest.Name != name {
+		return errors.New("没有找到这个插件")
+	}
+	return grants.grant(hostGrantPlugin+name, manifest.Permissions)
+}
+
 func (s *Server) recordHostPluginOn(name string, on bool) error {
 	s.mu.Lock()
 	next := s.preferences
@@ -258,6 +301,11 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 		// named "commands".
 		Plugin string `json:"plugin"`
 		On     *bool  `json:"on"`
+		// Always, with Plugin, allows that plugin's tools without asking, or
+		// takes that back. For "commands" it can only be taken back: for
+		// every project, or for the one in Project.
+		Always  *bool  `json:"always"`
+		Project string `json:"project"`
 	}
 	if !readJSON(w, r, &body) {
 		return
@@ -293,6 +341,12 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 		s.preferences.HostTools = next.HostTools
 		s.mu.Unlock()
 	}
+	if body.Plugin != "" && body.Always != nil {
+		if err := s.setHostPluginAlways(body.Plugin, body.Project, *body.Always); err != nil {
+			requestError(w, err)
+			return
+		}
+	}
 	if body.Plugin != "" && body.On != nil {
 		if err := s.setHostPluginOn(body.Plugin, *body.On); err != nil {
 			requestError(w, err)
@@ -312,10 +366,11 @@ func (s *Server) setHostTools(w http.ResponseWriter, r *http.Request) {
 			requestError(w, err)
 			return
 		}
-		// A plugin installed again later starts turned on.
+		// A plugin installed again later starts turned on, and asks again.
 		_ = s.recordHostPluginOn(body.Remove, true)
+		_ = s.hostGrantStore().revoke(hostGrantPlugin + body.Remove)
 	}
-	if body.Reload || body.Install != "" || body.Plugin != "" {
+	if body.Reload || body.Install != "" || body.Plugin != "" && body.On != nil {
 		s.closeHostTools()
 	}
 	if ready || !s.hostToolsView().Enabled {

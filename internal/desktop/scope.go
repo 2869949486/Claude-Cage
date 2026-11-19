@@ -16,18 +16,19 @@ type Scope int
 const (
 	Deny Scope = iota
 	Once
-	Session
+	Always
 )
 
-// The button labels. Session is not offered on Windows, whose message box
+// The button labels. Always, which the caller remembers until the user
+// takes it back, is not offered on Windows, whose message box
 // has fixed labels.
 const (
-	denyLabel    = "拒绝"
-	onceLabel    = "允许一次"
-	sessionLabel = "本次会话都允许"
+	denyLabel   = "拒绝"
+	onceLabel   = "允许一次"
+	alwaysLabel = "始终允许"
 )
 
-// AskScope shows a dialog offering Deny (the default), Once and Session,
+// AskScope shows a dialog offering Deny (the default), Once and Always,
 // until ctx ends (a refusal). ok is false when no dialog could be shown: the
 // scope is then Deny and nobody answered. Text always goes as arguments or
 // environment, never as script.
@@ -35,7 +36,7 @@ func AskScope(ctx context.Context, title, msg string) (scope Scope, ok bool) {
 	switch runtime.GOOS {
 	case "darwin":
 		res := run(ctx, "osascript", "-e", "on run argv",
-			"-e", `display dialog (item 2 of argv) with title (item 1 of argv) buttons {"`+denyLabel+`", "`+sessionLabel+`", "`+onceLabel+`"} default button "`+denyLabel+`" with icon caution`,
+			"-e", `display dialog (item 2 of argv) with title (item 1 of argv) buttons {"`+denyLabel+`", "`+alwaysLabel+`", "`+onceLabel+`"} default button "`+denyLabel+`" with icon caution`,
 			"-e", "end run", title, msg)
 		return macScope(res)
 	case "linux":
@@ -44,14 +45,14 @@ func AskScope(ctx context.Context, title, msg string) (scope Scope, ok bool) {
 		}
 		if _, err := exec.LookPath("zenity"); err == nil {
 			res := run(ctx, "zenity", "--question", "--title", title, "--text", msg,
-				"--ok-label="+onceLabel, "--cancel-label="+denyLabel, "--extra-button="+sessionLabel, "--default-cancel", "--no-markup")
+				"--ok-label="+onceLabel, "--cancel-label="+denyLabel, "--extra-button="+alwaysLabel, "--default-cancel", "--no-markup")
 			if scope, ok := zenityScope(res); ok {
 				return scope, true
 			}
 		}
 		if _, err := exec.LookPath("kdialog"); err == nil {
 			res := run(ctx, "kdialog", "--title", title, "--warningyesnocancel", msg,
-				"--yes-label", onceLabel, "--no-label", sessionLabel, "--cancel-label", denyLabel)
+				"--yes-label", onceLabel, "--no-label", alwaysLabel, "--cancel-label", denyLabel)
 			if scope, ok := kdialogScope(res); ok {
 				return scope, true
 			}
@@ -75,8 +76,8 @@ func macScope(res result) (Scope, bool) {
 		switch {
 		case strings.Contains(res.stdout, "button returned:"+onceLabel):
 			return Once, true
-		case strings.Contains(res.stdout, "button returned:"+sessionLabel):
-			return Session, true
+		case strings.Contains(res.stdout, "button returned:"+alwaysLabel):
+			return Always, true
 		}
 		return Deny, true
 	case res.timedOut:
@@ -105,8 +106,8 @@ func zenityScope(res result) (Scope, bool) {
 			return Deny, false
 		}
 	}
-	if strings.TrimSpace(res.stdout) == sessionLabel {
-		return Session, true
+	if strings.TrimSpace(res.stdout) == alwaysLabel {
+		return Always, true
 	}
 	return Deny, true
 }
@@ -127,7 +128,7 @@ func kdialogScope(res result) (Scope, bool) {
 	}
 	switch res.code {
 	case 1:
-		return Session, true
+		return Always, true
 	case 2:
 		return Deny, true
 	}
